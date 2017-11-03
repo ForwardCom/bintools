@@ -1,0 +1,4 @@
+#  This response file is used when running forw in MS Visual Studio in debug mode
+#  -dump-hfnsr tttt.ob
+#  -dis tttt.ob test.txt
+ -ass test.as tttt.ob -list=outputlist.txt -maxerrors=32 -datasize=30000 -O3
