@@ -1,8 +1,8 @@
 /****************************  containers.h   ********************************
 * Author:        Agner Fog
 * Date created:  2006-07-15
-* Last modified: 2017-11-02
-* Version:       1.00
+* Last modified: 2017-11-10
+* Version:       1.01
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        containers.h
 * Description:
@@ -89,7 +89,9 @@ public:
    CMemoryBuffer();                              // Constructor
    ~CMemoryBuffer();                             // Destructor
    void setSize(uint32_t size);                  // Allocate buffer of specified size
+   void setDataSize(uint32_t size);              // Set data size and fill any new data with zeroes
    void clear();                                 // De-allocate buffer
+   void zero();                                  // Set all contents to zero without changing data size
    uint32_t dataSize() const {return data_size;};// Get file data size
    uint32_t bufferSize() const {return buffer_size;};// Get buffer size
    uint32_t numEntries() const {return num_entries;};// Get number of entries
@@ -103,6 +105,9 @@ public:
       if (offset >= data_size) {
           err.submit(ERR_CONTAINER_INDEX); offset = 0;} // Offset out of range
       return *(TX*)(buffer + offset);}
+   char * getString(uint32_t offset) {           // Get string from offset returned from pushString
+       return (char *)(buffer + offset);
+   }
    void copy(CMemoryBuffer const & b);           // Make a copy of whole buffer
 private:
    CMemoryBuffer(CMemoryBuffer&);                // Make private copy constructor to prevent simple copying
@@ -116,29 +121,24 @@ protected:
    friend void operator >> (CFileBuffer & a, CFileBuffer & b);     // Transfer ownership of buffer
 };
 
-static inline void operator << (CMemoryBuffer & b, CMemoryBuffer & a) {a >> b;} // Same as operator << above
-static inline void operator << (CFileBuffer & b, CFileBuffer & a) {a >> b;} // Same as operator << above
+inline void operator << (CMemoryBuffer & b, CMemoryBuffer & a) {a >> b;} // Same as operator << above
+inline void operator << (CFileBuffer & b, CFileBuffer & a) {a >> b;} // Same as operator << above
 
 // Class CFileBuffer is used for storage of input and output files
 class CFileBuffer : public CMemoryBuffer {
 public:
    CFileBuffer();                                // Default constructor
-   CFileBuffer(char const * filename);           // Constructor
-   void read(int ignoreError = 0);               // Read file into buffer
-   void write();                                 // Write buffer to file
+   //CFileBuffer(uint32_t filename);               // Constructor
+   void read(const char * filename, int ignoreError = 0);               // Read file into buffer
+   void write(const char * filename);                                 // Write buffer to file
    int  getFileType();                           // Get file format type
    void setFileType(int type);                   // Set file format type
    void reset();                                 // Set all members to zero
    static char const * getFileFormatName(int fileType); // Get name of file format type
-   char const * fileName;                        // Name of input file
-   char const * outputFileName;                  // Output file name
    int wordSize;                                 // Segment word size (16, 32, 64)
    int fileType;                                 // Object file type
    int executable;                               // File is executable
    int machineType;                              // Machine type, x86 or ForwarCom
-   char * setFileNameExtension(const char * f);  // Set file name extension according to FileType
-protected:
-   void checkOutputFileName();                   // Make output file name or check that requested name is valid
 };
 
 
@@ -146,10 +146,9 @@ protected:
 class CTextFileBuffer : public CFileBuffer {
 public:
    CTextFileBuffer();                            // Constructor
-   uint32_t put(const char * text);              // Write text string to buffer
+   uint32_t put(const char * text);              // Write text string to buffer without terminating zero
    void put(const char character);               // Write single character to buffer
    uint32_t putStringN(const char * s, uint32_t len);// Write string to buffer, add terminating zero
-   uint32_t pushString(char const * s){return put(s);};// Use put instead
    void newLine();                               // Add linefeed
    void tabulate(uint32_t i);                    // Insert spaces until column i
    int  lineType;                                // 0 = DOS/Windows linefeeds, 1 = UNIX linefeeds
@@ -158,6 +157,7 @@ public:
    void putHex(uint16_t x, int ox = 1);          // Write hexadecimal number to buffer
    void putHex(uint32_t x, int ox = 1);          // Write hexadecimal number to buffer
    void putHex(uint64_t x, int ox = 1);          // Write hexadecimal number to buffer
+   void putFloat16(uint16_t x);                  // Write half precision floating point number to buffer
    void putFloat(float x);                       // Write floating point number to buffer
    void putFloat(double x);                      // Write floating point number to buffer
    uint32_t getColumn() {return column;}         // Get column number
@@ -202,7 +202,7 @@ public:
     TX pop() {
         TX temp;
         if (num_entries == 0) {  // stack is empty. return zero object
-            memset(&temp, 0, sizeof(TX));
+            zeroAllMembers(temp);
         }
         else {
             temp = (*this)[num_entries-1];
@@ -237,7 +237,7 @@ public:
         // Important: The list must be sorted first
         // Returns a negative value if not found
         uint32_t a = 0;                                    // Start of search interval
-        uint32_t b = num_entries;                           // End of search interval + 1
+        uint32_t b = num_entries;                          // End of search interval + 1
         uint32_t c = 0;                                    // Middle of search interval                                                     
         if (num_entries > 0x7FFFFFFF) {err.submit(ERR_CONTAINER_OVERFLOW); return 0x80000000;} // Size overflow
                        
@@ -325,7 +325,7 @@ public:
             err.submit(ERR_MEMORY_ALLOCATION);
         }
     }
-    uint32_t size() const {
+    uint32_t numEntries() const {
         return num;
     };
     B & operator [] (uint32_t i) {     // access element number i

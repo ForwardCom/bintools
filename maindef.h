@@ -1,13 +1,13 @@
 /****************************  maindef.h   **********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2017-11-03
-* Version:       1.00
+* Last modified: 2018-03-30
+* Version:       1.01
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        maindef.h
 * Original location: https://github.com/forwardcom/binutils
 * License: GPL-3.0. https://www.gnu.org/licenses/#GPL
-* Copyright 2016-2017 by Agner Fog
+* Copyright 2016-2018 by Agner Fog
 *
 * Description:
 * Header file for type definitions and other main definitions.
@@ -15,7 +15,8 @@
 #pragma once 
 
 // Program version
-#define FORWARDCOM_VERSION         1.00
+#define FORWARDCOM_VERSION         1
+#define FORWARDCOM_SUBVERSION      1
 
 
 // Get high part of a 64-bit integer
@@ -39,6 +40,8 @@ const int FILETYPE_FWC =           0x10;         // ForwardCom ELF file
 const int FILETYPE_FWC_EXE =       0x11;         // Executable ForwardCom ELF file
 const int FILETYPE_FWC_LIB =       0x20;         // ForwardCom library file
 const int FILETYPE_ASM =          0x100;         // Disassembly output
+const int FILETYPE_LIBRARY =     0x1000;         // UNIX-style library/archive
+
 
 // Define constants for symbol scope
 const int S_LOCAL =    0;                        // Local symbol. Accessed only internally
@@ -49,6 +52,11 @@ const int S_EXTERNAL = 2;                        // External symbol. Defined in 
 // Macro to calculate the size of an array
 #define TableSize(x) ((int)(sizeof(x)/sizeof(x[0])))
 
+// template to zero all elements of an object
+template <typename T>
+void zeroAllMembers(T & x) {
+    memset(&x, 0, sizeof(T));
+}
 
 // Structures and functions used for lookup tables:
 
@@ -85,5 +93,6 @@ const char * timestring(uint32_t t);
 // Convert half precision floating point number to single precision
 float half2float(uint32_t half);
 
-// Convert double precision floating point number to half precision
+// Convert floating point number to half precision
+uint16_t float2half(float x);
 uint16_t double2half(double x);

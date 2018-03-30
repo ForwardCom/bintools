@@ -1,8 +1,8 @@
 /****************************    assem3.cpp    ********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2017-11-03
-* Version:       1.00
+* Last modified: 2018-03-30
+* Version:       1.01
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.cpp
 * Description:
@@ -31,9 +31,16 @@ void CAssembler::replaceKnownNames() {
                     // save value of meta variable in token in case it changes later
                     tokens[tok].value.u = symbols[symi].st_value;
                 }
+                else if (symbols[symi].st_type == STT_TYPENAME) {    // symbol is an alias for a type name
+                    if (tokens[tokenB].id != '%' || tok != tokenB + 1) { // replace it unless it comes immediately after %, which means it is redefined
+                        tokens[tok].type = TOK_TYP; 
+                        tokens[tok].value.u = symbols[symi].st_value;
+                        tokens[tok].id = (uint32_t)symbols[symi].st_value;
+                    }
+                }
                 else {
                     tokens[tok].type = TOK_SYM;
-                    if ((symbols[symi].st_type & ~1) == STT_CONSTANT && symbols[symi].st_shndx == SHN_ABS) {
+                    if ((symbols[symi].st_type & ~1) == STT_CONSTANT) {
                         // save value of meta variable in token in case it changes later
                         tokens[tok].value.u = symbols[symi].st_value;
                         tokens[tok].vartype = symbols[symi].st_reguse1;
@@ -58,7 +65,7 @@ void CAssembler::interpretMetaDefinition() {
     uint32_t tok;                                // token index
     int32_t symi = 0;                            // symbol index
     ElfFWC_Sym2 sym;                             // symbol record
-    memset(&sym, 0, sizeof(ElfFWC_Sym2));        // reset symbol
+    zeroAllMembers(sym);                         // reset symbol
     //uint32_t tokmeta = 0;                        // token containing '%'
 
     // interpret line defining assemble-time variable
@@ -72,7 +79,7 @@ void CAssembler::interpretMetaDefinition() {
     uint32_t tokop = 0;   // token containing ++ or -- operator
     uint32_t type = 3;    // default type is int64
     SExpression exps, expr;
-    memset(&expr, 0, sizeof(expr));
+    zeroAllMembers(expr);
 
     lineError = false;
     for (tok = tokenB; tok < tokenB + tokenN; tok++) {
@@ -168,7 +175,7 @@ void CAssembler::interpretMetaDefinition() {
             sym.st_name = symbolNameBuffer.putStringN((char*)buf() + tokens[tok].pos, tokens[tok].stringLength);
             symi = symbols.addUnique(sym);
             symbols[symi].st_type = 0;  // remember that symbol has no value yet
-            symbols[symi].st_shndx = SHN_ABS;  // remember symbol is not external
+            symbols[symi].st_section = 0xFFFFFFFF;  // remember symbol is not external. use arbitrary section
             symbols[symi].st_unitsize = 8;
             symbols[symi].st_unitnum = 1;
             tokens[tok].type = TOK_SYM;  // change token type
@@ -215,8 +222,9 @@ void CAssembler::assignMetaVariable(uint32_t symi, SExpression & expr, uint32_t 
         break;
     default: 
         symbols[symi].st_other = 0;
-    }    
-    if (symbols[symi].st_type == 0) symbols[symi].st_type = STT_CONSTANT;  // first time: make a constant
+    }
+    if (expr.etype & XPR_TYPENAME) symbols[symi].st_type = STT_TYPENAME;
+    else if (symbols[symi].st_type == 0) symbols[symi].st_type = STT_CONSTANT;  // first time: make a constant
     else symbols[symi].st_type = STT_VARIABLE;                             // reassigned later: make a variable
     if (expr.etype & (XPR_REG | XPR_MEM)) {
         symbols[symi].st_type = STT_EXPRESSION;
@@ -231,7 +239,7 @@ void CAssembler::assignMetaVariable(uint32_t symi, SExpression & expr, uint32_t 
     if ((expr.etype & (XPR_SYM1 | XPR_SYM2)) == XPR_SYM1 && !(expr.etype & XPR_MEM)) {
         // single symbol. must be constant or memory
         int32_t symi1 = findSymbol(expr.sym1);
-        if (symi1 <= 0 || (!(symbols[symi1].st_type & STT_CONSTANT) && symbols[symi1].st_shndx != SHN_ABS)) {
+        if (symi1 <= 0 || (!(symbols[symi1].st_type & STT_CONSTANT))) {
             errors.reportLine(ERR_WRONG_TYPE_VAR);
             return;
         }

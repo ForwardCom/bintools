@@ -1,8 +1,8 @@
 /****************************    assem4.cpp    ********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2017-11-03
-* Version:       1.00
+* Last modified: 2018-03-30
+* Version:       1.01
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.cpp
 * Description:
@@ -65,7 +65,7 @@ void CAssembler::makeFormatLists() {
 // Interpret a line defining code. This covers both assembly style and high level style code
 void CAssembler::interpretCodeLine() {
     uint32_t tok;                                // token index
-    uint32_t tokTyp = 0;                         // token index for type keyword
+    dataType = 0;                                // data type for current instruction
     uint32_t nReg = 0;                           // number of register source operands
     uint32_t state = 0;  /* state during interpretation of line. example:
         L1: int32 r1 = compare(r2, 5), option = 2   // assembly style
@@ -85,7 +85,7 @@ void CAssembler::interpretCodeLine() {
     */  
     SExpression expr;                            // evaluated expression
     SCode code;                                  // current instruction code
-    memset(&code, 0, sizeof(code));              // reset code structure
+    zeroAllMembers(code);                        // reset code structure
 
     if (section == 0) {
         errors.reportLine(ERR_CODE_WO_SECTION);
@@ -193,7 +193,7 @@ void CAssembler::interpretCodeLine() {
                     code.label = tokens[tok].id;
                     if (code.label) {
                         int32_t symi = findSymbol(code.label);
-                        if (symi > 0) symbols[symi].st_shndx = section;
+                        if (symi > 0) symbols[symi].st_section = section;
                     }
                     state = 1;
                 }
@@ -243,7 +243,7 @@ void CAssembler::interpretCodeLine() {
                     // ++ and -- operators
                     code.instruction = (tokens[tok].id == '+' + D2) ? II_ADD : II_SUB;
                     // operand is 1, integer or float
-                    if (tokens[tokTyp].id & TYP_FLOAT) {
+                    if (dataType & TYP_FLOAT) {
                         code.value.d = 1.0;
                         code.etype |= XPR_FLT;
                     }
@@ -265,8 +265,8 @@ void CAssembler::interpretCodeLine() {
                 break;
             case TOK_TYP:
                 if (state == 0 || state == 2) {
-                    code.dtype = tokens[tok].id;
-                    tokTyp = tok;  state = 3;
+                    dataType = code.dtype = tokens[tok].id;
+                    state = 3;
                 }
                 else goto ST_ERROR;
                 break;
@@ -422,7 +422,7 @@ int CAssembler::fitConstant(SCode & code) {
     if (!(code.etype & (XPR_IMMEDIATE | XPR_SYM1))) return 0; // has no immediate
 
     value = value0 = code.value.i;               // immediate constant
-    floatType  = uint8_t(code.dtype) >= uint8_t(TYP_FLOAT32);  // floating point needed, except float16
+    floatType  = uint8_t(code.dtype) >= uint8_t(TYP_FLOAT16);  // floating point needed
     floatConst = (code.etype & XPR_FLT) != 0;    // floating point provided
     if (floatType) {
         if (floatConst) dvalue = code.value.d; 
@@ -441,13 +441,16 @@ int CAssembler::fitConstant(SCode & code) {
             }
         }
         if ((code.etype & XPR_FLT) && uint8_t(code.dtype) == uint8_t(TYP_FLOAT32)) {
-            // check for overflow in single precision float
-            union {
+            union {            // check for overflow in single precision float
                 float f;
                 uint32_t i;
             } u;
             u.f = float(code.value.d);
-            if (((u.i >> 23) & 0xFF) == 0xFF && u.f > code.value.d) errors.reportLine(ERR_CONSTANT_TOO_LARGE);
+            if (isinf_f(u.i) && u.f > code.value.d) errors.reportLine(ERR_CONSTANT_TOO_LARGE);
+        }
+        if ((code.etype & XPR_FLT) && uint8_t(code.dtype) == uint8_t(TYP_FLOAT16)) {
+            // check for overflow in half precision float
+            if (isinf_h(double2half(code.value.d) && !isinf_d(code.value.i))) errors.reportLine(ERR_CONSTANT_TOO_LARGE);
         }
     }
 
@@ -458,14 +461,14 @@ int CAssembler::fitConstant(SCode & code) {
             code.sizeUnknown = 2; return 2;              // should not occur
         }
         if (symbols[isym1].st_unitsize == 0) uncertain = 2;  // symbol value is not known yet
-        uint32_t sym1section = symbols[isym1].st_shndx; // symbol section
+        uint32_t sym1section = symbols[isym1].st_section; // symbol section
         // determine necessary relocation size if relocation needed
         uint64_t relSize;                       // maximum size of relocated address
         if (symbols[isym1].st_type == STT_CONSTANT) {
             relSize = 0x10000000;               // there is no command line option for the size of absolute symbols. assume 32 bit
             code.etype |= XPR_INT;
         }
-        else if (sym1section && sym1section != SHN_ABS) {   // local symbol with known section 
+        else if (sym1section && symbols[isym1].st_type != STT_CONSTANT) {   // local symbol with known section 
             relSize = (sectionHeaders[sym1section].sh_flags & (SHF_EXEC | SHF_IP)) ? cmd.codeSizeOption : cmd.dataSizeOption;
         }
         else { // external symbol with unknown section. look at symbol attributes
@@ -482,7 +485,7 @@ int CAssembler::fitConstant(SCode & code) {
             }
             code.etype |= XPR_INT;                           // symbol difference gives an integer
             if (symbols[isym1].st_unitsize == 0) uncertain = 2;  // symbol value is not known yet
-            if (symbols[isym1].st_shndx != symbols[isym2].st_shndx || symbols[isym1].st_bind != STB_LOCAL || symbols[isym2].st_bind != STB_LOCAL) {
+            if (symbols[isym1].st_section != symbols[isym2].st_section || symbols[isym1].st_bind != STB_LOCAL || symbols[isym2].st_bind != STB_LOCAL) {
                 // different sections or not local. relocation needed
                 fitNum = IFIT_RELOC;
                 if (code.symscale > 1) relSize /= code.symscale;  // value is scaled
@@ -524,12 +527,13 @@ int CAssembler::fitConstant(SCode & code) {
             return uncertain;
         }
         // one symbol. must be constant
-        if (sym1section != 0 && sym1section != SHN_ABS && !(code.etype & XPR_MEM)) {
+        if (sym1section != 0 && symbols[isym1].st_type != STT_CONSTANT && !(code.etype & XPR_MEM)) {
             errors.reportLine(ERR_MEM_WO_BRACKET);
             return 1;
         }
 
-        if (sym1section && sym1section != SHN_ABS && !(sectionHeaders[sym1section].sh_flags & (SHF_WRITE | SHF_DATAP | SHF_THREADP))) {
+        if (sym1section && symbols[isym1].st_type != STT_CONSTANT 
+            && !(sectionHeaders[sym1section].sh_flags & (SHF_WRITE | SHF_DATAP | SHF_THREADP))) {
             // relative to instruction pointer
             if (sym1section != code.section || symbols[isym1].st_bind != STB_LOCAL) {
                 // symbol is in different section or not local. relocation needed
@@ -632,6 +636,8 @@ int CAssembler::fitConstant(SCode & code) {
         if (nbits < 32) fitNum |= IFIT_I32SHIFT;
         if (low >= 32)  fitNum |= IFIT_I32SH32;
     }
+
+    /* move this to checkCode2 because opimmediate is not known yet
     if ((code.etype & XPR_INT) && !(code.etype & (XPR_LIMIT | XPR_INT2))) {
         // check if value fits specified operand type
         int ok = 1;
@@ -643,8 +649,11 @@ int CAssembler::fitConstant(SCode & code) {
         case TYP_INT32 & 0x1F:
             ok = fitNum & (IFIT_I32 | IFIT_U32);  break;
         }
-        if (!ok) errors.reportLine(ERR_CONSTANT_TOO_LARGE);
-    }
+        // unless higher constant specified:
+        if (!ok && (instructionlistId[code.instr1].opimmediate & ~0x10) != 4) {
+            errors.reportLine(ERR_CONSTANT_TOO_LARGE);
+        }
+    } */
     code.fitNum = fitNum;
     code.sizeUnknown = 0;
     return 0;
@@ -679,124 +688,127 @@ int CAssembler::fitAddress(SCode & code) {
             code.sizeUnknown = 2; return 2;              // should not occur
         }
         if (symbols[isym1].st_unitsize == 0) uncertain = 2;  // symbol value is not known yet
-        uint32_t sym1section = symbols[isym1].st_shndx; // symbol section
-        // determine necessary relocation size if relocation needed
-        uint64_t relSize;                       // maximum size of relocated address
-        if (symbols[isym1].st_type == STT_CONSTANT) {
-            relSize = 0x10000000;               // there is no command line option for the size of absolute symbols. assume 32 bit
-        }
-        else if ((code.etype & XPR_JUMPOS) || (sym1section && sym1section != SHN_ABS && !(sectionHeaders[sym1section].sh_flags & (SHF_WRITE | SHF_DATAP | SHF_THREADP)))) {
-            relSize = cmd.codeSizeOption;       // relocation size for code and constant data
-        }
-        else if (sym1section && sym1section != SHN_ABS) {   // local symbol with known section 
-            relSize = (sectionHeaders[sym1section].sh_flags & (SHF_EXEC | SHF_IP)) ? cmd.codeSizeOption : cmd.dataSizeOption;
-        }
-        else { // external symbol with unknown section. look at symbol attributes
-            relSize = (symbols[isym1].st_other & (STV_EXEC | STV_IP)) ? cmd.codeSizeOption : cmd.dataSizeOption;
-        }
-        if (code.sym2) {
-            // value is (sym1 - sym2) / scale factor
-            isym2 = findSymbol(code.sym2);
-            if (isym2 <= 0) {
-                code.sizeUnknown = 2; return 2;              // should not occur
+        uint32_t sym1section = symbols[isym1].st_section; // symbol section
+        if (sym1section < sectionHeaders.numEntries()) {
+            // determine necessary relocation size if relocation needed
+            uint64_t relSize;                       // maximum size of relocated address
+            if (symbols[isym1].st_type == STT_CONSTANT) {
+                relSize = 0x10000000;               // there is no command line option for the size of absolute symbols. assume 32 bit
             }
-            if (symbols[isym1].st_unitsize == 0) uncertain = 2;  // symbol value is not known yet
-            if (symbols[isym1].st_shndx != symbols[isym2].st_shndx || symbols[isym1].st_bind != STB_LOCAL || symbols[isym2].st_bind != STB_LOCAL) {
-                // different sections or not local. relocation needed
-                fitAddr = IFIT_RELOC;
-                if (code.symscale > 1) relSize /= code.symscale;  // value is scaled
-                if (relSize <= 1 << 7)  fitAddr |= IFIT_I8;
-                if (relSize <= 1 << 15) fitAddr |= IFIT_I16;
-                if (relSize <= 1 << 23) fitAddr |= IFIT_I24;
-                if (relSize <= (uint64_t)1 << 31) fitAddr |= IFIT_I32;
+            else if ((code.etype & XPR_JUMPOS) || (sym1section && symbols[isym1].st_type != STT_CONSTANT
+                && !(sectionHeaders[sym1section].sh_flags & (SHF_WRITE | SHF_DATAP | SHF_THREADP)))) {
+                relSize = cmd.codeSizeOption;       // relocation size for code and constant data
+            }
+            else if (sym1section && symbols[isym1].st_type != STT_CONSTANT) {   // local symbol with known section 
+                relSize = (sectionHeaders[sym1section].sh_flags & (SHF_EXEC | SHF_IP)) ? cmd.codeSizeOption : cmd.dataSizeOption;
+            }
+            else { // external symbol with unknown section. look at symbol attributes
+                relSize = (symbols[isym1].st_other & (STV_EXEC | STV_IP)) ? cmd.codeSizeOption : cmd.dataSizeOption;
+            }
+            if (code.sym2) {
+                // value is (sym1 - sym2) / scale factor
+                isym2 = findSymbol(code.sym2);
+                if (isym2 <= 0) {
+                    code.sizeUnknown = 2; return 2;              // should not occur
+                }
+                if (symbols[isym1].st_unitsize == 0) uncertain = 2;  // symbol value is not known yet
+                if (symbols[isym1].st_section != symbols[isym2].st_section || symbols[isym1].st_bind != STB_LOCAL || symbols[isym2].st_bind != STB_LOCAL) {
+                    // different sections or not local. relocation needed
+                    fitAddr = IFIT_RELOC;
+                    if (code.symscale > 1) relSize /= code.symscale;  // value is scaled
+                    if (relSize <= 1 << 7)  fitAddr |= IFIT_I8;
+                    if (relSize <= 1 << 15) fitAddr |= IFIT_I16;
+                    if (relSize <= 1 << 23) fitAddr |= IFIT_I24;
+                    if (relSize <= (uint64_t)1 << 31) fitAddr |= IFIT_I32;
+                    code.fitAddr = fitAddr;
+                    code.sizeUnknown += uncertain;
+                    return uncertain;
+                }
+                // difference between two local symbols
+                if (pass < 4) {
+                    code.fitAddr = IFIT_I8 | IFIT_I16 | IFIT_I32;  // symbol values are not available yet
+                    code.sizeUnknown += 1;
+                    return 1;
+                }
+                value += int32_t(uint32_t(symbols[isym1].st_value) - uint32_t(symbols[isym2].st_value));
+                int scale = code.symscale;
+                if (scale < 1) scale = 1;
+                valueScaled = value / scale + code.offset;
+                if (valueScaled >= (-1 << 7) && valueScaled < (1 << 7))  fitAddr |= IFIT_I8;
+                if (valueScaled >= (-1 << 15) && valueScaled < (1 << 15)) fitAddr |= IFIT_I16;
+                if (valueScaled >= (-(int64_t)1 << 31) && valueScaled < ((int64_t)1 << 31)) fitAddr |= IFIT_I32;
+                // check if value is certain. uncertainty is stored in high part of st_value
+                uncertainty = (symbols[isym1].st_value >> 32) - (symbols[isym2].st_value >> 32);
+                valueScaled = value / scale + code.offset + uncertainty;
+                if (code.symscale > 1) valueScaled /= code.symscale;  // value is scaled
+                if ((valueScaled < (-1 << 7) || valueScaled >= (1 << 7)) && (fitAddr & IFIT_I8))  uncertain |= 1;
+                if ((valueScaled < (-1 << 15) || valueScaled >= (1 << 15)) && (fitAddr & IFIT_I16)) uncertain |= 1;
+                if ((valueScaled < (-(int64_t)1 << 31) || valueScaled >= ((int64_t)1 << 31)) && (fitAddr & IFIT_I32)) uncertain |= 1;
+                if (uncertain && (code.fitAddr & IFIT_LARGE)) {
+                    // choose the larger version if optimization process has convergence problems
+                    fitAddr = (fitAddr & (fitAddr - 1)) | IFIT_I32;  // remove the lowest set bit
+                    uncertain &= ~1;
+                }
                 code.fitAddr = fitAddr;
                 code.sizeUnknown += uncertain;
                 return uncertain;
             }
-            // difference between two local symbols
-            if (pass < 4) {
-                code.fitAddr = IFIT_I8 | IFIT_I16 | IFIT_I32;  // symbol values are not available yet
-                code.sizeUnknown += 1;
-                return 1;
-            }
-            value += int32_t(uint32_t(symbols[isym1].st_value) - uint32_t(symbols[isym2].st_value));
-            int scale = code.symscale;
-            if (scale < 1) scale = 1;
-            valueScaled = value / scale + code.offset;
-            if (valueScaled >= (-1 << 7)  && valueScaled < (1 << 7))  fitAddr |= IFIT_I8;
-            if (valueScaled >= (-1 << 15) && valueScaled < (1 << 15)) fitAddr |= IFIT_I16;
-            if (valueScaled >= (-(int64_t)1 << 31) && valueScaled < ((int64_t)1 << 31)) fitAddr |= IFIT_I32;
-            // check if value is certain. uncertainty is stored in high part of st_value
-            uncertainty = (symbols[isym1].st_value >> 32) - (symbols[isym2].st_value >> 32);
-            valueScaled = value / scale + code.offset + uncertainty;
-            if (code.symscale > 1) valueScaled /= code.symscale;  // value is scaled
-            if ((valueScaled < (-1 << 7)  || valueScaled >= (1 << 7))  && (fitAddr & IFIT_I8))  uncertain |= 1;
-            if ((valueScaled < (-1 << 15) || valueScaled >= (1 << 15)) && (fitAddr & IFIT_I16)) uncertain |= 1;
-            if ((valueScaled < (-(int64_t)1 << 31) || valueScaled >= ((int64_t)1 << 31)) && (fitAddr & IFIT_I32)) uncertain |= 1;
-            if (uncertain && (code.fitAddr & IFIT_LARGE)) {
-                // choose the larger version if optimization process has convergence problems
-                fitAddr  = (fitAddr & (fitAddr - 1)) | IFIT_I32;  // remove the lowest set bit
-                uncertain &= ~1;
-            }
-            code.fitAddr = fitAddr;
-            code.sizeUnknown += uncertain;
-            return uncertain;
-        }
-        // one symbol
-        if ((code.etype & XPR_JUMPOS) || !(sectionHeaders[sym1section].sh_flags & (SHF_WRITE | SHF_DATAP | SHF_THREADP))) {
-            // relative to instruction pointer
-            if (sym1section != code.section || symbols[isym1].st_bind != STB_LOCAL) {
-                // symbol is in different section or not local. relocation needed
-                fitAddr = IFIT_RELOC;
-                if (code.etype & XPR_JUMPOS) relSize >>=2;  // value is scaled by 4
-                if (relSize <= 1 << 7)  fitAddr |= IFIT_I8;   // necessary relocation size
-                if (relSize <= 1 << 15) fitAddr |= IFIT_I16;
-                if (relSize <= 1 << 23) fitAddr |= IFIT_I24;
-                if (relSize <= (uint64_t)1 << 31) fitAddr |= IFIT_I32;
+            // one symbol
+            if ((code.etype & XPR_JUMPOS) || !(sectionHeaders[sym1section].sh_flags & (SHF_WRITE | SHF_DATAP | SHF_THREADP))) {
+                // relative to instruction pointer
+                if (sym1section != code.section || symbols[isym1].st_bind != STB_LOCAL) {
+                    // symbol is in different section or not local. relocation needed
+                    fitAddr = IFIT_RELOC;
+                    if (code.etype & XPR_JUMPOS) relSize >>= 2;  // value is scaled by 4
+                    if (relSize <= 1 << 7)  fitAddr |= IFIT_I8;   // necessary relocation size
+                    if (relSize <= 1 << 15) fitAddr |= IFIT_I16;
+                    if (relSize <= 1 << 23) fitAddr |= IFIT_I24;
+                    if (relSize <= (uint64_t)1 << 31) fitAddr |= IFIT_I32;
+                    code.fitAddr = fitAddr;
+                    code.sizeUnknown += uncertain;
+                    return uncertain;
+                }
+                if (pass < 4) {
+                    code.fitAddr = IFIT_I16 | IFIT_I32;  // symbol values are not available yet
+                    code.sizeUnknown += 1;
+                    return 1;
+                }
+                // self-relative address to local symbol
+                value = int32_t((uint32_t)symbols[isym1].st_value - (code.address + code.size * 4));
+                valueScaled = value;
+                if (code.etype & XPR_JUMPOS) valueScaled >>= 2;  // jump address is scaled
+                valueScaled += code.offset;
+                // cannot use IFIT_I8 with IP pointer in data address
+                if (valueScaled >= (-1 << 7) && valueScaled < (1 << 7) && (code.etype & XPR_JUMPOS)) fitAddr |= IFIT_I8;
+                if (valueScaled >= (-1 << 15) && valueScaled < (1 << 15)) fitAddr |= IFIT_I16;
+                if (valueScaled >= (-1 << 23) && valueScaled < (1 << 23)) fitAddr |= IFIT_I24;
+                if (valueScaled >= (-(int64_t)1 << 31) && valueScaled < ((int64_t)1 << 31)) fitAddr |= IFIT_I32;
+                code.fitAddr = fitAddr;
+                // check if value is certain. uncertainty is stored in high part of st_value and sh_link
+                uncertainty = int32_t((symbols[isym1].st_value >> 32) - sectionHeaders[code.section].sh_link);
+                valueScaled += uncertainty;
+                if ((valueScaled < (-1 << 7) || valueScaled >= (1 << 7)) && (fitAddr & IFIT_I8))  uncertain |= 1;
+                if ((valueScaled < (-1 << 15) || valueScaled >= (1 << 15)) && (fitAddr & IFIT_I16)) uncertain |= 1;
+                if ((valueScaled < (-1 << 23) || valueScaled >= (1 << 23)) && (fitAddr & IFIT_I24)) uncertain |= 1;
+                if ((valueScaled < (-(int64_t)1 << 31) || valueScaled >= ((int64_t)1 << 31)) && (fitAddr & IFIT_I32)) uncertain |= 1;
+                if (uncertain && (code.fitAddr & IFIT_LARGE)) {
+                    // choose the larger version if optimization process has convergence problems
+                    fitAddr = (fitAddr & (fitAddr - 1)) | IFIT_I32;  // remove the lowest set bit
+                    uncertain &= ~1;
+                }
                 code.fitAddr = fitAddr;
                 code.sizeUnknown += uncertain;
                 return uncertain;
             }
-            if (pass < 4) {
-                code.fitAddr = IFIT_I16 | IFIT_I32;  // symbol values are not available yet
-                code.sizeUnknown += 1;
-                return 1;
-            }
-            // self-relative address to local symbol
-            value = int32_t((uint32_t)symbols[isym1].st_value - (code.address + code.size * 4));
-            valueScaled = value;
-            if (code.etype & XPR_JUMPOS) valueScaled >>= 2;  // jump address is scaled
-            valueScaled += code.offset;
-            // cannot use IFIT_I8 with IP pointer in data address
-            if (valueScaled >= (-1 <<  7) && valueScaled < (1 <<  7) && (code.etype & XPR_JUMPOS)) fitAddr |= IFIT_I8;
-            if (valueScaled >= (-1 << 15) && valueScaled < (1 << 15)) fitAddr |= IFIT_I16;
-            if (valueScaled >= (-1 << 23) && valueScaled < (1 << 23)) fitAddr |= IFIT_I24;
-            if (valueScaled >= (-(int64_t)1 << 31) && valueScaled < ((int64_t)1 << 31)) fitAddr |= IFIT_I32;
-            code.fitAddr = fitAddr;
-            // check if value is certain. uncertainty is stored in high part of st_value and sh_link
-            uncertainty = int32_t((symbols[isym1].st_value >> 32) - sectionHeaders[code.section].sh_link);
-            valueScaled += uncertainty;
-            if ((valueScaled < (-1 << 7)  || valueScaled >= (1 << 7))  && (fitAddr & IFIT_I8))  uncertain |= 1;
-            if ((valueScaled < (-1 << 15) || valueScaled >= (1 << 15)) && (fitAddr & IFIT_I16)) uncertain |= 1;
-            if ((valueScaled < (-1 << 23) || valueScaled >= (1 << 23)) && (fitAddr & IFIT_I24)) uncertain |= 1;
-            if ((valueScaled < (-(int64_t)1 << 31) || valueScaled >= ((int64_t)1 << 31)) && (fitAddr & IFIT_I32)) uncertain |= 1;
-            if (uncertain && (code.fitAddr & IFIT_LARGE)) {
-                // choose the larger version if optimization process has convergence problems
-                fitAddr = (fitAddr & (fitAddr - 1)) | IFIT_I32;  // remove the lowest set bit
-                uncertain &= ~1;
-            }
+            // symbol is relative to data pointer. relocation needed
+            fitAddr = IFIT_RELOC;
+            if (relSize <= 1 << 7)  fitAddr |= IFIT_I8;
+            if (relSize <= 1 << 15) fitAddr |= IFIT_I16;
+            if (relSize <= (uint64_t)1 << 31) fitAddr |= IFIT_I32;
             code.fitAddr = fitAddr;
             code.sizeUnknown += uncertain;
             return uncertain;
         }
-        // symbol is relative to data pointer. relocation needed
-        fitAddr = IFIT_RELOC;
-        if (relSize <= 1 << 7)  fitAddr |= IFIT_I8;
-        if (relSize <= 1 << 15) fitAddr |= IFIT_I16;
-        if (relSize <= (uint64_t)1 << 31) fitAddr |= IFIT_I32;
-        code.fitAddr = fitAddr;
-        code.sizeUnknown += uncertain;
-        return uncertain;
     }
     // no symbol. only a signed integer constant
     fitAddr = 0;
@@ -831,7 +843,7 @@ uint32_t findFormat(SInstruction const & listentry, uint32_t imm) {
     }
     instrModel.a.op1 = listentry.op1;
     instrModel.b[0] = imm & 0xFF;
-    // look op details for this format (from disassem1.cpp)
+    // look op details for this format (from emulator2.cpp)
     return lookupFormat(instrModel.q);
 }
 
@@ -993,11 +1005,6 @@ bool CAssembler::instructionFits(SCode const & code, SCode & codeTemp, uint32_t 
     if (codeTemp.category == 2) codeTemp.size = 0;
     codeTemp.instr1 = ii;
 
-    //!!
-    uint32_t fff = code.formatp->format2;
-    if (fff == 0x140)
-        fff |= 0;
-
     // check vector use
     bool useVectors = (code.dtype & TYP_FLOAT) || ((code.dest | code.reg1 | code.reg2) & REG_V);
     if (useVectors) {
@@ -1069,8 +1076,9 @@ bool CAssembler::instructionFits(SCode const & code, SCode & codeTemp, uint32_t 
     // check if mask available
     if ((code.etype & XPR_MASK) && !(code.formatp->tmpl == 0xA || code.formatp->tmpl == 0xE)) return false;
 
-    // check option bits
-    if ((code.etype & XPR_OPTIONS) && code.optionbits != 0 && code.formatp->tmpl != 0xE && (variant & VARIANT_On)) return false; // only template E has option bits
+    // check option bits 
+    if ((code.etype & XPR_OPTIONS) && code.optionbits != 0 && code.formatp->tmpl != 0xE 
+        && (variant & VARIANT_On) && instructionlistId[ii].opimmediate != OPI_INT1688) return false; // only template E has option bits
 
     // check memory operand
     if (code.etype & XPR_MEM) {
@@ -1159,15 +1167,14 @@ bool CAssembler::instructionFits(SCode const & code, SCode & codeTemp, uint32_t 
         return hasImmediate;  // succeed if there is an immediate
     }
 
-
     if (hasImmediate) {
-        if (code.formatp->immSize == 0) return false;  // immediate not supported
+        if (code.formatp->immSize == 0 && instructionlistId[ii].sourceoperands < 4) return false;  // immediate not supported
 
         // todo: check if relocation
 
         // check if size fits. special cases in instruction list
         switch (instructionlistId[ii].opimmediate) { 
-        case 6:  // im2 << im1
+        case OPI_INT8SH:  // im2 << im1
             if (code.fitNum & (IFIT_I8 | IFIT_I8SHIFT)) {   // fits im2 << im1
                 shiftCount = bitScanForward(codeTemp.value.u);
                 codeTemp.value.u = (codeTemp.value.u >> shiftCount << 8) | shiftCount;
@@ -1175,31 +1182,37 @@ bool CAssembler::instructionFits(SCode const & code, SCode & codeTemp, uint32_t 
                 break;
             }
             return false;
-        case 8: // im12 << 16
+        case OPI_INT16SH16: // im12 << 16
             if (code.fitNum & (IFIT_I16 | IFIT_I16SH16)) {   // fits im2 << 16
                 codeTemp.value.u = codeTemp.value.u >> 16;
                 codeTemp.fitNum |= IFIT_I16;  // make it accepted below
                 break;
             }
             return false;
-        case 9: // im2 << 32
+        case OPI_INT32SH32: // im2 << 32
             if (code.fitNum & (IFIT_I32 | IFIT_I32SH32)) {   // fits im2 << 32
                 codeTemp.value.u = codeTemp.value.u >> 32;
                 codeTemp.fitNum |= IFIT_I32;  // make it accepted below
                 break;
             }
             return false;
-        case 20: // 32 bit unsigned integer
+        case OPI_UINT8: // 8 bit unsigned integer
+            if (value0 < 0x100 && value0 > -(int64_t)0x80U) return true;
+            return false;
+        case OPI_UINT16: // 16 bit unsigned integer
+            if (value0 < 0x10000 && value0 > -(int64_t)0x8000U) return true;
+            return false;
+        case OPI_UINT32: // 32 bit unsigned integer
             //if (code.fitNum & IFIT_U32) return true; // this does not work if a float type is specified
             if (value0 < 0x100000000 && value0 > -(int64_t)0x80000000U) return true;
             return false;
-        case 25:  // three integers
+        case OPI_INT886:  // three integers
             codeTemp.value.u = (codeTemp.value.w & 0xFF) | (codeTemp.value.u >> 24);
             return true;
-        case 29:  // three integers: 16 + 8 + 8 bits
+        case OPI_INT1688:  // three integers: 16 + 8 + 8 bits
             codeTemp.value.u = (codeTemp.value.w & 0xFFFF) | (codeTemp.value.u >> 16 & 0xFF0000) | codeTemp.optionbits << 24;
             return true;
-        case 100:  // constant of same type as operand type
+        case OPI_OT:  // constant of same type as operand type
             if ((uint8_t(code.dtype) & ~TYP_UNS) <= uint8_t(TYP_INT32) && code.formatp->immSize >= 4) return true;
         }
         // check if size fits. general cases
@@ -1226,11 +1239,13 @@ bool CAssembler::instructionFits(SCode const & code, SCode & codeTemp, uint32_t 
                 codeTemp.optionbits = shiftCount;
                 break;
             }
+            if (variant & VARIANT_H0) break; // half precision fits
             return false;
         case 4:
             if ((code.dtype & 0xFF) == (TYP_FLOAT32 & 0xFF))  break;  // float32 must be rounded to fit
-            if (codeTemp.fitNum & (IFIT_I32 | FFIT_32)) break;  // fits
+            if (codeTemp.fitNum & (IFIT_I32 | IFIT_U32 | FFIT_32)) break;  // fits
             if ((variant & VARIANT_U0) && (codeTemp.fitNum & IFIT_U32)) break; // unsigned fits
+            if (variant & VARIANT_H0) break; // half precision fits
             if ((codeTemp.dtype & 0x1F) == (TYP_INT32 & 0x1F) && (codeTemp.fitNum & IFIT_U32)) break;  // 32 bit size fits unsigned with no sign extension
             if ((code.formatp->imm2 & 8) && (codeTemp.fitNum & IFIT_I32SHIFT)) {
                 // fits with im4 << im2
@@ -1268,11 +1283,6 @@ bool CAssembler::jumpInstructionFits(SCode const & code, SCode & codeTemp, uint3
     codeTemp.size = (code.formatp->format2 >> 8) & 3;
     codeTemp.instr1 = ii;
 
-    //!!
-    uint32_t fff = code.formatp->format2;
-    if (fff == 0x140 && pass > 3)
-        fff |= 0;
-
     // check vector use
     bool useVectors = (code.dtype & TYP_FLOAT) || (code.dest & 0xE0) == REG_V || (code.reg1 & 0xE0) == REG_V;
     if (useVectors) {
@@ -1306,6 +1316,7 @@ bool CAssembler::jumpInstructionFits(SCode const & code, SCode & codeTemp, uint3
     }
     if (code.formatp->mem & 0x80) numReq--;
     if ((code.etype & (XPR_IMMEDIATE | XPR_MEM)) && numReq) numReq--;
+    if ((code.etype & XPR_INT2) && numReq) numReq--;
     if (numReq > numReg) return false;  // not enough registers in this format
 
     // check if correct number of registers specified
@@ -1394,13 +1405,23 @@ bool CAssembler::jumpInstructionFits(SCode const & code, SCode & codeTemp, uint3
                 if ((codeTemp.dtype & 0x1F) == (TYP_INT8 & 0x1F) && (codeTemp.fitNum & IFIT_U8)) break;  // 8 bit size fits unsigned with no sign extension
                 return false;
             case 2:  // 2 bytes
+                if (instructionlistId[ii].opimmediate == OPI_INT1632) { // 16+32 bits
+                    if ((codeTemp.value.u >> 32) <= 0xFFFF) break;
+                    return false;
+                }
                 if (codeTemp.fitNum & IFIT_I16) break;  // fits
                 if ((codeTemp.dtype & 0x1F) == (TYP_INT16 & 0x1F) && (codeTemp.fitNum & IFIT_U16)) break;  // 16 bit size fits unsigned with no sign extension
                 return false;
             case 4:  // 4 bytes
+                if (instructionlistId[ii].opimmediate == OPI_2INT16) { // 16+16 bits
+                    if (codeTemp.value.w <= 0xFFFF && (codeTemp.value.u >> 32) <= 0xFFFF) break;
+                    return false;
+                }
                 if (codeTemp.fitNum & IFIT_I32) break;  // fits
                 if ((codeTemp.dtype & 0x1F) == (TYP_INT32 & 0x1F) && (codeTemp.fitNum & IFIT_U32)) break;  // 32 bit size fits unsigned with no sign extension
                 return false;
+            case 8:  // 8 bytes
+                break;
             default:  // does not fit other sizes
                 return false;
             }
@@ -1515,9 +1536,15 @@ void CAssembler::checkCode1(SCode & code) {
     // handle half precision
     if (uint8_t(code.dtype) == uint8_t(TYP_FLOAT16)) {
         switch (code.instruction) {
-        case II_ADD: case II_SUB: case II_MUL: case II_DIV: case II_MUL_ADD:
+        case II_ADD: case II_MUL: case II_DIV: case II_MUL_ADD:
             code.instruction |= II_ADD_H & 0xFF000;    // change to half precision instruction
-            // continue in next case:           
+            break;
+        case II_SUB: 
+            if ((code.etype & XPR_IMMEDIATE) && !(code.etype & (XPR_MEM | XPR_REG2))) {
+                code.instruction = II_ADD_H; code.value.d = - code.value.d; // subtract constant changed to add -constant
+            }
+            else code.instruction = II_SUB_H;
+            break;
         case II_SUB_REV:
             if (code.value.i == 0) {   // -x
                 code.instruction = II_TOGGLE_BIT;
@@ -1604,9 +1631,16 @@ void CAssembler::checkCode2(SCode & code) {
 
     // check type
     if (code.dtype == 0) {
-        if ((code.etype & (XPR_INT | XPR_FLT | XPR_REG | XPR_MEM)) && !(variant & VARIANT_D0)) { // type must be specified        
-            errors.reportLine(ERR_TYPE_MISSING);
-            return;
+        if ((code.etype & (XPR_INT | XPR_FLT | XPR_REG | XPR_MEM)) && !(variant & (VARIANT_D0 | VARIANT_D2))) { // type not specified        
+            if (code.instruction == II_MOVE && code.category == 3 && !(code.etype & (XPR_IMMEDIATE | XPR_MEM))) {
+                // register-to-register move. find appropriate operand type
+                code.dtype = TYP_INT64;        // g.p. register. copy whole register
+                if (code.dest & REG_V) code.dtype = TYP_INT8;  // vector register. length must be divisible by tpe
+            }
+            else {
+                errors.reportLine(ERR_TYPE_MISSING);       // type must be specified
+                return;
+            }
         }
     } 
 
@@ -1649,6 +1683,7 @@ void CAssembler::checkCode2(SCode & code) {
     if (code.category == 4 && (code.instruction & II_JUMP_INSTR) && (code.etype & XPR_JUMPOS) && numReq) numReq--;
     //if ((code.etype & (XPR_IMMEDIATE | XPR_MEM)) && numReq && !(variant & VARIANT_M0)) numReq--;
     if ((code.etype & XPR_IMMEDIATE) && numReq) numReq--;
+    if ((code.etype & XPR_INT2) && numReq) numReq--;
     if ((code.etype & XPR_MEM) && !(variant & VARIANT_M0) && numReq) numReq--;
 
     uint32_t nReg = 0;
@@ -1712,12 +1747,19 @@ void CAssembler::checkCode2(SCode & code) {
     }
 
     // check mask register
+    if ((code.etype & XPR_FALLBACK) && !(code.etype & XPR_MASK)) {   // fallback but no mask
+        code.mask = 7;                                               // no mask
+    }
     if ((code.etype & (XPR_MASK | XPR_FALLBACK)) && (code.mask & 7) != 7) {  // mask used
         if ((code.mask & 0xE0) != regType) {  // wrong type for mask register
             errors.reportLine(ERR_WRONG_REG_TYPE);
         }
         else if ((code.fallback & 0xE0) != regType && (code.fallback & 0x1F) != 0x1F) {  // wrong type for fallback registser
-            errors.reportLine(ERR_WRONG_REG_TYPE);
+            if ((variant & VARIANT_RL) && code.fallback == code.reg1) {
+                // fallback has been assigned to reg1 in CAssembler::checkCode1, but reg1 is g.p. register
+                code.fallback = 0x5F;
+            }
+            else errors.reportLine(ERR_WRONG_REG_TYPE);
         }
     }
 
@@ -1728,7 +1770,6 @@ void CAssembler::checkCode2(SCode & code) {
     if (((code.formatp->scale & 4) && scale != -1)     // scale must be -1
         || (((code.formatp->scale & 6) == 2) && scale != dataSizeTable[code.dtype & 7]) // scale must match operand type
         || (((code.formatp->scale & 6) == 0 && scale != 1))) {                          // scale must be 1
-
         errors.reportLine(ERR_SCALE_FACTOR);
     }
     // check vector length
@@ -1743,6 +1784,21 @@ void CAssembler::checkCode2(SCode & code) {
         code.etype = (code.etype & ~XPR_FLT) | XPR_INT;
         //code.value.i = (int64_t)code.value.d;
         code.value.i = value0;
+    }
+    if ((code.etype & XPR_INT) && !(code.etype & (XPR_LIMIT | XPR_INT2))) {
+        // check if value fits specified operand type
+        int ok = 1;
+        switch (code.dtype & 0x1F) {
+        case TYP_INT8 & 0x1F:
+            ok = code.fitNum & (IFIT_I8 | IFIT_U8);  break;
+        case TYP_INT16 & 0x1F:
+            ok = code.fitNum & (IFIT_I16 | IFIT_U16);  break;
+        case TYP_INT32 & 0x1F:
+            ok = code.fitNum & (IFIT_I32 | IFIT_U32);  break;
+        }
+        if (!ok && (instructionlistId[code.instr1].opimmediate & ~0x10) != OPI_INT32) {
+            errors.reportLine(ERR_CONSTANT_TOO_LARGE);
+        }
     }
 
     // check options
@@ -1804,7 +1860,7 @@ void CAssembler::optimizeCode(SCode & code) {
             // should be replaced by addition of the negative constant
             int32_t isym = 0;
             if (code.etype & XPR_SYM1) isym = findSymbol(code.sym1);
-            if (isym <= 0 || symbols[isym].st_shndx == section || cmd.codeSizeOption <= (1 << 9)) {
+            if (isym <= 0 || symbols[isym].st_section == section || cmd.codeSizeOption <= (1 << 9)) {
                 // we are not sure yet, but chances are good that the address fits an 8-bit field. Replace sub by add
                 code.value.i = -code.value.i;       // change sign of immediate constant
                 code.instruction ^= (II_SUB ^ II_ADD);  // replace sub with add

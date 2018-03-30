@@ -1,8 +1,8 @@
 /****************************    assem5.cpp    ********************************
 * Author:        Agner Fog
 * Date created:  2017-09-19
-* Last modified: 2017-11-03
-* Version:       1.00
+* Last modified: 2018-03-30
+* Version:       1.01
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.cpp
 * Description:
@@ -25,6 +25,16 @@ const int HL_FOR_IN      =  7;  // vector loop. for (v1 in [r2-r3]) {}
 const int HL_WHILE       =  8;  // while loop
 const int HL_DO_WHILE    =  9;  // do-while loop
 
+// invert condition code for branch instruction
+void invertCondition(SCode & code) {
+    code.instruction ^= II_JUMP_INVERT;  // invert condition code
+    if ((code.dtype & TYP_FLOAT)
+        && (code.instruction & 0xFF) == II_COMPARE
+        && (code.instruction & 0x7F00) - 0x1000 < 0x2000) {
+        // floating point compare instructions, except jump_ordered, must invert the unordered bit
+        code.instruction ^= II_JUMP_UNORDERED; // inverse condition is unordered
+    }
+}
 
 // if, else, switch, for, do, while statements
 void CAssembler::interpretHighLevelStatement() {
@@ -33,7 +43,7 @@ void CAssembler::interpretHighLevelStatement() {
         // line starts with a label. insert label
         // (this will prevent merging of jump instruction. merging is not allowed when there is a label between the two instructions)
         SCode codeL;
-        memset (&codeL, 0, sizeof(codeL));
+        zeroAllMembers(codeL);
         //codeL.label = tokens[tokenB].value.w; //?
         codeL.label = tokens[tokenB].id;
         codeL.section = section;
@@ -117,12 +127,12 @@ void CAssembler::codeIf() {
                                        // 5: after expression, 6: after ')', 7: after {
     uint32_t tok;                      // current token index
     SBlock block;                      // block descriptor to save
-    memset (&block, 0, sizeof(block)); // reset
+    zeroAllMembers(block);             // reset
     block.blockType = HL_IF;           // if block
     SToken token;                      // current token
     SExpression expr;                  // expression in ()
     SCode code;                        // instruction code
-    memset (&code, 0, sizeof(code));   // reset
+    zeroAllMembers(code);              // reset
 
     // interpret line by state machine looping through tokens
     for (tok = tokenB; tok < tokenB + tokenN; tok++) {
@@ -132,7 +142,7 @@ void CAssembler::codeIf() {
         switch (state) {
         case 0:  // start. expect type or 'if'
             if (token.type == TOK_TYP) {
-                code.dtype = token.id & 0xFF;
+                code.dtype = dataType = token.id & 0xFF;
                 state = 1;
             }
             else if (token.id == HLL_IF) state = 2;
@@ -151,7 +161,7 @@ void CAssembler::codeIf() {
             break;
         case 3: // after '('. expect type or logical expression
             if (token.type == TOK_TYP && !code.dtype) {
-                code.dtype = token.id & 0xFF;
+                code.dtype = dataType = token.id & 0xFF;
                 state = 4;
                 break;
             }
@@ -253,7 +263,7 @@ void CAssembler::codeIf() {
             }
         }
     }
-    code.instruction ^= II_JUMP_INVERT;  // invert condition. jump to else block if logical expression false
+    invertCondition(code);  // invert condition. jump to else block if logical expression false
 
     // make block record with label name
     block.blockNumber = ++iIf;
@@ -284,9 +294,9 @@ void CAssembler::codeIf() {
 // Finish if statement at end bracket
 void CAssembler::codeIf2() {
     SCode code;                             // code record for jump label
-    memset(&code, 0, sizeof(code));         // reset
-    SBlock block = hllBlocks.pop();        // pop the stack of {} blocks
-    uint32_t labelA = block.jumpLabel;           // jump target label to place here
+    zeroAllMembers(code);                   // reset
+    SBlock block = hllBlocks.pop();         // pop the stack of {} blocks
+    uint32_t labelA = block.jumpLabel;      // jump target label to place here
     // check if there is an 'else' following the if(){}
     if (block.blockType == HL_IF && linei+2 < lines.numEntries() && tokens[lines[linei+1].firstToken].id == HLL_ELSE) {
         // there is an else. get next line with the else
@@ -328,7 +338,7 @@ void CAssembler::codeIf2() {
     }
     // make target label here
     if (labelA) {
-        memset(&code, 0, sizeof(code));
+        zeroAllMembers(code);
         code.section = section;
         code.label = labelA;       // jump target label
         codeBuffer.push(code);    // save code structure
@@ -342,11 +352,11 @@ void CAssembler::codeWhile() {
                                        // 5: after expression, 6: after ')', 7: after {
     uint32_t tok;                      // current token index
     SBlock block;                      // block descriptor to save
-    memset (&block, 0, sizeof(block)); // reset
+    zeroAllMembers(block);             // reset
     SToken token;                      // current token
     SExpression expr;                  // expression in ()
     SCode code;                        // instruction code
-    memset (&code, 0, sizeof(code));   // reset
+    zeroAllMembers(code);              // reset
 
     // interpret line by state machine looping through tokens (same as for codeIf)
     for (tok = tokenB; tok < tokenB + tokenN; tok++) {
@@ -356,7 +366,7 @@ void CAssembler::codeWhile() {
         switch (state) {
         case 0:  // start. expect type or 'while'
             if (token.type == TOK_TYP) {
-                code.dtype = token.id & 0xFF;
+                code.dtype = dataType = token.id & 0xFF;
                 state = 1;
             }
             else if (token.id == HLL_WHILE) state = 2;
@@ -375,7 +385,7 @@ void CAssembler::codeWhile() {
             break;
         case 3: // after '('. expect type or logical expression
             if (token.type == TOK_TYP && !code.dtype) {
-                code.dtype = token.id & 0xFF;
+                code.dtype = dataType = token.id & 0xFF;
                 state = 4;
                 break;
             }
@@ -457,7 +467,8 @@ void CAssembler::codeWhile() {
 
     // make code to check condition before first iteration
     SCode code1 = code;
-    code1.instruction ^= II_JUMP_INVERT;  // invert condition to jump if false
+    invertCondition(code1); // invert condition to jump if false
+
     code1.sym1 = block.breakLabel;
     // check if it can be merged with previous instruction
     mergeJump(code1);
@@ -469,7 +480,7 @@ void CAssembler::codeWhile() {
     codeBuffer.push(code1);// save code structure
 
     // make loop label
-    memset(&code1, 0, sizeof(code1));
+    zeroAllMembers(code1);
     code1.label = block.jumpLabel;
     code1.section = section;
     codeBuffer.push(code1);// save code structure
@@ -491,7 +502,7 @@ void CAssembler::codeWhile2() {
     SBlock block = hllBlocks.pop();        // pop the stack of {} blocks
     if (block.continueLabel != 0xFFFFFFFF) {
         // place label here as jump target for continue statements
-        memset(&code, 0, sizeof(code));
+        zeroAllMembers(code);
         code.label = block.continueLabel;
         code.section = section;
         codeBuffer.push(code);
@@ -512,7 +523,7 @@ void CAssembler::codeWhile2() {
         // remove from temporary buffer
         if (block.codeBuffer2index + 1 == codebuf2num) codeBuffer2.pop();
         // place label for breaking out
-        memset(&code, 0, sizeof(code));
+        zeroAllMembers(code);
         code.label = block.breakLabel;
         code.section = section;
         codeBuffer.push(code);  // save label
@@ -524,8 +535,8 @@ void CAssembler::codeWhile2() {
 void CAssembler::codeDo() {
     SBlock block;                          // block record
     SCode code;                            // code record for label
-    memset(&block, 0, sizeof(block));
-    memset(&code, 0, sizeof(code));
+    zeroAllMembers(block);
+    zeroAllMembers(code);
 
     // make block record with label names
     block.blockType = HL_DO_WHILE;        // do-while-block
@@ -566,7 +577,7 @@ void CAssembler::codeDo2() {
     SBlock block = hllBlocks.pop();        // pop the stack of {} blocks
     if (block.continueLabel != 0xFFFFFFFF) {
         // place label here as jump target for continue statements
-        memset(&code, 0, sizeof(code));
+        zeroAllMembers(code);
         code.label = block.continueLabel;
         code.section = section;
         codeBuffer.push(code);
@@ -586,7 +597,7 @@ void CAssembler::codeDo2() {
     uint32_t tok;                      // current token index
     SToken token;                      // current token
     SExpression expr;                  // expression in ()
-    memset(&code, 0, sizeof(code));    // reset code
+    zeroAllMembers(code);              // reset code
 
     // interpret line by state machine looping through tokens
     for (tok = tokenB; tok < tokenB + tokenN; tok++) {
@@ -596,7 +607,7 @@ void CAssembler::codeDo2() {
         switch (state) {
         case 0:  // start. expect type or 'while'
             if (token.type == TOK_TYP) {
-                code.dtype = token.id & 0xFF;
+                code.dtype = dataType = token.id & 0xFF;
                 state = 1;
             }
             else if (token.id == HLL_WHILE) state = 2;
@@ -615,7 +626,7 @@ void CAssembler::codeDo2() {
             break;
         case 3: // after '('. expect type or logical expression
             if (token.type == TOK_TYP && !code.dtype) {
-                code.dtype = token.id & 0xFF;
+                code.dtype = dataType = token.id & 0xFF;
                 state = 4;
                 break;
             }
@@ -668,7 +679,7 @@ void CAssembler::codeDo2() {
 
     if (block.breakLabel != 0xFFFFFFFF) {
         // place label here as jump target for break statements
-        memset(&code, 0, sizeof(code));
+        zeroAllMembers(code);
         code.label = block.breakLabel;
         code.section = section;
         codeBuffer.push(code);
@@ -692,12 +703,13 @@ void CAssembler::codeFor() {
     uint32_t state = 0;                // state while interpreting line
                                        // 0: start, 1: after type, 2: after 'for', 3: after (, 4: after (type, 
     SBlock block;                      // block descriptor to save
-    memset (&block, 0, sizeof(block)); // reset
+    zeroAllMembers(block);             // reset
     block.blockType = HL_FOR;          // 'for' block
     block.breakLabel = block.jumpLabel = block.continueLabel = 0xFFFFFFFF;
     SToken token;                      // current token
     SToken typeToken;                  // token defining type
-    uint32_t type = 0;                 // operand type for all three expressions in for(;;)
+    // uint32_t type = 0;                 // operand type for all three expressions in for(;;)
+    dataType = 0;                      // operand type for all three expressions in for(;;)
     uint32_t symi = 0;                 // symbol index
     char name[48];                     // symbol name
     int conditionFirst = 0;            // evaluation of the condition before first iteration:
@@ -712,7 +724,7 @@ void CAssembler::codeFor() {
 
         if (state == 0) { // start. expect type or 'for'
             if (token.type == TOK_TYP) {
-                type = token.id & 0xFF;
+                dataType = token.id & 0xFF;
                 typeToken = token;
                 state = 1;
             }
@@ -721,7 +733,7 @@ void CAssembler::codeFor() {
         }
         else if (state == 1) { // after type. expect '+' or 'for'
             if (token.type == TOK_OPR && token.id == '+') {
-                type |= TYP_PLUS;
+                dataType |= TYP_PLUS;
             }
             else if (token.id == HLL_FOR) state = 2;
             else errors.report(token);
@@ -731,13 +743,13 @@ void CAssembler::codeFor() {
             else errors.report(token.pos, token.stringLength, ERR_EXPECT_PARENTHESIS);
         }
         else if (state == 3) { // after '('. expect type or initialization
-            if (token.type == TOK_TYP && !type) {
-                type = token.id & 0xFF;
+            if (token.type == TOK_TYP && !dataType) {
+                dataType = token.id & 0xFF;
                 typeToken = token;
                 tok++;
                 if (tok < tokenB + tokenN && tokens[tok].type == TOK_OPR && tokens[tok].id == '+') {
                     // '+' after type
-                    type |= TYP_PLUS;
+                    dataType |= TYP_PLUS;
                     tok++;
                 }
             }
@@ -752,15 +764,15 @@ void CAssembler::codeFor() {
     if (lineError) return;
 
     // check type
-    if (type == 0) {
+    if (dataType == 0) {
         errors.reportLine(ERR_TYPE_MISSING);  return;
     }
     // extend type to int64 if allowed. this allows various optimizations, and int64 is required for array indexes anyway
-    if ((type & TYP_PLUS) && !(type & TYP_FLOAT)) type = TYP_INT64 | (type & TYP_UNS);
+    if ((dataType & TYP_PLUS) && !(dataType & TYP_FLOAT)) dataType = TYP_INT64 | (dataType & TYP_UNS);
 
     // remake token sequence for generating initial instruction
     uint32_t tokensRestorePoint = tokens.numEntries();
-    typeToken.id = type;
+    typeToken.id = dataType;
     tokens.push(typeToken);
     uint32_t tokenFirst = tok;
     if (tokens[tokenFirst].type == TOK_TYP) tokenFirst++; // skip type token. it has already been inserted
@@ -774,7 +786,7 @@ void CAssembler::codeFor() {
     tokenN = tokens.numEntries() - tokensRestorePoint;
     uint32_t codePoint = codeBuffer.numEntries();
     SCode initializationCode;
-    memset(&initializationCode, 0, sizeof(initializationCode));
+    zeroAllMembers(initializationCode);
     if (tokenN > 1) {   // skip if there is no code
         interpretCodeLine();
         if (codeBuffer.numEntries() == codePoint + 1) {
@@ -788,7 +800,7 @@ void CAssembler::codeFor() {
 
     // get next line containing loop condition
     SCode conditionCode;
-    memset(&conditionCode, 0, sizeof(conditionCode));
+    zeroAllMembers(conditionCode);
     conditionCode.section = section;
     if (linei+2 >= lines.numEntries()) {  // no more lines
         errors.reportLine(ERR_UNFINISHED_INSTRUCTION);
@@ -804,10 +816,10 @@ void CAssembler::codeFor() {
         conditionCode.etype = XPR_JUMPOS;
     }
     else {
-        SExpression expr = expression(tokenB, tokenN, (type & TYP_UNS) != 0);
+        SExpression expr = expression(tokenB, tokenN, (dataType & TYP_UNS) != 0);
         if (lineError) return;
         insertAll(conditionCode, expr);  // insert logical expression into block
-        conditionCode.dtype = type;
+        conditionCode.dtype = dataType;
         interpretCondition(conditionCode);  // convert expression to conditional jump
         conditionCode.etype |= XPR_JUMPOS | XPR_SYM1;
         conditionCode.section = section;
@@ -830,11 +842,11 @@ void CAssembler::codeFor() {
                     case 0:  // ==
                         conditionFirst = 2 + (counterStart == expr.value.u);  break;
                     case 1:  // <
-                        if (type & TYP_UNS) conditionFirst = 2 + (counterStart < expr.value.u);
+                        if (dataType & TYP_UNS) conditionFirst = 2 + (counterStart < expr.value.u);
                         else conditionFirst = 2 + ((int64_t)counterStart < expr.value.i);
                         break;
                     case 2:  // >
-                        if (type & TYP_UNS) conditionFirst = 2 + (counterStart > expr.value.u);
+                        if (dataType & TYP_UNS) conditionFirst = 2 + (counterStart > expr.value.u);
                         else conditionFirst = 2 + ((int64_t)counterStart > expr.value.i);
                         break;
                     }
@@ -853,25 +865,25 @@ void CAssembler::codeFor() {
 
     if (conditionFirst == 0) {
         // condition must be checked before first iteration
-        conditionCode.instruction ^= II_JUMP_INVERT;  // invert condition
+        invertCondition(conditionCode);          // invert condition
         sprintf(name, "@for_%u_b", iLoop);
         symi = makeLabelSymbol(name);
         block.breakLabel = symbols[symi].st_name;
         conditionCode.sym1 = block.breakLabel;
         // check if it can be merged with previous instruction
         mergeJump(conditionCode);
-        checkCode1(conditionCode);        // finish code and fit it
+        checkCode1(conditionCode);               // finish code and fit it
         if (lineError) return;    
-        fitCode(conditionCode);       // find an instruction variant that fits
+        fitCode(conditionCode);                  // find an instruction variant that fits
         if (lineError) return;     
-        codeBuffer.push(conditionCode);// save code structure
-        conditionCode.instruction ^= II_JUMP_INVERT;  // invert condition back again
+        codeBuffer.push(conditionCode);          // save code structure
+        invertCondition(conditionCode);          // invert condition back again
     }
     else if (conditionFirst == 2) {
         // condition is known to be false. loop goes zero times
         SCode jumpAlways;
-        memset(&jumpAlways, 0, sizeof(jumpAlways));
-        jumpAlways.instruction = II_JUMP;  // jump past loop
+        zeroAllMembers(jumpAlways);
+        jumpAlways.instruction = II_JUMP;        // jump past loop
         jumpAlways.section = section;
         jumpAlways.etype = XPR_JUMPOS;
         sprintf(name, "@for_%u_goes_zero_times", iLoop);
@@ -880,11 +892,11 @@ void CAssembler::codeFor() {
         jumpAlways.sym1 = block.breakLabel;
         // check if it can be merged with previous instruction
         mergeJump(jumpAlways);
-        checkCode1(jumpAlways);        // finish code and fit it
+        checkCode1(jumpAlways);                  // finish code and fit it
         if (lineError) return;    
-        fitCode(jumpAlways);       // find an instruction variant that fits
+        fitCode(jumpAlways);                     // find an instruction variant that fits
         if (lineError) return;     
-        codeBuffer.push(jumpAlways);// save code structure
+        codeBuffer.push(jumpAlways);             // save code structure
     }
     // make label for loop back
     if (conditionCode.instruction != II_JUMP) {    
@@ -897,35 +909,35 @@ void CAssembler::codeFor() {
     block.jumpLabel = symbols[symi].st_name;
     conditionCode.sym1 = block.jumpLabel;
     SCode codeLabel;
-    memset(&codeLabel, 0, sizeof(codeLabel));
+    zeroAllMembers(codeLabel);
     codeLabel.label = block.jumpLabel;
     codeLabel.section = section;    
     codeBuffer.push(codeLabel);
 
     // get next line containing increment
     linei++;
-    tokenB = lines[linei].firstToken;       // first token in line        
-    tokenN = lines[linei].numTokens;        // number of tokens in line
+    tokenB = lines[linei].firstToken;            // first token in line        
+    tokenN = lines[linei].numTokens;             // number of tokens in line
     // line must end with ')'
     if (tokenN < 1) {
         errors.reportLine(ERR_UNFINISHED_INSTRUCTION);
         return;
     }
     if (tokens[tokenB+tokenN-1].type != TOK_OPR || tokens[tokenB+tokenN-1].id != ')') {
-        errors.report(tokens[tokenB+tokenN-1]); // expecting ')'
+        errors.report(tokens[tokenB+tokenN-1]);  // expecting ')'
         return;
     }
 
     // make instruction for loop counter increment
     tokens.push(typeToken);
-    for (tok = tokenB; tok < tokenB + tokenN - 1; tok++) {  // insert remaining tokens
+    for (tok = tokenB; tok < tokenB + tokenN - 1; tok++) { // insert remaining tokens
         tokens.push(tokens[tok]);
     }
     // make an instruction out of this sequence
     tokenB = tokensRestorePoint;
     tokenN = tokens.numEntries() - tokensRestorePoint;
     SCode incrementCode;
-    memset (&incrementCode, 0, sizeof(incrementCode));
+    zeroAllMembers(incrementCode);
     codePoint = codeBuffer.numEntries();
     if (tokenN > 1) {
         interpretCodeLine();
@@ -947,8 +959,8 @@ void CAssembler::codeFor() {
 
     // get next line containing '{'
     linei++;
-    tokenB = lines[linei].firstToken;       // first token in line        
-    tokenN = lines[linei].numTokens;        // number of tokens in line
+    tokenB = lines[linei].firstToken;            // first token in line        
+    tokenN = lines[linei].numTokens;             // number of tokens in line
     // line must contain '{'
     if (tokenN != 1 || tokens[tokenB].type != TOK_OPR || tokens[tokenB].id != '{') {
         errors.reportLine(ERR_EXPECT_BRACKET);
@@ -963,13 +975,13 @@ void CAssembler::codeFor() {
 
 // Finish for-loop at end bracket
 void CAssembler::codeFor2() {
-    SCode incrementCode;                    // code record for incrementing loop counter
-    SCode conditionCode;                    // code record for conditional jump back
-    SCode labelCode;                        // code record for label
-    SBlock block = hllBlocks.pop();         // pop the stack of {} blocks
+    SCode incrementCode;                         // code record for incrementing loop counter
+    SCode conditionCode;                         // code record for conditional jump back
+    SCode labelCode;                             // code record for label
+    SBlock block = hllBlocks.pop();              // pop the stack of {} blocks
     if (block.continueLabel != 0xFFFFFFFF) {
         // place label here as jump target for continue statements
-        memset(&labelCode, 0, sizeof(labelCode));
+        zeroAllMembers(labelCode);
         labelCode.label = block.continueLabel;
         labelCode.section = section;
         codeBuffer.push(labelCode);
@@ -985,9 +997,9 @@ void CAssembler::codeFor2() {
         if (incrementCode.instruction) {
             checkCode1(incrementCode);
             if (lineError) return;
-            fitCode(incrementCode);       // find an instruction variant that fits
+            fitCode(incrementCode);              // find an instruction variant that fits
             if (lineError) return;
-            codeBuffer.push(incrementCode);  // save code
+            codeBuffer.push(incrementCode);      // save code
         }
 
         // finish condition code and store it
@@ -995,9 +1007,9 @@ void CAssembler::codeFor2() {
         mergeJump(conditionCode);
         checkCode1(conditionCode);
         if (lineError) return;
-        fitCode(conditionCode);       // find an instruction variant that fits
+        fitCode(conditionCode);                  // find an instruction variant that fits
         if (lineError) return;
-        codeBuffer.push(conditionCode);  // save code
+        codeBuffer.push(conditionCode);          // save code
                                 
         // remove from temporary buffer
         if (block.codeBuffer2index + 2 == codebuf2num) {
@@ -1005,10 +1017,10 @@ void CAssembler::codeFor2() {
         }
         // place label for breaking out
         if (block.breakLabel != 0xFFFFFFFF) {
-            memset(&labelCode, 0, sizeof(labelCode));
+            zeroAllMembers(labelCode);
             labelCode.label = block.breakLabel;
             labelCode.section = section;
-            codeBuffer.push(labelCode);  // save label
+            codeBuffer.push(labelCode);          // save label
         }
     }
 }
@@ -1022,11 +1034,11 @@ void CAssembler::codeForIn() {
                                        // 8: after base register, 9: after '-', 10: after index register
                                        // 11: after ']', 12: after ')'
     SBlock block;                      // block descriptor to save
-    memset (&block, 0, sizeof(block)); // reset
+    zeroAllMembers(block);             // reset
     block.blockType = HL_FOR_IN;       // 'for-in' block
     block.breakLabel = block.jumpLabel = block.continueLabel = 0xFFFFFFFF;
     block.blockNumber = ++iLoop;       // number to use in labels
-    //uint32_t baseReg;                  // base register
+    //uint32_t baseReg;                // base register
     uint32_t indexReg = 0;             // index register
     uint32_t tok;                      // token number
     SToken token;                      // current token
@@ -1167,10 +1179,10 @@ void CAssembler::codeForIn() {
         // make label name for break
         sprintf(name, "@for_%u_b", iLoop);
         symi = makeLabelSymbol(name);
-        block.breakLabel = symbols[symi].st_name;  // label to jump back to
+        block.breakLabel = symbols[symi].st_name; // label to jump back to
         // make conditional jump if index not positive
         SCode startCheck;
-        memset(&startCheck, 0, sizeof(startCheck));
+        zeroAllMembers(startCheck);
         startCheck.section = section;
         startCheck.instruction = II_COMPARE | II_JUMP_POSITIVE | II_JUMP_INVERT;
         startCheck.reg1 = indexReg;
@@ -1178,21 +1190,21 @@ void CAssembler::codeForIn() {
         startCheck.etype = XPR_INT | XPR_REG | XPR_REG1 | XPR_JUMPOS;
         startCheck.line = linei;
         startCheck.dtype = TYP_INT64;        
-        mergeJump(startCheck);   // check if it can be merged with previous instruction
+        mergeJump(startCheck);                   // check if it can be merged with previous instruction
         checkCode1(startCheck);
-        fitCode(startCheck);       // find an instruction variant that fits
+        fitCode(startCheck);                     // find an instruction variant that fits
         if (lineError) return;     
-        codeBuffer.push(startCheck);// save instruction
+        codeBuffer.push(startCheck);             // save instruction
     }
     // make label name for loop
     sprintf(name, "@for_%u_a", iLoop);
     symi = makeLabelSymbol(name);
-    block.jumpLabel = symbols[symi].st_name;  // label to jump back to
+    block.jumpLabel = symbols[symi].st_name;     // label to jump back to
     SCode labelCode;
-    memset(&labelCode, 0, sizeof(labelCode));
+    zeroAllMembers(labelCode);
     labelCode.section = section;
     labelCode.label = block.jumpLabel;
-    codeBuffer.push(labelCode);   // save label
+    codeBuffer.push(labelCode);                  // save label
 
     // save index registr and type in block
     block.codeBuffer2num = indexReg;
@@ -1204,17 +1216,17 @@ void CAssembler::codeForIn() {
 
 // Finish for-in vector loop in assembly code
 void CAssembler::codeForIn2() {
-    SCode code;                            // code record for jump back
-    SBlock block = hllBlocks.pop();        // pop the stack of {} blocks
+    SCode code;                                  // code record for jump back
+    SBlock block = hllBlocks.pop();              // pop the stack of {} blocks
     if (block.continueLabel != 0xFFFFFFFF) {
         // place label here as jump target for continue statements
-        memset(&code, 0, sizeof(code));
+        zeroAllMembers(code);
         code.label = block.continueLabel;
         code.section = section;
         codeBuffer.push(code);
     }
     // make loop instruction
-    memset(&code, 0, sizeof(code));
+    zeroAllMembers(code);
     code.section = section;
     code.line = linei;
     code.instruction = II_SUB_MAXLEN | II_JUMP_POSITIVE;
@@ -1230,7 +1242,7 @@ void CAssembler::codeForIn2() {
     codeBuffer.push(code);  // save instruction
     // make break label
     if (block.breakLabel != 0xFFFFFFFF) {
-        memset(&code, 0, sizeof(code));
+        zeroAllMembers(code);
         code.section = section;
         code.label = block.breakLabel;
         codeBuffer.push(code);   // save label
@@ -1265,7 +1277,7 @@ void CAssembler::codeBreak() {
     }
     // make jump to symi
     SCode code;
-    memset(&code, 0, sizeof(code));
+    zeroAllMembers(code);
     code.section = section;
     code.instruction = II_JUMP;
     code.etype = XPR_JUMPOS | XPR_SYM1;
@@ -1350,10 +1362,10 @@ uint32_t CAssembler::findBreakTarget(uint32_t k) {
 // Make a symbol for branch label etc., address not known yet. Returns zero if already defined
 uint32_t CAssembler::makeLabelSymbol(const char * name) {
     ElfFWC_Sym2 sym;
-    memset(&sym, 0, sizeof(sym));
+    zeroAllMembers(sym);
     sym.st_type = STT_FUNC;
     sym.st_other = STV_HIDDEN | STV_IP;
-    sym.st_shndx = section;
+    sym.st_section = section;
     sym.st_name = symbolNameBuffer.putStringN(name, (uint32_t)strlen(name));
     uint32_t symi = addSymbol(sym);  // save symbol with name
     if (symi == 0) {
@@ -1494,6 +1506,9 @@ void CAssembler::interpretCondition(SCode & code) {
             errors.reportLine(ERR_EXPECT_LOGICAL); // should not occur
         }
         if (code.optionbits & 1) code.instruction ^= II_JUMP_INVERT; // invert if bit 0    
+        if ((code.optionbits & 8) && (code.dtype & TYP_FLOAT) && (code.instruction & 0x7F00) - 0x1000 < 0x2000) {
+            code.instruction ^= II_JUMP_UNORDERED; // unordered bit
+        }
     }
     else if ((code.instruction & 0xFF) == II_AND && (code.etype & XPR_INT)) {
         // bit test. if (r1 & 1 << n)
@@ -1519,7 +1534,7 @@ void CAssembler::codePush() {
     uint32_t tok = 0;                       // token index
     SToken token;                           // token
     SCode code;                             // code structure
-    memset(&code, 0, sizeof(code));
+    zeroAllMembers(code);
     code.section = section;
     // loop through tokens on line
     for (tok = tokenB; tok < tokenB + tokenN; tok++) {
@@ -1609,7 +1624,7 @@ void CAssembler::codePop() {
     uint32_t tok = 0;                       // token index
     SToken token;                           // token
     SCode code;                             // code structure
-    memset(&code, 0, sizeof(code));
+    zeroAllMembers(code);
     code.section = section;
     // loop through tokens on line
     for (tok = tokenB; tok < tokenB + tokenN; tok++) {

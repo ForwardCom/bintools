@@ -1,8 +1,8 @@
 /****************************    assem6.cpp    ********************************
 * Author:        Agner Fog
 * Date created:  2017-08-07
-* Last modified: 2017-11-03
-* Version:       1.00
+* Last modified: 2018-03-30
+* Version:       1.01
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.cpp
 * Description:
@@ -82,12 +82,13 @@ void CAssembler::pass4() {
                 else {  // not an instruction
                     if (codeBuffer[i].instruction == II_ALIGN) {
                         // align directive. round up address to nearest multiple of alignment value
-                        uint32_t newAddress = (addr + codeBuffer[i].value.w - 1) & uint32_t(-codeBuffer[i].value.i);
+                        uint32_t ali = bitScanReverse(codeBuffer[i].value.u);
+                        uint32_t newAddress = (addr + ali - 1) & uint32_t(-(int32_t)ali);
                         codeBuffer[i].size = (newAddress - addr) >> 2;    // size of alignment fillers
                         if (codeBuffer[i].size != lastSize) changes++;    // count changes if size changed
-                        if (numUncertain) numUncertain += (codeBuffer[i].value.w >> 2) - 1 - codeBuffer[i].size; // maximum additional size if size of previous instructions change
-                        if (section && sectionHeaders[section].sh_addralign < codeBuffer[i].value.w) {
-                            sectionHeaders[section].sh_addralign = codeBuffer[i].value.w; // adjust alignment of this section
+                        if (numUncertain) numUncertain += (ali >> 2) - 1 - codeBuffer[i].size; // maximum additional size if size of previous instructions change
+                        if (section && sectionHeaders[section].sh_align < ali) {
+                            sectionHeaders[section].sh_align = ali; // adjust alignment of this section
                         }
                     }
                 }
@@ -180,7 +181,7 @@ void CAssembler::interpretPublicDirective() {
             else if (token.type == TOK_OPR && token.id == ',') {
             EXPORT_SYMBOL:
                 // check if external
-                if (symbols[symi].st_shndx == 0) {
+                if (symbols[symi].st_section == 0) {
                     errors.report(tokens[symtok].pos, tokens[symtok].stringLength, ERR_CANNOT_EXPORT);
                     state = 1;
                     continue;                    
@@ -192,7 +193,12 @@ void CAssembler::interpretPublicDirective() {
                     break;
                 case STT_OBJECT:
                 case STT_FUNC:
+                    break;  // ok
                 case STT_CONSTANT:
+                    if (sectionHeaders.numEntries() == 0) {
+                        // file must have at least one section because constant needs a section idex
+                        err.submit(ERR_ELF_NO_SECTIONS);
+                    }
                     break;  // ok
                 case STT_VARIABLE:  // meta-variable has been assigned multiple values
                     errors.report(tokens[symtok].pos, tokens[symtok].stringLength, ERR_SYMBOL_REDEFINED);
@@ -235,12 +241,28 @@ void CAssembler::interpretPublicDirective() {
             else if (token.id == REG_THREADP) {
                 symbols[symi].st_other = (symbols[symi].st_other & ~ (STV_IP | SHF_DATAP)) | SHF_THREADP;
             }
+            else if (token.id == ATT_REGUSE) {
+                if (tokens[tok + 1].id == '=' && tokens[tok + 2].type == TOK_NUM) {
+                    tok += 2;
+                    symbols[symi].st_reguse1 = expression(tok, 1, 0).value.w;
+                    symbols[symi].st_other |= STV_REGUSE;
+                    if (tokens[tok + 1].id == ',' && tokens[tok + 2].type == TOK_NUM) {
+                        tok += 2;
+                        symbols[symi].st_reguse2 = expression(tok, 1, 0).value.w;
+                    }
+                } 
+            }
             else errors.report(token);
             state = 4;
             break;
         case 4:  // after attribute. expect ',' or more attributes
-            if (token.type == TOK_OPR && token.id == ',') goto EXPORT_SYMBOL;
-            if (token.type == TOK_ATT || token.type == TOK_DIR || token.type == TOK_REG) goto SET_ATTRIBUTE;
+            if (token.type == TOK_OPR && token.id == ',') {
+                uint32_t typ2 = tokens[tok+1].type;
+                if (typ2 == TOK_ATT || typ2 == TOK_DIR || typ2 == TOK_REG) break;
+                else goto EXPORT_SYMBOL;
+            }
+            if (token.type == TOK_ATT || token.type == TOK_DIR || token.type == TOK_REG) 
+                goto SET_ATTRIBUTE;
             errors.report(token);
             return;
         }
@@ -251,7 +273,6 @@ void CAssembler::interpretPublicDirective() {
 
 // Make binary file
 void CAssembler::pass5() {
-    uint32_t i;                // loop counter
 
     // make a databuffer for each section
     uint32_t nSections = sectionHeaders.numEntries();
@@ -265,23 +286,10 @@ void CAssembler::pass5() {
     makeBinaryData();
 
     // make sections
-    for (i = 1; i < nSections; i++) {
-        if (dataBuffers[i].dataSize() > sectionHeaders[i].sh_size) {  // dataSize() is zero for uninitialized data sections
-            sectionHeaders[i].sh_size = dataBuffers[i].dataSize();    // this should never be necessary
-        }
-        sectionHeaders[i].sh_link = 0;  // remove temporary information used during optimization passes
-        outFile.addSection(sectionHeaders[i], symbolNameBuffer, dataBuffers[i]);
-    }
+    copySections();
 
     // copy symbols
-    for (i = 0; i < symbols.numEntries(); i++) {
-        if (symbols[i].st_type != STT_SECTION && symbols[i].st_type < STT_VARIABLE) {
-            uint32_t newSymi;                                  // symbol index in outFile
-            newSymi = outFile.addSymbol(symbols[i], symbolNameBuffer);
-            // save new symbol index for use in relocation records
-            symbols[i].st_unitnum = newSymi;
-        }
-    }
+    copySymbols();
 
     // copy relocations
     makeBinaryRelocations();
@@ -290,13 +298,42 @@ void CAssembler::pass5() {
     if (cmd.outputListFile) makeListFile();
 
     if (cmd.debugOptions == 0) {
-        // remove local symbols if not debug output and no relocation reference to them, 
+        // remove local and external symbols if not debug output and no relocation reference to them, 
         // and adjust relocation records with new symbol indexes, after making list file
         outFile.removePrivateSymbols();
     }
 
     // write assembly output file
-    outFile.join(ET_REL);  // make ELF file from sections, etc.
+    outFile.join(0);                             // make ELF file from sections, etc.
+}
+
+// copy sections to outFile
+void CAssembler::copySections() {
+    for (uint32_t i = 1; i < sectionHeaders.numEntries(); i++) {
+        if (dataBuffers[i].dataSize() > sectionHeaders[i].sh_size) {  // dataSize() is zero for uninitialized data sections
+            sectionHeaders[i].sh_size = dataBuffers[i].dataSize();    // this should never be necessary
+        }
+        sectionHeaders[i].sh_link = 0;  // remove temporary information used during optimization passes
+        outFile.addSection(sectionHeaders[i], symbolNameBuffer, dataBuffers[i]);
+    }
+}
+
+// copy symbols to outFile
+void CAssembler::copySymbols() {
+    for (uint32_t i = 0; i < symbols.numEntries(); i++) {
+        // exclude section symbols and local constants
+        if (symbols[i].st_type != STT_SECTION && symbols[i].st_type < STT_VARIABLE) {
+            // check if symbol is in a communal section
+            uint32_t sect = symbols[i].st_section;
+            if (sect && sect < sectionHeaders.numEntries() && sectionHeaders[sect].sh_type == SHT_COMDAT && symbols[i].st_bind == STB_GLOBAL) {
+                // public symbol in communal section must be weak
+                symbols[i].st_bind = STB_WEAK;
+            }
+            uint32_t newSymi = outFile.addSymbol(symbols[i], symbolNameBuffer);
+            // save new symbol index for use in relocation records
+            symbols[i].st_unitnum = newSymi;
+        }
+    }
 }
 
 // make binary data for code sections
@@ -307,7 +344,6 @@ void CAssembler::makeBinaryCode() {
     uint32_t templ;            // format template
     uint32_t instructId;       // instruction as index into instructionlistId
     SFormat const * formatp = 0; // record in formatList
-    //ElfFWC_Rela relocation = {0,0,0,0,0}; // relocation record
     uint32_t nSections = sectionHeaders.numEntries();
 
     // loop through code objects
@@ -343,6 +379,7 @@ void CAssembler::makeBinaryCode() {
         uint8_t opAvail = formatp->opAvail;  // registers available in this format
 
         int nOp = instructionlistId[instructId].sourceoperands;
+        if (nOp > 3 && instructionlistId[instructId].opimmediate) opAvail |= 1;  // special case: 3 registers and an immediate
 
         if (templ == 0xA || templ == 0xE) nOp++;  // make one more register for fallback, even if it is unused
 
@@ -352,7 +389,6 @@ void CAssembler::makeBinaryCode() {
                                                 // Loop through the bits in opAvail in reverse order to pick operands according to priority
         while (j >= 0 && a < 8) {     
             if (opAvail & (1 << a)) {
-                //opAvail &= ~(1 << a);
                 operands[j--] = 1 << a;
             }
             a++;
@@ -364,10 +400,16 @@ void CAssembler::makeBinaryCode() {
         if (codeBuffer[i].etype & XPR_REG3) registers[a--] = codeBuffer[i].reg3;
         if (codeBuffer[i].etype & XPR_REG2) registers[a--] = codeBuffer[i].reg2;
         if (codeBuffer[i].etype & XPR_REG1) registers[a--] = codeBuffer[i].reg1;
-        if (codeBuffer[i].etype & (XPR_MASK | XPR_FALLBACK)) registers[a--] = codeBuffer[i].fallback;
-        // Make any remaining registers equal to first source for possible fallback 
-        // or to avoid false dependence on unused register in superscalar processor
-        while (a >= 0) registers[a--] = codeBuffer[i].reg1;
+        // Make any remaining registers equal to fallback or first source 
+        // to avoid false dependence on unused register in superscalar processor
+        while (a >= 0) {
+            if (codeBuffer[i].etype & (XPR_MASK | XPR_FALLBACK)) {
+                registers[a--] = codeBuffer[i].fallback;
+            }
+            else {            
+                registers[a--] = codeBuffer[i].reg1;
+            }
+        }
 
         if (codeBuffer[i].category != 2) {  // all instructions except tiny
             // Loop through operands to assign registers
@@ -479,7 +521,12 @@ void CAssembler::makeBinaryCode() {
                     }
                     break;
                 case 2:    // 16 bits immediate
-                    if ((codeBuffer[i].etype & XPR_IMMEDIATE) == XPR_FLT) {
+                    if (instructionlistId[instructId].opimmediate == OPI_INT1632 && format > 0x200) {
+                        // 16-bit + 32 bit integer operands
+                        *(int16_t *)(instr_b + immPos) = int16_t(value >> 32);
+                        *(int32_t *)(instr_b + 4) = int32_t(value);
+                    }
+                    else if ((codeBuffer[i].etype & XPR_IMMEDIATE) == XPR_FLT) {
                         *(int16_t *)(instr_b + immPos) = double2half(codeBuffer[i].value.d);  // convert double to float16
                     }
                     else {
@@ -487,7 +534,12 @@ void CAssembler::makeBinaryCode() {
                     }
                     break;
                 case 4:    // 32 bits immediate
-                    if ((codeBuffer[i].etype & XPR_IMMEDIATE) == XPR_FLT) {   // convert double to float
+                    if (instructionlistId[instructId].opimmediate == OPI_2INT16) {
+                        // two 16-bit integer operands
+                        value = (uint32_t)value << 16 | uint32_t(value >> 32);
+                        *(int32_t *)(instr_b + immPos) = int32_t(value);
+                    }
+                    else if ((codeBuffer[i].etype & XPR_IMMEDIATE) == XPR_FLT) {   // convert double to float
                         *(float *)(instr_b + immPos) = float(codeBuffer[i].value.d);
                     }
                     else {
@@ -496,14 +548,29 @@ void CAssembler::makeBinaryCode() {
                     }
                     break;
                 case 8:    // 64 bits immediate
+                    if (instructionlistId[instructId].opimmediate == OPI_2INT32) {
+                        // two 32-bit integers. swap them
+                        value = value >> 32 | value << 32;
+                    }
                     *(int64_t *)(instr_b + immPos) = value;
                 }
             }
+            else if (opAvail & 1) {   // special case: three registers and an immediate
+                int64_t value = calculateConstantOperand(codeBuffer[i], codeBuffer[i].address + codeBuffer[i].formatp->immPos, codeBuffer[i].formatp->immSize);
+                *(int16_t *)(instr_b + 4) = int16_t(value);
+            }
 
             if (formatp->imm2 & 0x80) {
-                // opj is in IM1
-                instr.b[0] = instructionlistId[instructId].op1;
-                instr.a.op1 = format & 7;
+                if (!(formatp->imm2 & 0x40)) {
+                    instr.b[0] = instructionlistId[instructId].op1; // no OPJ
+                }
+                instr.a.op1 = format & 7;                // OPJ is in IM1
+            }
+            if (formatp->imm2 & 0x40) {
+                // insert constant
+                if (formatp->format2 == 0x155) {
+                    instr.i[0] = fillerInstruction;  // filler instruction
+                }
             }
 
             // additional fields for format E
@@ -586,7 +653,7 @@ void CAssembler::makeBinaryData() {
             tokenN = lines[linei].numTokens; // number of tokens in line
             if (tokens[tokenB].type == TOK_DIR) continue;  // ignore directives here
             if (tokenN > 1) {               // lines with a single token cannot legally define a symbol name
-                if (tokens[tokenB].type == TOK_TYP && tokens[tokenB + 1].type == TOK_SYM) {
+                if (tokens[tokenB].type == TOK_TYP && tokens[tokenB+1].type == TOK_SYM) {
                     interpretVariableDefinition2();
                 }
                 else if (tokens[tokenB].type == TOK_ATT && tokens[tokenB].id == ATT_ALIGN) {  
@@ -607,18 +674,34 @@ void CAssembler::makeBinaryRelocations() {
     // copy relocation records
     for (i = 0; i < relocations.numEntries(); i++) {
         // translate symbol indexes in relocation records
-        int32_t symi1 = 0, symi2 = 0;                                  // symbol index
+        int32_t symi1, symi2;                    // symbol index
+        uint32_t newSymi1, newSymi2;             // symbol index in output file
         if (relocations[i].r_sym) {
             symi1 = findSymbol(relocations[i].r_sym);
             if (symi1 > 0) {
-                relocations[i].r_sym = symbols[symi1].st_unitnum;  // replace by symbol index in outFile
+                newSymi1 = symbols[symi1].st_unitnum;
+                relocations[i].r_sym = newSymi1;  // replace by symbol index in outFile
+                uint32_t sect = symbols[symi1].st_section;
+                if (sect && symbols[symi1].st_bind == STB_WEAK) {
+                    // there is a local reference to a weak public symbol. Make it both import and export
+                    outFile.symbols[newSymi1].st_bind = STB_WEAK2;
+                }
+                if (sect && sect < sectionHeaders.numEntries() && sectionHeaders[sect].sh_type == SHT_COMDAT) {
+                    // there is a local reference to a symbol in a communal section. Make it both import and export
+                    outFile.symbols[newSymi1].st_bind = STB_WEAK2;
+                }
             }
             else relocations[i].r_sym = 0;  // should not occur
         }
         if (relocations[i].r_refsym) {                 // reference symbol
             symi2 = findSymbol(relocations[i].r_refsym);
             if (symi2 > 0) {
-                relocations[i].r_refsym = symbols[symi2].st_unitnum;  // replace by symbol index in outFile
+                newSymi2 = symbols[symi2].st_unitnum;
+                relocations[i].r_refsym = newSymi2;  // replace by symbol index in outFile
+                if (symbols[symi2].st_section && symbols[symi2].st_bind == STB_WEAK) {
+                    // there is a local reference to a weak public symbol. Make it both import and export
+                    outFile.symbols[newSymi2].st_bind = STB_WEAK2;
+                }
             }
             else relocations[i].r_refsym = 0;  // should not occur
         }
@@ -632,6 +715,8 @@ void CAssembler::makeListFile() {
     CDisassembler disassembler;       // make an instance of CDisassembler
     // give all my tables to the disassembler
     disassembler.getComponents2(outFile, instructionlist);
+    // change output file name
+    disassembler.outputFile = cmd.outputListFile;
     // do the disassembly
     disassembler.go();
 }
@@ -642,7 +727,7 @@ int64_t CAssembler::calculateMemoryOffset(SCode & code) {
     int32_t symi1 = 0, symi2 = 0;
     if (code.sym1) symi1 = findSymbol(code.sym1); // target symbol, if any
     if (code.sym2) symi2 = findSymbol(code.sym2); // reference symbol, if any
-    ElfFWC_Rela2 relocation;                      // relocation, if needed
+    ElfFwcReloc relocation;                      // relocation, if needed
     bool needsRelocation = false;                 // relocation needed
 
     uint8_t fieldPos = code.formatp -> addrPos;          // position of address or immediate field
@@ -662,7 +747,7 @@ int64_t CAssembler::calculateMemoryOffset(SCode & code) {
         if (symi2) {
             // difference between two symbols
             if (code.symscale == 0) code.symscale = 1;
-            if (symbols[symi1].st_shndx == symbols[symi2].st_shndx && symbols[symi1].st_bind == STB_LOCAL && symbols[symi2].st_bind == STB_LOCAL) {
+            if (symbols[symi1].st_section == symbols[symi2].st_section && symbols[symi1].st_bind == STB_LOCAL && symbols[symi2].st_bind == STB_LOCAL) {
                 // both symbols are local in same section. final value can be calculated
                 value = (int64_t)(symbols[symi1].st_value - symbols[symi2].st_value) / code.symscale;
                 value = (value + code.offset) >> scale;
@@ -681,7 +766,7 @@ int64_t CAssembler::calculateMemoryOffset(SCode & code) {
             // a single symbol
             // is symbol relative to IP, DATAP, THREADP or constant?
             //uint8_t basepointer = 0;
-            uint32_t symsection = symbols[symi1].st_shndx;
+            uint32_t symsection = symbols[symi1].st_section;
             if (symbols[symi1].st_type == STT_CONSTANT) {
                 // constant
                 relocation.r_type = R_FORW_ABS | scale;
@@ -703,7 +788,8 @@ int64_t CAssembler::calculateMemoryOffset(SCode & code) {
                     else {
                         // local symbol in different IP section. needs relocation
                         code.base = 30;
-                        relocation.r_type = R_FORW_SELFREL;
+                        relocation.r_type = R_FORW_SELFREL;     // self-relative
+                        if (code.instruction & II_JUMP_INSTR) relocation.r_type |= R_FORW_SCALE4; // jump instruction scaled by 4
                         relocation.r_addend = fieldPos - code.size * 4;  // position of relocated field relative to instruction end
                         relocation.r_sym = code.sym1;          // temporary symbol index. resolve when symbol table created
                         relocation.r_refsym = 0;
@@ -734,6 +820,7 @@ int64_t CAssembler::calculateMemoryOffset(SCode & code) {
                     // relative to IP
                     code.base = (uint8_t)REG_IP;
                     relocation.r_type = R_FORW_SELFREL;
+                    if (code.instruction & II_JUMP_INSTR) relocation.r_type |= R_FORW_SCALE4;
                     relocation.r_addend = fieldPos - code.size * 4;  // position of relocated field relative to instruction end
                 }
                 else if (symbols[symi1].st_other & STV_THREADP) {
@@ -751,6 +838,9 @@ int64_t CAssembler::calculateMemoryOffset(SCode & code) {
                 relocation.r_sym = code.sym1;          // temporary symbol index. resolve when symbol table created
                 relocation.r_refsym = 0;
                 relocation.r_addend += (int32_t)code.offset;
+                if (code.formatp->addrSize == 1 && !(relocation.r_type & R_FORW_RELSCALEMASK)) {
+                    relocation.r_type |= scale;
+                }
                 needsRelocation = true;
             }
         }
@@ -784,7 +874,7 @@ int64_t CAssembler::calculateConstantOperand(SExpression & expr, uint64_t addres
         if (symi2 < 1) {errors.reportLine(ERR_SYMBOL_UNDEFINED);  return 0;}
     }
 
-    ElfFWC_Rela2 relocation;                       // relocation, if needed
+    ElfFwcReloc relocation;                       // relocation, if needed
     bool needsRelocation = false;           
     // relocation needed
 
@@ -792,7 +882,7 @@ int64_t CAssembler::calculateConstantOperand(SExpression & expr, uint64_t addres
         // there is a symbol
         if (symi2) {
             // difference between two symbols
-            if (symbols[symi1].st_shndx == symbols[symi2].st_shndx && symbols[symi1].st_bind == STB_LOCAL && symbols[symi2].st_bind == STB_LOCAL) {
+            if (symbols[symi1].st_section == symbols[symi2].st_section && symbols[symi1].st_bind == STB_LOCAL && symbols[symi2].st_bind == STB_LOCAL) {
                 // both symbols are local in same section. final value can be calculated
                 value = (int64_t)(symbols[symi1].st_value - symbols[symi2].st_value);
                 if (expr.symscale > 1) value /= expr.symscale;
@@ -825,7 +915,7 @@ int64_t CAssembler::calculateConstantOperand(SExpression & expr, uint64_t addres
                 relocation.r_refsym = 0;           // Reference symbol
                 if (expr.symscale > 1) relocation.r_type |= bitScanReverse(expr.symscale);  // scale factor
                 relocation.r_addend = int32_t(expr.value.w);      // Addend
-                if (symbols[symi1].st_shndx && fieldSize < 4) {
+                if (symbols[symi1].st_section && fieldSize < 4) {
                     expr.etype = XPR_ERROR;
                     value = ERR_ABS_RELOCATION;
                 }

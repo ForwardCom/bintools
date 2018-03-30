@@ -1,14 +1,14 @@
 /****************************    assem1.cpp    ********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2017-11-03
-* Version:       1.00
+* Last modified: 2018-03-30
+* Version:       1.01
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.cpp
 * Description:
 * Module for assembling ForwardCom .as files. Contains:
 * pass1(): Split input file into lines and tokens. Remove comments. Find symbol definitions
-* pass2(): Mandle meta code. Classify lines. Identify symbol names, sections, functions
+* pass2(): Handle meta code. Classify lines. Identify symbol names, sections, functions
 *
 * Copyright 2017 GNU General Public License http://www.gnu.org/licenses
 ******************************************************************************/
@@ -18,10 +18,7 @@ const char * allowedInNames = "_$@";   // characters allowed in symbol names (do
 const bool allowUTF8 = true;           // UTF-8 characters allowed in symbol names
 const bool allowNestedComments = true; // allow nested comments: /* /* */ */
 
-// Buffer for symbol names is made global in order to make it accessible to bool operator < (ElfFWC_Sym2 const &, ElfFWC_Sym2 const &)
-CTextFileBuffer symbolNameBuffer;      // Buffer for symbol names during assembly
-
-                                        // Operator for sorting symbols by name. Used by assembler
+                                       // Operator for sorting symbols by name. Used by assembler
 // List of operators
 SOperator operatorsList[] = {
     // name, id, priority
@@ -82,71 +79,76 @@ SOperator operatorsList[] = {
 // List of keywords
 SKeyword keywordsList[] = {
     // name, id
-    {"section",     DIR_SECTION},      // TOK_DIR: section, functions directives
-    {"function",    DIR_FUNCTION},
-    {"end",         DIR_END},
-    {"public",      DIR_PUBLIC},
-    {"extern",      DIR_EXTERN},
+    {"section",        DIR_SECTION},        // TOK_DIR: section, functions directives
+    {"function",       DIR_FUNCTION},
+    {"end",            DIR_END},
+    {"public",         DIR_PUBLIC},
+    {"extern",         DIR_EXTERN},
 
     // TOK_ATT: attributes of sections, functions and symbols
-    {"read",        ATT_READ},         // readable section
-    {"write",       ATT_WRITE},        // writeable section
-    {"execute",     ATT_EXEC},         // executable section
-    {"align",       ATT_ALIGN},        // align section, data, or code
-    {"weak",        ATT_WEAK},         // weak linking
-    {"constant",    ATT_CONSTANT},     // external constant
-    {"uninitialized", ATT_UNINIT},     // uninitialized section (BSS)
-    {"communal",    ATT_COMDAT},       // communal section. duplicates and unreferenced sections are removed
+    {"read",           ATT_READ},           // readable section
+    {"write",          ATT_WRITE},          // writeable section
+    {"execute",        ATT_EXEC},           // executable section
+    {"align",          ATT_ALIGN},          // align section, data, or code
+    {"weak",           ATT_WEAK},           // weak linking
+    {"reguse",         ATT_REGUSE},         // register use    
+    {"constant",       ATT_CONSTANT},       // external constant
+    {"uninitialized",  ATT_UNINIT},         // uninitialized section (BSS)
+    {"communal",       ATT_COMDAT},         // communal section. duplicates and unreferenced sections are removed
+    {"exception_hand", ATT_EXCEPTION},      // exception handler and stack unroll information
+    {"event_hand",     ATT_EVENT},          // event handler list, including constructors and destructors
+    {"debug_info",     ATT_DEBUG},          // debug information
+    {"comment_info",   ATT_COMMENT},        // comments, including copyright and required libraries
 
     // TOK_TYP: type names
-    {"int8",        TYP_INT8},      
-    {"uint8",       TYP_INT8+TYP_UNS},
-    {"int16",       TYP_INT16},
-    {"uint16",      TYP_INT16+TYP_UNS},
-    {"int32",       TYP_INT32},
-    {"uint32",      TYP_INT32+TYP_UNS},
-    {"int64",       TYP_INT64},
-    {"uint64",      TYP_INT64+TYP_UNS},
-    {"int128",      TYP_INT128},
-    {"uint128",     TYP_INT128+TYP_UNS},
-    {"float",       TYP_FLOAT32},
-    {"double",      TYP_FLOAT64},
-    {"float16",     TYP_FLOAT16},
-    {"float32",     TYP_FLOAT32},
-    {"float64",     TYP_FLOAT64},
-    {"float128",    TYP_FLOAT128},
-    {"string",      TYP_STRING},  
+    {"int8",           TYP_INT8},      
+    {"uint8",          TYP_INT8+TYP_UNS},
+    {"int16",          TYP_INT16},
+    {"uint16",         TYP_INT16+TYP_UNS},
+    {"int32",          TYP_INT32},
+    {"uint32",         TYP_INT32+TYP_UNS},
+    {"int64",          TYP_INT64},
+    {"uint64",         TYP_INT64+TYP_UNS},
+    {"int128",         TYP_INT128},
+    {"uint128",        TYP_INT128+TYP_UNS},
+    {"float",          TYP_FLOAT32},
+    {"double",         TYP_FLOAT64},
+    {"float16",        TYP_FLOAT16},
+    {"float32",        TYP_FLOAT32},
+    {"float64",        TYP_FLOAT64},
+    {"float128",       TYP_FLOAT128},
+    {"string",         TYP_STRING},  
 
     // TOK_OPT: options of instructions and operands
-    {"mask",        OPT_MASK},      
-    {"fallback",    OPT_FALLBACK},
-    {"length",      OPT_LENGTH},
-    {"broadcast",   OPT_BROADCAST},    
-    {"limit",       OPT_LIMIT},
-    {"scalar",      OPT_SCALAR},
-    {"options",     OPT_OPTIONS}, 
+    {"mask",           OPT_MASK},      
+    {"fallback",       OPT_FALLBACK},
+    {"length",         OPT_LENGTH},
+    {"broadcast",      OPT_BROADCAST},    
+    {"limit",          OPT_LIMIT},
+    {"scalar",         OPT_SCALAR},
+    {"options",        OPT_OPTIONS}, 
 
     // TOK_REG: register names
-    {"threadp",     REG_THREADP},      
-    {"datap",       REG_DATAP},
-    {"ip",          REG_IP},
-    {"sp",          REG_SP},
+    {"threadp",        REG_THREADP},      
+    {"datap",          REG_DATAP},
+    {"ip",             REG_IP},
+    {"sp",             REG_SP},
 
     // TOK_HLL: high level language keywords
-    {"if",          HLL_IF},         
-    {"else",        HLL_ELSE},
-    {"switch",      HLL_SWITCH},     // switch (r1, scratch registers) { case 0: break; ...}
-    {"case",        HLL_CASE},
-    {"for",         HLL_FOR},        // for (r1 = 1; r1 <= r2; r1++) {}
-    {"in",          HLL_IN},         // for (float v1 in [r1-r2], nocheck) // (r2 counts down)
-    {"while",       HLL_WHILE},      // while (r1 > 0) {}
-    {"do",          HLL_DO},         // do {} while ()
-    {"break",       HLL_BREAK},      // break out of switch or loop
-    {"continue",    HLL_CONTINUE},   // continue loop 
+    {"if",             HLL_IF},         
+    {"else",           HLL_ELSE},
+    {"switch",         HLL_SWITCH},         // switch (r1, scratch registers) { case 0: break; ...}
+    {"case",           HLL_CASE},
+    {"for",            HLL_FOR},            // for (r1 = 1; r1 <= r2; r1++) {}
+    {"in",             HLL_IN},             // for (float v1 in [r1-r2], nocheck) // (r2 counts down)
+    {"while",          HLL_WHILE},          // while (r1 > 0) {}
+    {"do",             HLL_DO},             // do {} while ()
+    {"break",          HLL_BREAK},          // break out of switch or loop
+    {"continue",       HLL_CONTINUE},       // continue loop 
 
     // temporary additions. will be replaced by macros later:
-    {"push",        HLL_PUSH},   //!
-    {"pop",         HLL_POP},   
+    {"push",           HLL_PUSH},           // push registers
+    {"pop",            HLL_POP},            // pop registers
 
 };
 
@@ -172,11 +174,16 @@ CAssembler::CAssembler() {                                 // Constructor
     errors.setOwner(this);
     // Initialize and sort lists
     initializeWordLists();
-    Elf64_Shdr nullHeader = {0,0,0,0,0,0,0,0,0,0};         // make first section header empty
+    ElfFwcShdr nullHeader;         // make first section header empty
+    zeroAllMembers(nullHeader);
     sectionHeaders.push(nullHeader);
 }
 
 void CAssembler::go() {
+
+    // Write feedback text to console
+    feedBackText1();
+
     // Set default options
     if (cmd.codeSizeOption == 0) cmd.codeSizeOption = 1 << 24;
     if (cmd.dataSizeOption == 0) cmd.dataSizeOption = 1 << 24;
@@ -194,8 +201,8 @@ void CAssembler::go() {
         pass2();
         if (errors.tooMany()) {err.submit(ERR_TOO_MANY_ERRORS);  break;}
 
-        //showTokens(); //!! for debugging only
-        //showSymbols(); //!! for debugging only
+        //showTokens();  //!! for debugging only
+        //showSymbols(); //!! for debugging only        
 
         pass = 3;
         // Interpret lines. Generate code and data
@@ -214,11 +221,12 @@ void CAssembler::go() {
 
     // output any error messages
     errors.outputErrors();
+    if (errors.numErrors()) cmd.mainReturnValue = 1; // make sure makefile process stops on error
     
     // output object file
-    outFile.outputFileName = cmd.outputFile;
-    outFile.write();
+    outFile.write(cmd.getFilename(cmd.outputFile));
 }
+
 
 // Character can be the start of a symbol name
 inline bool nameChar1(char c) {
@@ -273,24 +281,35 @@ uint32_t isNumber(const char * s, int maxlen, bool * isFloat) {
 uint32_t isRegister(const char * s, uint32_t len) {
     uint32_t i, j, nl, num;
     for (i = 0; i < TableSize(registerNames); i++) {
-        if ((s[0] | 0x20) == registerNames[i].name[0]) {  // first character match, lower case
-            nl = (uint32_t)strlen(registerNames[i].name);           // length of register name prefix
-            if (len < nl + 1 || len > nl + 2) continue;   // continue search if length wrong
-            for (j = 0; j < nl; j++) {                    // check if each character matches
-                if ((s[j] | 0x20) != registerNames[i].name[j]) continue;    // lower case compare
+        if ((s[0] | 0x20) == registerNames[i].name[0]) {   // first character match, lower case
+            nl = (uint32_t)strlen(registerNames[i].name);  // length of register name prefix
+            if (len < nl + 1 || len > nl + 2) continue;    // continue search if length wrong
+            for (j = 0; j < nl; j++) {                     // check if each character matches
+                if ((s[j] | 0x20) != registerNames[i].name[j]) { // lower case compare
+                    j = 0xFFFFFFFF; break;
+                }
             }
-            if (s[j] < '0' || s[j] > '9') continue;  // not a number
-            num = s[j] - '0';                        // get number, first digit
-            if (len == nl + 2) {                     // two digit number
-                if (s[j+1] < '0' || s[j+1] > '9') continue;  // second digit not a number            
+            if (j == 0xFFFFFFFF) continue;                 // no match
+            if (s[j] < '0' || s[j] > '9') continue;        // not a number
+            num = s[j] - '0';                              // get number, first digit
+            if (len == nl + 2) {                           // two digit number
+                if (s[j+1] < '0' || s[j+1] > '9') continue;// second digit not a number            
                 num = num * 10 + (s[j+1] - '0');
             }
-            if (num >= 32) continue;     // number too high
-            return num + registerNames[i].id;  // everyting matches
+            if (num >= 32) continue;                       // number too high
+            return num + registerNames[i].id;              // everyting matches
         }
     }
     return 0;       // not found. return 0
 } 
+
+// write feedback text on stdout
+void CAssembler::feedBackText1() {
+    if (cmd.verbose) {
+        // Tell what we are doing:
+        printf("\nAssembling %s to %s", cmd.getFilename(cmd.inputFile), cmd.getFilename(cmd.outputFile));
+    }
+}
 
 
 // Split input file into lines and tokens. Handle preprocessing directives. Find symbol definitions
@@ -599,9 +618,9 @@ void CAssembler::interpretSectionDirective() {
     ElfFWC_Sym2 sym;                                       // symbol record
     int32_t sectionsym = 0;                                // index to symbol record defining current section name
     uint32_t state = 0;                                    // 1: after align, 2: after '='
-    Elf64_Shdr sectionHeader;                              // section header
-    memset(&sym, 0, sizeof(ElfFWC_Sym2));                  // reset symbol
-    memset(&sectionHeader, 0, sizeof(Elf64_Shdr));         // reset section header
+    ElfFwcShdr sectionHeader;                             // section header
+    zeroAllMembers(sym);                                   // reset symbol
+    zeroAllMembers(sectionHeader);                         // reset section header
     sectionHeader.sh_type = SHT_PROGBITS;                  // default section type
 
     sectionFlags = 0;
@@ -614,8 +633,9 @@ void CAssembler::interpretSectionDirective() {
             else if (tokens[tok].id == ATT_COMDAT && state != 2) {
                 sectionHeader.sh_type = SHT_COMDAT;                // communal section. duplicates and unreferenced sections are removed
             }
-            else if (tokens[tok].id != ATT_ALIGN && (tokens[tok].id & ATT_ALIGN & 0xFF) == 0 && state == 0) {
-                sectionFlags |= tokens[tok].id & 0xFFF;
+            else if (tokens[tok].id != ATT_ALIGN && state == 0) {
+                sectionFlags |= tokens[tok].id & 0xFFFFFF;
+                if (sectionFlags & SHF_EXEC) sectionFlags |= SHF_IP;  // executable section must be IP based
             }
             else if (tokens[tok].id == ATT_ALIGN && state == 0) {
                 state = 1;
@@ -631,10 +651,10 @@ void CAssembler::interpretSectionDirective() {
         else if (tokens[tok].type == TOK_OPR && tokens[tok].id == ',' && state != 2) ; // comma, ignore
         else if (tokens[tok].type == TOK_NUM && state == 2) {
             if (pass >= 3) {  // alignment value
-                uint64_t alignm = expression(tok, 1, 0).value.u;
+                uint32_t alignm = expression(tok, 1, 0).value.w;
                 if ((alignm & (alignm - 1)) || alignm > MAX_ALIGN) errors.reportLine(ERR_ALIGNMENT);
                 else {
-                    sectionHeader.sh_addralign = alignm;
+                    sectionHeader.sh_align = bitScanReverse(alignm);
                 }
             }
             state = 0;
@@ -661,12 +681,12 @@ void CAssembler::interpretSectionDirective() {
     sectionFlags |= SHF_ALLOC;
     lines[linei].type = LINE_SECTION;                          // line is section directive
     lines[linei].sectionType = sectionFlags;
-    if (symbols[sectionsym].st_shndx == 0) {
+    if (symbols[sectionsym].st_section == 0) {
         // new section. make section header
         sectionHeader.sh_name = symbols[sectionsym].st_name;
         if (sectionFlags & SHF_EXEC) {
             sectionHeader.sh_entsize = 4;
-            if (sectionHeader.sh_addralign < 4) sectionHeader.sh_addralign = 4;
+            if (sectionHeader.sh_align < 2) sectionHeader.sh_align = 2;
             sectionFlags |= SHF_IP;            
         }
         else { // data section
@@ -678,19 +698,19 @@ void CAssembler::interpretSectionDirective() {
         }
         sectionHeader.sh_flags = sectionFlags;
         section = sectionHeaders.push(sectionHeader);
-        symbols[sectionsym].st_shndx = section;
+        symbols[sectionsym].st_section = section;
     }
     else {  // this section is seen before
-        section = symbols[sectionsym].st_shndx;
-        if (sectionHeaders[section].sh_addralign < sectionHeader.sh_addralign) sectionHeaders[section].sh_addralign = sectionHeader.sh_addralign;
+        section = symbols[sectionsym].st_section;
+        if (sectionHeaders[section].sh_align < sectionHeader.sh_align) sectionHeaders[section].sh_align = sectionHeader.sh_align;
         if (sectionFlags && (sectionFlags & ~sectionHeaders[section].sh_flags)) errors.reportLine(ERR_SECTION_DIFFERENT_TYPE);
         sectionFlags = (uint32_t)sectionHeaders[section].sh_flags;
-        if (sectionHeader.sh_addralign > 4) {
+        if (sectionHeader.sh_align > 2) {
             // insert alignment code
             SCode code;
-            memset(&code, 0, sizeof(code));
+            zeroAllMembers(code);
             code.instruction = II_ALIGN;
-            code.value.u = sectionHeader.sh_addralign;
+            code.value.u = (int64_t)1 << sectionHeader.sh_align;
             code.sizeUnknown = 0x80;
             code.section = section;
             codeBuffer.push(code);
@@ -702,7 +722,7 @@ void CAssembler::interpretFunctionDirective() {
     // Interpret function directive during pass 2
     uint32_t tok;                     // token number
     ElfFWC_Sym2 sym;                  // symbol record
-    memset(&sym, 0, sizeof(ElfFWC_Sym2)); // reset symbol
+    zeroAllMembers(sym);              // reset symbol
     int32_t symi;
 
     symi = findSymbol((char*)buf() + tokens[tokenB].pos, tokens[tokenB].stringLength);
@@ -715,9 +735,21 @@ void CAssembler::interpretFunctionDirective() {
         sym.st_other = STV_IP;
         sym.st_name = symbolNameBuffer.putStringN((char*)buf() + tokens[tokenB].pos, tokens[tokenB].stringLength);
         sym.st_bind = 0;
-        sym.st_shndx = section;
+        sym.st_section = section;
         for (tok = tokenB + 2; tok < tokenB + tokenN; tok++) { // get function attributes
-            if (tokens[tok].type == TOK_ATT && tokens[tok].id == ATT_WEAK) sym.st_bind |= STB_WEAK;             
+            if (tokens[tok].type == TOK_OPR && tokens[tok].id == ',') continue;
+            if (tokens[tok].id == ATT_WEAK) sym.st_bind |= STB_WEAK;             
+            if (tokens[tok].id == ATT_REGUSE) {
+                if (tokens[tok+1].id == '=' && tokens[tok+2].type == TOK_NUM) {
+                    tok += 2;
+                    sym.st_reguse1 = expression(tok, 1, 0).value.w;
+                    sym.st_other |= STV_REGUSE;
+                    if (tokens[tok+1].id == ',' && tokens[tok+2].type == TOK_NUM) {
+                        tok += 2;
+                        sym.st_reguse2 = expression(tok, 1, 0).value.w;
+                    }
+                }             
+            }
             else if (tokens[tok].type == TOK_DIR && tokens[tok].id == DIR_PUBLIC) sym.st_bind |= STB_GLOBAL;
             else {
                 errors.report(tokens[tok]);  // unexpected token
@@ -730,7 +762,7 @@ void CAssembler::interpretFunctionDirective() {
     if (pass == 3 && symi) {
         // make a label here. The final address will be calculated in pass 4
         SCode code;                              // current instruction code
-        memset(&code, 0, sizeof(code));          // reset code structure
+        zeroAllMembers(code);                    // reset code structure
         code.label = symbols[symi].st_name;
         code.section = section;
         codeBuffer.push(code);
@@ -740,7 +772,7 @@ void CAssembler::interpretFunctionDirective() {
 void CAssembler::interpretEndDirective() {
     // Interpret section or function end directive during pass 2
     ElfFWC_Sym2 sym;                  // symbol record
-    memset(&sym, 0, sizeof(ElfFWC_Sym2)); // reset symbol
+    zeroAllMembers(sym);              // reset symbol
     int32_t symi;
     CTextFileBuffer tempBuffer;       // temporary storage of names
 
@@ -750,7 +782,7 @@ void CAssembler::interpretEndDirective() {
     }
     else {
         if (symbols[symi].st_type == STT_SECTION) {
-            if (symbols[symi].st_shndx == section) {
+            if (symbols[symi].st_section == section) {
                 // current section ends here
                 section = 0;  sectionFlags = 0;
             }
@@ -802,8 +834,8 @@ uint32_t CAssembler::addSymbol(ElfFWC_Sym2 & sym) {
 void CAssembler::interpretExternDirective() {
     uint32_t tok;                     // token number
     uint32_t nametok = 0;             // last name token
-    ElfFWC_Sym2 sym;   // symbol record
-    memset(&sym, 0, sizeof(ElfFWC_Sym2)); // reset symbol
+    ElfFWC_Sym2 sym;                  // symbol record
+    zeroAllMembers(sym);              // reset symbol
     sym.st_bind = STB_GLOBAL;
 
     // Example: extern name1: int32 weak, name2: function, name3, name4: read 
@@ -843,13 +875,14 @@ void CAssembler::interpretExternDirective() {
                 sym.st_unitnum = 1;
             }
             else if (tokens[tok].type == TOK_ATT || tokens[tok].type == TOK_DIR) {
+                ATTRIBUTE:
                 switch (tokens[tok].id) {
                 case DIR_FUNCTION: case ATT_EXEC: // function or execute
                     if (sym.st_type) {
                         errors.report(tokens[tok].pos, tokens[tok].stringLength, ERR_CONFLICT_TYPE);
                     } 
                     sym.st_type = STT_FUNC;
-                    sym.st_other = STV_IP;
+                    sym.st_other = STV_IP | STV_EXEC;
                     break;
                 case ATT_READ:  // read
                     if (sym.st_type == 0) sym.st_other |= STV_READ;
@@ -867,6 +900,17 @@ void CAssembler::interpretExternDirective() {
                     break;
                 case ATT_CONSTANT:  // constant
                     sym.st_type = STT_CONSTANT;
+                    break;
+                case ATT_REGUSE:
+                    if (tokens[tok+1].id == '=' && (tokens[tok+2].type == TOK_NUM /*|| tokens[tok+2].type == TOK_OPR)*/)) {
+                        tok += 2;
+                        sym.st_reguse1 = expression(tok, 1, 0).value.w;
+                        sym.st_other |= STV_REGUSE;
+                        if (tokens[tok+1].id == ',' && tokens[tok+2].type == TOK_NUM) {
+                            tok += 2;
+                            sym.st_reguse2 = expression(tok, 1, 0).value.w;
+                        }
+                    }
                     break;
                 default:  // error
                     errors.report(tokens[tok]);
@@ -886,6 +930,10 @@ void CAssembler::interpretExternDirective() {
             else if (tokens[tok].type == TOK_OPR && tokens[tok].id == ',') {
                 // end of definition. save symbol
             COMMA:
+                if (tok < tokenB + tokenN 
+                    && (tokens[tok + 1].type == TOK_ATT || tokens[tok + 1].type == TOK_DIR)) {
+                    tok++; goto ATTRIBUTE;
+                }
                 uint32_t symi = addSymbol(sym);          // save symbol with function name
                 if (symi == 0) {  // symbol already defined
                     errors.report(tokens[nametok].pos, tokens[nametok].stringLength, ERR_SYMBOL_DEFINED);
@@ -915,11 +963,11 @@ void CAssembler::interpretLabel(uint32_t tok) {
     // line begins with a name. interpret label
     // todo: add type if data. not string type
     ElfFWC_Sym2 sym;   // symbol record
-    memset(&sym, 0, sizeof(ElfFWC_Sym2)); // reset symbol
+    zeroAllMembers(sym); // reset symbol
 
     // save name
     sym.st_name = symbolNameBuffer.putStringN((char*)buf()+tokens[tok].pos, tokens[tok].stringLength);
-    sym.st_shndx = section;
+    sym.st_section = section;
     // determine if code or data from section type
     if (sectionFlags & SHF_EXEC) {
         sym.st_type = STT_FUNC;
@@ -977,14 +1025,14 @@ void CAssembler::interpretVariableDefinition1() {
                         // 3: after type or ,
                         // 4: after value
     uint32_t tok;                      // token index
-    //uint32_t nametok = 0;              // name token
     uint32_t type = 0;                 // data type
     uint32_t dsize = 0;                // data size
+    uint32_t dsize1;                   // log2(dsize)
     uint32_t dnum = 0;                 // number of data items
     uint32_t stringlen = 0;            // length of string
     uint32_t symi = 0;                 // symbol index
     ElfFWC_Sym2 sym;                   // symbol record
-    memset(&sym, 0, sizeof(ElfFWC_Sym2)); // reset symbol
+    zeroAllMembers(sym);               // reset symbol
     SExpression exp1;                  // expression when interpreting numeric expression
 
     if (section == 0) {
@@ -1005,14 +1053,13 @@ void CAssembler::interpretVariableDefinition1() {
             }
             else if (tokens[tok].type == TOK_SYM) { // symbol
                 symi = findSymbol(tokens[tok].id);
+                if (symi > 0) {
+                    if (pass == 2) errors.report(tokens[tok].pos, tokens[tok].stringLength, ERR_SYMBOL_DEFINED);  // symbol already defined
+                }
                 state = 1;
             }
             else if (tokens[tok].type == TOK_TYP) {
-                type = tokens[tok].id & 0xFF;
-                dsize = type & 0xF;
-                if (type & 0x40) dsize -= 3;
-                dsize = 1 << dsize;
-                state = 3;
+                goto TYPE_TOKEN;
             }
             else errors.report(tokens[tok]);
             if (symi && section) {
@@ -1027,14 +1074,15 @@ void CAssembler::interpretVariableDefinition1() {
             break;
         case 2:  // expect type
             if (tokens[tok].type == TOK_TYP) {
+                TYPE_TOKEN:
                 type = tokens[tok].id & 0xFF;
-                dsize = type & 0xF;
-                if (type & 0x40) dsize -= 3;
-                dsize = 1 << dsize;
+                dsize1 = type & 0xF;
+                if (type & 0x40) dsize1 -= 3;
+                dsize = 1 << dsize1;
                 state = 3; 
                 if (section) {  // align data
                     uint32_t addr = (uint32_t)sectionHeaders[section].sh_size;
-                    if (sectionHeaders[section].sh_addralign < dsize) sectionHeaders[section].sh_addralign = dsize;  // update section alignment
+                    if (sectionHeaders[section].sh_align < dsize1) sectionHeaders[section].sh_align = dsize1;  // update section alignment
                     if (addr & (dsize - 1)) { // needs to insert zeroes
                         uint32_t addr2 = (addr + dsize - 1) & -(int32_t)dsize;
                         sectionHeaders[section].sh_size = addr2;           // update address
@@ -1142,7 +1190,7 @@ void CAssembler::interpretVariableDefinition1() {
     if (symi) { // save size
         symbols[symi].st_unitsize = dsize;
         symbols[symi].st_unitnum = dnum;
-        symbols[symi].st_shndx = section;
+        symbols[symi].st_section = section;
         if ((type & 0xF0) == (TYP_FLOAT32 & 0xF0)) symbols[symi].st_other |= STV_FLOAT;
         if (section) { // copy information from section
             symbols[symi].st_other |= sectionHeaders[section].sh_flags & STV_SECT_ATTR;
@@ -1164,29 +1212,31 @@ void CAssembler::interpretVariableDefinition2() {
                         // 8: after {number
 
     uint32_t tok;                           // token index
-    //uint32_t nametok = 0;                   // name token
     uint32_t dsize = 0;                     // data element size
+    uint32_t dsize1 = 0;                    // data element size = 1 << dsize1
     uint32_t type = 0;                      // data type
     uint32_t arrayNum1 = 1;                 // number of elements indicated in []
     uint32_t arrayNum2 = 0;                 // number of elements in {} list
     uint32_t stringlen = 0;                 // length of string
     uint32_t symi = 0;                      // symbol index
     ElfFWC_Sym2 sym;                        // symbol record
-    memset(&sym, 0, sizeof(ElfFWC_Sym2));   // reset symbol
+    zeroAllMembers(sym);                    // reset symbol
     SExpression exp1;                       // expression when interpreting numeric expression
 
     if (section == 0) {
         errors.reportLine(ERR_DATA_WO_SECTION);
     }
+    //!!
+    pass += 0;
 
     // loop through tokens on this line
     for (tok = tokenB; tok < tokenB + tokenN; tok++) {
         switch (state) {
         case 0:  // this is a type token
             type  = tokens[tok].id & 0xFF;
-            dsize = tokens[tok].id & 0xF;  
-            if ((type & 0x40) > 3) dsize -= 3;
-            dsize = 1 << dsize;
+            dsize1 = tokens[tok].id & 0xF;  
+            if ((type & 0x40) > 3) dsize1 -= 3;
+            dsize = 1 << dsize1;
             state = 1;
             if (section) {  // align data
                 uint32_t addr = (uint32_t)sectionHeaders[section].sh_size;
@@ -1194,10 +1244,10 @@ void CAssembler::interpretVariableDefinition2() {
                     uint32_t addr2 = (addr + dsize - 1) & -(int32_t)dsize;  // calculate aligned address
                     sectionHeaders[section].sh_size = addr2;           // update address
                     if (pass >= 3) {                    
-                        dataBuffers[section].align((uint32_t)dsize);   // put zeroes in data buffer
+                        dataBuffers[section].align(dsize);   // put zeroes in data buffer
                     }
                 }
-                if (sectionHeaders[section].sh_addralign < dsize) sectionHeaders[section].sh_addralign = dsize;  // update section alignment
+                if (sectionHeaders[section].sh_align < dsize1) sectionHeaders[section].sh_align = dsize1;  // update section alignment
             }
             break;
         case 1:  // expecting name token. save name
@@ -1214,6 +1264,7 @@ void CAssembler::interpretVariableDefinition2() {
             }
             else if (tokens[tok].type == TOK_SYM) { // symbol
                 symi = findSymbol(tokens[tok].id);
+                if (symi > 0 && pass == 2) errors.report(tokens[tok].pos, tokens[tok].stringLength, ERR_SYMBOL_DEFINED);  // symbol already defined
                 state = 2;
             }
             else {
@@ -1245,7 +1296,7 @@ void CAssembler::interpretVariableDefinition2() {
                     symbols[symi].st_unitsize = dsize;
                     symbols[symi].st_unitnum = arrayNum1;
                     symbols[symi].st_reguse1 = linei;
-                    symbols[symi].st_shndx = section;
+                    symbols[symi].st_section = section;
 
                     if (arrayNum1 > arrayNum2 && section) {
                         // unspecified elements are zero. calculate extra size
@@ -1264,7 +1315,7 @@ void CAssembler::interpretVariableDefinition2() {
                     }
 
                     // get ready for next symbol
-                    memset(&sym, 0, sizeof(sym));
+                    zeroAllMembers(sym);
                     arrayNum1 = 1;  arrayNum2 = 0;
                     if (state == 99) return;       // finished line
                     state = 1;
@@ -1334,7 +1385,6 @@ void CAssembler::interpretVariableDefinition2() {
                 //int64_t value = exp1.value.i;  //value of expression
                 if ((exp1.etype & XPR_SYM1) && exp1.sym1 && pass > 3) {                                                                                      
                     // calculation of symbol value. add relocation if needed
-                    //exp1.value.i = calculateConstantOperand(exp1, dataBuffers[section].dataSize(), dsize);                            
                     exp1.value.i = calculateConstantOperand(exp1, sectionHeaders[section].sh_size, dsize);                            
                     if (exp1.etype & XPR_ERROR) {
                         errors.reportLine((uint32_t)(exp1.value.i)); // report error
@@ -1345,7 +1395,7 @@ void CAssembler::interpretVariableDefinition2() {
             if (!(exp1.etype & (XPR_IMMEDIATE | XPR_STRING | XPR_UNRESOLV | XPR_SYM1)) || (exp1.etype & (XPR_REG|XPR_OPTION|XPR_MEM|XPR_ERROR))) {
                 errors.report(tokens[tok]);
             }
-            if (section && section < dataBuffers.size() && pass >= 3) {
+            if (section && section < dataBuffers.numEntries() && pass >= 3) {
                 // save data of desired type
                 if ((exp1.etype & XPR_IMMEDIATE) == XPR_FLT) { 
                     // floating point number specified
@@ -1477,11 +1527,12 @@ void CAssembler::interpretAlign() {
         }
         uint64_t alignm = exp1.value.u;
         if ((alignm & (alignm - 1)) || alignm > MAX_ALIGN) {errors.reportLine(ERR_ALIGNMENT);  return;}
-        if (sectionHeaders[section].sh_addralign < alignm) {
-            sectionHeaders[section].sh_addralign = alignm;  // make sure section alignment is not less
+        uint32_t log2ali = bitScanReverse(alignm);
+        if (sectionHeaders[section].sh_align < log2ali) {
+            sectionHeaders[section].sh_align = log2ali;  // make sure section alignment is not less
         }
-        if (addr & (alignm - 1)) { // needs to insert zeroes
-            uint32_t addr2 = (addr + alignm - 1) & -(int32_t)alignm;
+        if (addr & ((uint32_t)alignm - 1)) { // needs to insert zeroes
+            uint32_t addr2 = (addr + (uint32_t)alignm - 1) & -(int32_t)alignm;
             sectionHeaders[section].sh_size = addr2;           // update address
             if (pass >= 3) {
                 dataBuffers[section].align((uint32_t)alignm);  // put zeroes in data buffer
@@ -1498,8 +1549,8 @@ void CAssembler::interpretAlign() {
 // defined symbols, and data/code definitions can involve metaprogramming variables and macros
 
 void CAssembler::pass2() {
-    ElfFWC_Sym2 sym;   // symbol record
-    memset(&sym, 0, sizeof(ElfFWC_Sym2)); // reset symbol
+    ElfFWC_Sym2 sym;                  // symbol record
+    zeroAllMembers(sym);              // reset symbol
     symbols.push(sym);                // symbol record 0 is empty
     symbolNameBuffer.put((char)0);    // put dummy zero to avoid zero offset at next string
     sectionFlags = 0;
@@ -1555,11 +1606,14 @@ void CAssembler::pass2() {
                 interpretLabel(tokenB);
                 if (lines[linei].type == LINE_DATADEF) interpretVariableDefinition1();
             }
-            else if (tokens[tokenB].type == TOK_TYP && tokens[tokenB+1].type == TOK_NAM) {
+            else if (tokens[tokenB].type == TOK_TYP && (tokens[tokenB+1].type == TOK_NAM || tokens[tokenB+1].type == TOK_SYM)) {
                 interpretVariableDefinition2();
             }
             else if (tokens[tokenB].type == TOK_ATT && tokens[tokenB].id == ATT_ALIGN) {  
                 interpretAlign();
+            }
+            else if (tokens[tokenB].type == TOK_SYM && tokens[tokenB+1].id == ':' && pass == 2) {
+                errors.report(tokens[tokenB].pos, tokens[tokenB].stringLength, ERR_SYMBOL_DEFINED);  // symbol already defined
             }
             else {
                 determineLineType();  // check if code or data
@@ -1588,7 +1642,7 @@ void CAssembler::showSymbols() {
     for (symi = 1; symi < symbols.numEntries(); symi++) {
         sym = symbols[symi];
         printf("\n%3i: %10s, %7i, %4X", symi, symbolNameBuffer.buf() + sym.st_name,
-            sym.st_shndx, (uint32_t)sym.st_value);
+            sym.st_section, (uint32_t)sym.st_value);
         if (sym.st_type == STT_CONSTANT || sym.st_type == STT_VARIABLE) {
             if (sym.st_other & STV_FLOAT) {    // floating point constant
                 union { uint64_t i; double d; } val;
@@ -1596,7 +1650,7 @@ void CAssembler::showSymbols() {
                 printf(" = %G", val.d);
             }
             else if (sym.st_other & STV_STRING) {   // string
-                printf(" = %s", (char*)stringBuffer.buf() + sym.st_value);
+                printf(" = %s", stringBuffer.getString((uint32_t)sym.st_value));
             }
             else {
                 // print 64 bit integer constant
@@ -1707,7 +1761,8 @@ void CAssembler::initializeWordLists() {
     keywords.pushBig(keywordsList,sizeof(keywordsList));
     keywords.sort();
     // Read instruction list from file
-    CCSVFile instructionListFile(cmd.instructionListFile);  // Filename of list of instructions
+    CCSVFile instructionListFile; 
+    instructionListFile.read(cmd.getFilename(cmd.instructionListFile), CMDL_FILE_SEARCH_PATH); // Filename of list of instructions
     instructionListFile.parse();                            // Read and interpret instruction list file
     instructionlist << instructionListFile.instructionlist; // Transfer instruction list to my own container
     instructionlistId.copy(instructionlist);                // copy instruction list
@@ -1715,7 +1770,7 @@ void CAssembler::initializeWordLists() {
     // operator < (SInstruction const & a, SInstruction const & b)
     // operator < (SInstruction3 const & a, SInstruction3 const & b)
     SInstruction3 nullInstruction;                          // empty record
-    memset(&nullInstruction, 0, sizeof(nullInstruction));
+    zeroAllMembers(nullInstruction);
     instructionlistId.push(nullInstruction);                // Empty record will go to position 0 to avoid an instruction with index 0
     instructionlist.sort();                                 // Sort instructionlist by name
     instructionlistId.sort();                               // Sort instructionlistId by id

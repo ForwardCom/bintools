@@ -1,8 +1,8 @@
 /****************************   error.h   ************************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2017-11-03
-* Version:       1.00
+* Last modified: 2018-03-30
+* Version:       1.01
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        error.h
 * Description:
@@ -13,34 +13,73 @@
 #pragma once
 
 // Error id numbers, general errors
-const int ERR_MULTIPLE_COMMANDS        = 0x2002;
-const int ERR_OUTFILE_IGNORED          = 0x2003;
-const int ERR_EMPTY_OPTION             = 0x2004;
-const int ERR_UNKNOWN_OPTION           = 0x2005;
-const int ERR_UNKNOWN_ERROR_NUM        = 0x2006;
-const int ERR_MULTIPLE_IO_FILES        = 0x2007;
-const int ERR_DUMP_NOT_SUPPORTED       = 0x2008;
-const int ERR_INPUT_FILE               = 0x2009;
-const int ERR_OUTPUT_FILE              = 0x200A;
-const int ERR_UNKNOWN_FILE_TYPE        = 0x200B;
-const int ERR_FILE_SIZE                = 0x200C;
-const int ERR_FILE_NAME_LONG           = 0x200D;
-const int ERR_FILES_SAME_NAME          = 0x200E;
-const int ERR_TOO_MANY_RESP_FILES      = 0x200F;
-const int ERR_MEMORY_ALLOCATION        = 0x2100;
-const int ERR_CONTAINER_INDEX          = 0x2101;
-const int ERR_CONTAINER_OVERFLOW       = 0x2102;
-const int ERR_INDEX_OUT_OF_RANGE       = 0x2202;
-const int ERR_ELF_RECORD_SIZE          = 0x2205;
-const int ERR_ELF_SYMTAB_MISSING       = 0x2206;
-const int ERR_ELF_INDEX_RANGE          = 0x2207;
-const int ERR_ELF_UNKNOWN_SECTION      = 0x2208;
-const int ERR_ELF_STRING_TABLE         = 0x2209;
-const int ERR_INSTRUCTION_LIST_SYNTAX  = 0x2300;
-const int ERR_INSTRUCTION_LIST_QUOTE   = 0x2301;
-const int ERR_TOO_MANY_ERRORS          = 0x9000;
-const int ERR_BIG_ENDIAN               = 0x9001;
-const int ERR_INTERNAL                 = 0x9002;
+const int ERR_MULTIPLE_COMMANDS        = 100;
+const int ERR_OUTFILE_IGNORED          = 101;
+const int ERR_EMPTY_OPTION             = 102;
+const int ERR_UNKNOWN_OPTION           = 103;
+const int ERR_UNKNOWN_ERROR_NUM        = 104;
+const int ERR_MULTIPLE_IO_FILES        = 105;
+const int ERR_DUMP_NOT_SUPPORTED       = 106;
+const int ERR_INPUT_FILE               = 107;
+const int ERR_OUTPUT_FILE              = 108;
+const int ERR_UNKNOWN_FILE_TYPE        = 109;
+const int ERR_FILE_SIZE                = 110;
+const int ERR_FILE_NAME_LONG           = 111;
+const int ERR_FILES_SAME_NAME          = 112;
+const int ERR_TOO_MANY_RESP_FILES      = 112;
+
+const int ERR_MEMORY_ALLOCATION        = 120;
+const int ERR_CONTAINER_INDEX          = 121;
+const int ERR_CONTAINER_OVERFLOW       = 122;
+const int ERR_INDEX_OUT_OF_RANGE       = 123;
+
+const int ERR_ELF_RECORD_SIZE          = 130;
+const int ERR_ELF_SYMTAB_MISSING       = 131;
+const int ERR_ELF_INDEX_RANGE          = 132;
+const int ERR_ELF_UNKNOWN_SECTION      = 133;
+const int ERR_ELF_STRING_TABLE         = 134;
+const int ERR_ELF_NO_SECTIONS          = 135;
+
+const int ERR_INSTRUCTION_LIST_SYNTAX  = 140;
+const int ERR_INSTRUCTION_LIST_QUOTE   = 141;
+
+const int ERR_LIBRARY_FILE_TYPE        = 200;
+const int ERR_LIBRARY_FILE_CORRUPT     = 201;
+const int ERR_DUPLICATE_NAME_COMMANDL  = 202;
+const int ERR_DUPLICATE_NAME_IN_LIB    = 203;
+const int ERR_DUPLICATE_SYMBOL_IN_LIB  = 204;
+const int ERR_NO_SYMTAB_IN_LIB         = 205;
+const int ERR_MEMBER_NOT_FOUND_DEL     = 206;
+const int ERR_MEMBER_NOT_FOUND_EXTRACT = 207;
+const int ERR_LIBRARY_LIST_ONLY        = 208;
+const int ERR_LIBRARY_MEMBER_TYPE      = 209;
+
+const int ERR_LINK_LIST_ONLY           = 300;
+const int ERR_LINK_FILE_TYPE           = 301;
+const int ERR_LINK_FILE_TYPE_LIB       = 302;
+const int ERR_LINK_FILE_TYPE_EXE       = 303;
+const int ERR_LINK_COMMUNAL            = 304;
+const int ERR_LINK_DUPLICATE_SYMBOL    = 305;
+const int ERR_LINK_DIFFERENT_BASE      = 306;
+const int ERR_LINK_MISALIGNED_TARGET   = 307;
+const int ERR_LINK_OVERFLOW            = 308;
+const int ERR_LINK_RELOCATION_OVERFLOW = 309;
+const int ERR_LINK_REGUSE              = 310;
+const int ERR_LINK_MODULE_NOT_FOUND    = 311;
+const int ERR_EVENT_SIZE               = 312;
+const int ERR_REL_SYMBOL_NOT_FOUND     = 313;
+const int ERR_CANT_RELINK_MODULE       = 314;
+const int ERR_CANT_RELINK_LIBRARY      = 315;
+const int ERR_RELINK_MODULE_NOT_FOUND  = 316;
+const int ERR_RELINK_LIBRARY_NOT_FOUND = 317;
+const int ERR_RELINK_BASE_POINTER_MOD  = 318;
+const int ERR_INPUT_NOT_RELINKABLE     = 319;
+const int ERR_LINK_UNRESOLVED          = 320;
+const int ERR_LINK_UNRESOLVED_WARN     = 321;
+
+const int ERR_TOO_MANY_ERRORS          = 500;
+const int ERR_BIG_ENDIAN               = 501;
+const int ERR_INTERNAL                 = 502;
 
 
 // Error id numbers during assembly
@@ -82,8 +121,6 @@ const int ERR_EXPORT_EXPRESSION        = 0x125;  // cannot export expression
 const int ERR_CANNOT_EXPORT            = 0x126;  // cannot export this type of symbol
 const int ERR_CODE_WO_SECTION          = 0x127;  // code without section
 const int ERR_DATA_WO_SECTION          = 0x128;  // data without section
-
-
 const int ERR_MEM_COMPONENT_TWICE      = 0x140;  // component of memory operand specified twice
 const int ERR_SCALE_FACTOR             = 0x141;  // wrong scale factor
 const int ERR_MUST_BE_GP               = 0x142;  // length or broadcast must be general purpose register
@@ -103,13 +140,10 @@ const int ERR_MASK_REGISTER            = 0x14F;  // mask register number > 6
 const int ERR_LIMIT_TOO_HIGH           = 0x150;  // limit on memory operand too high
 const int ERR_NO_INSTRUCTION_FIT       = 0x151;  // no version of this instruction fits the specified operands
 const int ERR_CANNOT_SWAP_VECT         = 0x152;  // cannot change the order of vector registers
-
 const int ERR_EXPECT_JUMP_TARGET       = 0x158;  // expecting jump target
 const int ERR_JUMP_TARGET_MISALIGN     = 0x159;  // jump target offset must be divisible by 4
 const int ERR_ABS_RELOCATION           = 0x15a;  // absolute address not allowed here
 const int ERR_RELOCATION_DOMAIN        = 0x15b;  // cannot calculate difference between two symbols in different domains
-
-
 const int ERR_WRONG_REG_TYPE           = 0x160;  // wrong type for register operand
 const int ERR_CONFLICT_OPTIONS         = 0x161;  // conflicting options on memory operand
 const int ERR_VECTOR_OPTION            = 0x162;  // vector option applied to non-vector operands
@@ -126,8 +160,6 @@ const int ERR_3OP_AND_MEM              = 0x16C;  // the first source register mu
 const int ERR_R28_30_BASE              = 0x16D;  // cannot use r28-r30 as base pointer with more than 8 bits offset
 const int ERR_NO_BASE                  = 0x16E;  // memory operand has no base pointer
 const int ERR_MEM_WO_BRACKET           = 0x16F;  // memory operand requires [] bracket
-
-
 const int ERR_UNMATCHED_END            = 0x210;  // unmatched end
 const int ERR_SECTION_MISS_END         = 0x211;  // missing end of section
 const int ERR_FUNCTION_MISS_END        = 0x212;  // missing end of function
@@ -143,38 +175,35 @@ const int ERR_MISPLACED_CONTINUE       = 0x22A;  // no loop to continue
 
 
 
-
-
-
-
 // Structure for defining error message texts
 struct SErrorText {
-   int  errorNumber;    // Error number
-   int  status;         // bit 0-3 = severity: 0 = ignore, 1 = warning, 2 = error, 9 = abort
-                        // bit 8   = error number not found
-   char const * text;   // Error text
+   int  errorNumber;                             // Error number
+   int  status;                                  // bit 0-3 = severity: 0 = ignore, 1 = warning, 2 = error, 9 = abort
+                                                 // bit 8   = error number not found
+   char const * text;                            // Error text
 };
 
 // General error routine for reporting warning and error messages to STDERR output
 class CErrorReporter {
 public:
    CErrorReporter();    // Default constructor
-   static SErrorText * FindError(int ErrorNumber); // Search for error in ErrorTexts
-   void submit(int ErrorNumber); // Print error message
-   void submit(int ErrorNumber, int extra); // Print error message with extra info
-   void submit(int ErrorNumber, int, int);  // Print error message with two extra numbers inserted
+   static SErrorText *FindError(int ErrorNumber);// Search for error in ErrorTexts
+   void submit(int ErrorNumber);                 // Print error message
+   void submit(int ErrorNumber, int extra);      // Print error message with extra info
+   void submit(int ErrorNumber, int, int);       // Print error message with two extra numbers inserted
    void submit(int ErrorNumber, char const * extra); // Print error message with extra info
    void submit(int ErrorNumber, char const *, char const *); // Print error message with two extra text fields inserted
+   void submit(int ErrorNumber, char const * extra1, char const * extra2, char const * extra3);// Print error message with three extra text fields
    void submit(int ErrorNumber, int, char const *); // Print error message with two extra text fields inserted
-   int number();        // Get number of errors
-   int getWorstError(); // Get highest warning or error number encountered
-   void clearError(int ErrorNumber); // Ignore further occurrences of this error
+   int number();                                 // Get number of errors
+   int getWorstError();                          // Get highest warning or error number encountered
+   void clearError(int ErrorNumber);             // Ignore further occurrences of this error
 protected:
-   int numErrors;       // Number of errors detected
-   int numWarnings;     // Number of warnings detected
-   int worstError;      // Highest error number encountered
-   int maxWarnings;     // Max number of warning messages to pring
-   int maxErrors;       // Max number of error messages to print
+   int numErrors;                                // Number of errors detected
+   int numWarnings;                              // Number of warnings detected
+   int worstError;                               // Highest error number encountered
+   int maxWarnings;                              // Max number of warning messages to pring
+   int maxErrors;                                // Max number of error messages to print
    void handleError(SErrorText * err, char const * text); // Used by submit function
 };
 

@@ -1,8 +1,8 @@
 /****************************  disassem.h   **********************************
 * Author:        Agner Fog
 * Date created:  2017-04-26
-* Last modified: 2017-11-03
-* Version:       1.00
+* Last modified: 2018-03-30
+* Version:       1.01
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        disassem.h
 * Description:
@@ -11,17 +11,13 @@
 * Copyright 2006-2017 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
-// Define tabulator positions for output
-const int asmTab1 =  8;                     // Column for opcode
-const int asmTab2 = 16;                    // Column for first operand
-const int asmTab3 = 56;                    // Column for comment
 
 /* Additional information stored in symbol records during disassembly:
-ElfFWC_Sym::st_other    bit 31 set if symbol has been written out in section listing
-ElfFWC_Sym::st_reguse1  old symbol index before sorting and adding more symbols, 
+ElfFwcSym::st_other    bit 31 set if symbol has been written out in section listing
+ElfFwcSym::st_reguse1  old symbol index before sorting and adding more symbols, 
                         needs translation to new index in relocation records
-ElfFWC_Sym::st_size     reference symbol if symbol is a relative pointer, stored in bit 32-63 of st_size
-ElfFWC_Sym::st_reguse2  symbol data type: bit 0-2: operand type, bit 3 = 1
+ElfFwcSym::st_size     reference symbol if symbol is a relative pointer, stored in bit 32-63 of st_size
+ElfFwcSym::st_reguse2  symbol data type: bit 0-2: operand type, bit 3 = 1
                         0x100 code pointer
                         0x200 data pointer
 */
@@ -29,6 +25,7 @@ ElfFWC_Sym::st_reguse2  symbol data type: bit 0-2: operand type, bit 3 = 1
 
 // Universal template for all instruction formats
 union STemplate {
+    uint64_t     q;          // First 64 bits
     struct {
         uint32_t rt:    5;   // Source register RT in formats A and E
         uint32_t mask:  3;   // Mask register in formats A and E
@@ -58,14 +55,13 @@ union STemplate {
     uint8_t      b[12];      // IM1 in format B
     uint16_t     s[4];       // IM1+2 in format C
     uint32_t     i[3];       // IM2 and IM3 in format A2, A3, B2, B3
-    uint64_t     q;          // First 64 bits
     float        f[2];       // IM2 as float
 };
 
 union STinyTemplate {
     uint32_t i;
     struct {
-        int32_t  rs:     4;
+        uint32_t rs:     4;
         uint32_t rd:     5;
         uint32_t op1:    5;
     } t;
@@ -106,7 +102,9 @@ struct SFormat {
                              // 4 = IM3 is shift count for IM2 if no options, 
                              // 8 = IM2 is shift count for IM4,
                              // 0x10 = IM3 in template A3 or B3, 
+                             // 0x40 = has fixed values
                              // 0x80 = jump OPJ in IM1
+                             // 0xC0 = jump with no OPJ
 
     uint8_t  vect;           // 1 = vector registers used, 2 = vector length in RS, 4 = broadcast length in RS
                              // 0x10 = vector registers used if M bit
@@ -117,32 +115,38 @@ struct SFormat {
 
     uint8_t  scale;          // 1 = offset is scaled, 2 = index is scaled by OS, 4 = scale factor is -1
     uint8_t  formatIndex;    // Bit index into format in instruction list
-    uint8_t  unused;         // unused
+    uint8_t  exeTable;       // table of function pointers used during emulation
 };
 
-extern const SFormat formatList[];  // == FXEND in disasm1.cpp
-extern uint32_t formatListSize;          // size of formatList 
+// tables in emulator2.cpp:
+extern const SFormat formatList[];            // == FXEND in disasm1.cpp
+extern uint32_t formatListSize;               // size of formatList 
+extern const uint32_t dataSizeTable[8];       // = {1, 2, 4, 8, 16, 4, 8, 16};
+extern const uint32_t dataSizeTableMax8[8];   // = {1, 2, 4, 8, 8, 4, 8, 8}; 
+extern const uint32_t dataSizeTableLog[8];    // = {0, 1, 2, 3, 4, 2, 3, 4};
+extern const uint32_t dataSizeTableBits[8];   // = {8, 16, 32, 64, 128, 32, 64, 128};
+extern const uint64_t dataSizeMask[8];        // = {FF, FFFF, FFFFFFFF, -1, -1, FFFFFFFF, -1, -1};
+
 
 // Operator for sorting symbols by address. Used by disassembler
-static inline bool operator < (ElfFWC_Sym const & a, ElfFWC_Sym const & b) {
-    if (a.st_shndx < b.st_shndx) return true;
-    if (a.st_shndx > b.st_shndx) return false;
+static inline bool operator < (ElfFwcSym const & a, ElfFwcSym const & b) {
+    if (a.st_section != b.st_section) return a.st_section < b.st_section;
     return a.st_value < b.st_value;
 }
 
 // Operatur == tells if symbols have same address
-static inline bool operator == (ElfFWC_Sym const & a, ElfFWC_Sym const & b) {
-    return a.st_shndx == b.st_shndx && a.st_value == b.st_value;
+static inline bool operator == (ElfFwcSym const & a, ElfFwcSym const & b) {
+    return a.st_section == b.st_section && a.st_value == b.st_value;
 }
 
 // Operator for sorting relocations by address. Used by disassembler
-static inline bool operator < (ElfFWC_Rela2 const & a, ElfFWC_Rela2 const & b) {
+static inline bool operator < (ElfFwcReloc const & a, ElfFwcReloc const & b) {
     if (a.r_section < b.r_section) return true;
     if (a.r_section > b.r_section) return false;
     return a.r_offset < b.r_offset;
 }
 
-// Look up format in FormatList
+// Look up format in FormatList (this function is in emulator2.cpp)
 uint32_t lookupFormat(uint64_t instruct);
 
 // Check integrity of format lists
@@ -151,30 +155,32 @@ void checkFormatListIntegrity();
 // Interpret template variants in instruction record
 uint64_t interpretTemplateVariants(const char *);
 // bits returned by interpretTemplateVariants
-const int VARIANT_D0 = (1 << 0);  // no destination, no operand type
-const int VARIANT_D1 = (1 << 1);  // no destination, but operant type specified
-const int VARIANT_D2 = (1 << 2);  // no destination, but operant type specified
-const int VARIANT_M0 = (1 << 3);  // memory operand destination
-const int VARIANT_M1 = (1 << 4);  // IM3 used as extra immediate operand in E formats with a memory operand
-const int VARIANT_R0 = (1 << 8);  // destination is general purpose register
-const int VARIANT_R1B =       9;  // bit index to VARIANT_R1
-const int VARIANT_R1 = (1 << VARIANT_R1B);  // first source operand is general purpose register
-const int VARIANT_R2 = (1 << (VARIANT_R1B+1)); // second source operand is general purpose register
-const int VARIANT_R3 = (1 << (VARIANT_R1B+2)); // third source operand is general purpose register
+const int VARIANT_D0 = (1 << 0);                 // no destination, no operand type
+const int VARIANT_D1 = (1 << 1);                 // no destination, but operant type specified
+const int VARIANT_D2 = (1 << 2);                 // operant type ignored
+const int VARIANT_M0 = (1 << 3);                 // memory operand destination
+const int VARIANT_M1 = (1 << 4);                 // IM3 used as extra immediate operand in E formats with a memory operand
+const int VARIANT_R0 = (1 << 8);                 // destination is general purpose register
+const int VARIANT_R1B =       9;                 // bit index to VARIANT_R1
+const int VARIANT_R1 = (1 << VARIANT_R1B);       // first source operand is general purpose register
+const int VARIANT_R2 = (1 << (VARIANT_R1B+1));   // second source operand is general purpose register
+const int VARIANT_R3 = (1 << (VARIANT_R1B+2));   // third source operand is general purpose register
 const int VARIANT_R123 = (VARIANT_R1|VARIANT_R2|VARIANT_R3);  // source operand is general purpose register
-const int VARIANT_RL = (1 << 12); // RS is a general purpose register specifying length
-const int VARIANT_I2 = (1 << 16); // immediate operand is integer
-const int VARIANT_U0 = (1 << 18); // integer operands are unsigned
-const int VARIANT_U3 = (1 << 19); // integer operands are unsigned if bit 3 in IM3 (format 2.4.x, 2.8.x) is set.
-const int VARIANT_On = (7 << 24); // n IM3 bits used for options
-const int VARIANT_H0 = (1 << 28); // half precision floating point operands
-const int VARIANT_SPECB = 32;     // bit index to special register type
+const int VARIANT_RL = (1 << 12);                // RS is a general purpose register specifying length
+const int VARIANT_F1 = (1 << 15);                // can have fallback register without mask register
+const int VARIANT_I2 = (1 << 16);                // immediate operand is integer
+const int VARIANT_U0 = (1 << 18);                // integer operands are unsigned
+const int VARIANT_U3 = (1 << 19);                // integer operands are unsigned if bit 3 in IM3 (format 2.4.x, 2.8.x) is set.
+const int VARIANT_On = (7 << 24);                // n IM3 bits used for options
+const int VARIANT_H0 = (1 << 28);                // half precision floating point operands
+const int VARIANT_SPECB = 32;                    // bit index to special register type
 const uint64_t VARIANT_SPEC = (uint64_t)0xF << VARIANT_SPECB; // Special register types for operands
-const uint64_t VARIANT_SPECS = 0x1000000000; // Special register type for source
-const uint64_t VARIANT_SPECD = 0x2000000000; // Special register type for destination
+const uint64_t VARIANT_SPECS = 0x1000000000;     // Special register type for source
+const uint64_t VARIANT_SPECD = 0x2000000000;     // Special register type for destination
 
 
-struct SInstruction2;  // defined below
+struct SInstruction2;                            // defined below
+struct SLineRef;                                 // defined below
 
 // class CDisassembler handles disassembly of ForwardCom ELF file
 class CDisassembler : public CELF {
@@ -183,6 +189,14 @@ public:
     void getComponents1();                       // Read instruction list, split ELF file into components
     void getComponents2(CELF const & assembler, CMemoryBuffer const & instructList);// Read instruction list, get ELF components for assembler output listing
     void go();                                   // Disassemble
+    void getLineList(CDynamicArray<SLineRef> & list); // transfer lineList to debugger
+    void getOutFile(CTextFileBuffer & buffer);   // transfer outFile to debugger
+    uint32_t outputFile;                         // Output file name, as index into cmd.fileNameBuffer
+    uint8_t  debugMode;                          // produce disassembly for emulator/debugger
+    uint8_t asmTab0;                             // Column for operand type
+    uint8_t asmTab1;                             // Column for opcode
+    uint8_t asmTab2;                             // Column for first operand
+    uint8_t asmTab3;                             // Column for comment
 protected:
     uint32_t pass;                               // Pass number
     uint32_t codeMode;                           // 1 = code, 2 = data in code section, 4 = data section
@@ -193,6 +207,7 @@ protected:
     uint32_t nextSymbol;                         // Index to next symbol label to write out
     uint32_t section;                            // Current section
     uint32_t sectionEnd;                         // Size of section
+    uint64_t sectionAddress;                     // Start address of section
     uint32_t currentFunction;                    // Symbol index of current function
     uint32_t currentFunctionEnd;                 // Address of end of current function
     uint32_t instructionWarning;                 // Warnings and errors for current instruction
@@ -202,11 +217,14 @@ protected:
     STemplate const * pInstr;                    // Pointer to current instruction code
     SInstruction2 const * iRecord;               // Pointer to instruction table entry
     SFormat const * fInstr;                      // Format details of current instruction code
-    CDynamicArray<ElfFWC_Sym> newSymbols;        // List of new symbols added during pass 1
-    CTextFileBuffer outFile;                     // Output file
     CDynamicArray<SInstruction2> instructionlist;// List of instruction set, sorted by category, format, and op1
+    CDynamicArray<ElfFwcSym> newSymbols;         // List of new symbols added during pass 1
+    CDynamicArray<SLineRef> lineList;            // Cross reference of code addresses to lines in outFile (used by debugger)
+    CTextFileBuffer outFile;                     // Output file
+    bool isExecutable;                           // Disassembling executable file
+    void feedBackText1();                        // Write feedback text on stdout
     void parseInstruction();                     // Parse current instruction
-    //void CheckInstructionErrors();               // Check if instruction is valid
+    //void CheckInstructionErrors();             // Check if instruction is valid
     void writeInstruction();                     // Write current instruction to output file
     void writeNormalInstruction();               // Write normal instruction to output file
     void writeJumpInstruction();                 // Write jump instruction to output file
@@ -221,6 +239,7 @@ protected:
     void pass1();                                // Pass 1 of disassembly. Resolves cross references and adds symbol labels
     void pass2();                                // Pass 2 of disassembly. Writes output file
     void sortSymbolsAndRelocations();            // Sort symbols and relocations by address
+    void symbolExeAddress(ElfFwcSym & sym);     // Translate symbol address from section:offset to pointerbase:address
     void updateSymbols();                        // Make missing symbols for jump targets and data references
     void joinSymbolTables();                     // Join the tables: symbols and newSymbols
     void assignSymbolNames();                    // Make names for unnamed symbols
@@ -243,6 +262,8 @@ protected:
     void writeSymbolName(uint32_t symi);         // Write name of symbol
     void writeSectionName(int32_t SegIndex);     // Write name of section
     void writePublicsAndExternals();             // Write list of public and external symbols
+    void writeAddress();                         // write code address
+    void setTabStops();                          // set tab stops for output
 };
 
 
@@ -304,19 +325,39 @@ static inline bool operator < (SInstruction2 const & a, SInstruction2 const & b)
 // Operator for sorting instructions by id
 static inline bool operator < (SInstruction3 const & a, SInstruction3 const & b) {
     return a.id < b.id;
-}
-
+} 
 
 // class for reading comma-separated file
 class CCSVFile : public CFileBuffer {
 public:
-    CCSVFile(char const * filename) : CFileBuffer(filename) {}  // Constructor
-    void parse();                                          // Read and parse file
-    CDynamicArray<SInstruction> instructionlist;           // List of records
+    CCSVFile() : CFileBuffer() {}                // Constructor
+    void parse();                                // Read and parse file
+    CDynamicArray<SInstruction> instructionlist; // List of records
     uint64_t interpretNumber(const char * text); // Interpret number in instruction list
+};
+
+// Cross reference of code addresses to lines in outFile. Used by debugger
+struct SLineRef {
+    uint64_t address;                            // code address
+    uint32_t domain;                             // 1 = IP, 2 = datap, 4 = threadp
+    uint32_t textPos;                            // position of corresponding line in outFile
+};
+
+// Operators for sorting SLineRef by address
+static inline bool operator < (SLineRef const & a, SLineRef const & b) {
+    if (a.domain != b.domain) return a.domain < b.domain;
+    return a.address < b.address;
+};
+
+static inline bool operator == (SLineRef const & a, SLineRef const & b) {
+    return a.domain == b.domain && a.address == b.address;
+};
+
+static inline bool operator != (SLineRef const & a, SLineRef const & b) {
+    return !(a == b);
 };
 
 // Interpret a string with a decimal, binary, octal, or hexadecimal number
 int64_t interpretNumber(const char * s, uint32_t maxLength, uint32_t * error);
 
-double   interpretFloat(const char * s, uint32_t length);    // interpret floating point number from string with indicated length
+double  interpretFloat(const char * s, uint32_t length);    // interpret floating point number from string with indicated length
