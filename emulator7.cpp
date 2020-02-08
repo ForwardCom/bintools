@@ -1,13 +1,13 @@
 /****************************  emulator7.cpp  ********************************
 * Author:        Agner Fog
 * date created:  2018-02-18
-* Last modified: 2018-03-30
-* Version:       1.01
+* Last modified: 2020-02-08
+* Version:       1.02
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
 * Emulator: System functions
 *
-* Copyright 2018 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2018-2020 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 #include "stdafx.h"
@@ -151,6 +151,7 @@ int CThread::fprintfEmulated(FILE * stream, const char * format, uint64_t * argu
     }
     // loop for substrings of format string containing only one format specifier each
     do {
+        char c;                                      // format character
         int asterisks = 0;
         bool isString = false;
         if (percentp1) {
@@ -164,7 +165,7 @@ int CThread::fprintfEmulated(FILE * stream, const char * format, uint64_t * argu
             // check if argument is a string, and count asterisks
             int i = 1;
             while (true) {
-                char c = percentp1[i++];             // read character in format specifier
+                c = percentp1[i++];                  // read character in format specifier
                 if (c == 0) break;                   // end of string
                 if (c == '*') asterisks++;           // count asterisks
                 c |= 0x20;                           // lower case
@@ -176,14 +177,38 @@ int CThread::fprintfEmulated(FILE * stream, const char * format, uint64_t * argu
             percentp2 = 0;
         }
         uint64_t argument = argumentList[arg];   // The argument list can contain any type of argument with size up to 64 bits
+        union {
+            uint64_t a;
+            double d;
+        } uu;
         if (isString) argument += (uint64_t)memory; // translate string address
         // Print current argument with format substring.
         if (asterisks) { // asterisks indicate extra arguments
-            returnValue = fprintf(stream, startp, argument, argumentList[arg+1], argumentList[arg+2]);
+            if (c == 'a' || c == 'e' || c == 'f' || c == 'g') {
+                // floating point argument
+                if (asterisks == 1) {
+                    uu.a = argumentList[arg+1];
+                    returnValue = fprintf(stream, startp, argument, uu.d, argumentList[arg+2]);
+                }
+                else { // asterisks = 2
+                    uu.a = argumentList[arg+2];
+                    returnValue = fprintf(stream, startp, argument, argumentList[arg+1], uu.d);
+                }
+            }
+            else { // integer argument
+                returnValue = fprintf(stream, startp, argument, argumentList[arg+1], argumentList[arg+2]);
+            }
             arg += asterisks + 1;
         }
         else {
-            returnValue = fprintf(stream, startp, argument);
+            if (c == 'a' || c == 'e' || c == 'f' || c == 'g') {
+                // floating point argument
+                uu.a = argument;
+                returnValue = fprintf(stream, startp, uu.d);
+            }
+            else {            
+                returnValue = fprintf(stream, startp, argument);
+            }
             arg++;
         }
         if (returnValue < 0) return returnValue; // return error
