@@ -1,8 +1,8 @@
 /****************************  disasm2.cpp   ********************************
 * Author:        Agner Fog
 * Date created:  2017-04-26
-* Last modified: 2017-11-03
-* Version:       1.00
+* Last modified: 2018-03-30
+* Version:       1.01
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        disassem.h
 * Description:
@@ -41,8 +41,16 @@ void CDisassembler::writeSectionName(int32_t SegIndex) {
 } 
 
 
+// Find any labels at current position and next
 void CDisassembler::writeLabels() {
-    // Find any labels at current position and next
+    // check section type
+    uint8_t sectionType = sectionHeaders[section].sh_type;
+    if (!(sectionType & SHT_ALLOCATED)) {
+        return;   // section is not allocated
+    }
+    // start at new line
+    if (outFile.getColumn() && !debugMode) outFile.newLine();
+
     if (iInstr == currentFunctionEnd && currentFunction) {
         // Current function is ending here
         writeSymbolName(currentFunction); 
@@ -54,14 +62,17 @@ void CDisassembler::writeLabels() {
     bool isFunction = false;
 
     // Make dummy symbol to search for
-    ElfFWC_Sym currentPosition;
-    currentPosition.st_shndx = section;
+    ElfFwcSym currentPosition;
+    currentPosition.st_section = section;
     currentPosition.st_value = iInstr;
+    symbolExeAddress(currentPosition);
 
     // Search for any symbol here. Look for any misplaced symbols we might have skipped before last output
     uint32_t numSymbols = 0; // Check if multiple symbols at same place
-    while (nextSymbol < symbols.numEntries() && symbols[nextSymbol] < currentPosition) {
-        if (symbols[nextSymbol].st_shndx == section) {
+    while (nextSymbol < symbols.numEntries() 
+        && symbols[nextSymbol] < currentPosition) {
+        if (symbols[nextSymbol].st_section == currentPosition.st_section && iInstr
+            && symbols[nextSymbol].st_type != STT_CONSTANT) {
             outFile.put(commentSeparator);
             outFile.put(" Warning: Misplaced symbol: ");
             writeSymbolName(nextSymbol);
@@ -74,32 +85,34 @@ void CDisassembler::writeLabels() {
     }
     // Write all symbols at current position
     while (nextSymbol < symbols.numEntries() && symbols[nextSymbol] == currentPosition) {
-        if (numSymbols++) {
-            outFile.put(':'); outFile.newLine();           // Multiple symbols at same position, put on separate lines
-        }
-        writeSymbolName(nextSymbol); 
-        
-        if (symbols[nextSymbol].st_type == STT_FUNC && symbols[nextSymbol].st_bind != STB_LOCAL) {
-            // This is a function
-            outFile.put(" function");
-            isFunction = true;
-            currentFunction = nextSymbol;                  // Remember which function we are in
-            if (symbols[nextSymbol].st_unitsize) {         // Calculate end of current function
-                if (symbols[nextSymbol].st_unitnum == 0) symbols[nextSymbol].st_unitnum = 1;
-                currentFunctionEnd = iInstr + symbols[nextSymbol].st_unitsize * symbols[nextSymbol].st_unitnum;
+        if (symbols[nextSymbol].st_type != STT_CONSTANT) {
+            if (numSymbols++) {
+                outFile.put(':'); outFile.newLine();           // Multiple symbols at same position, put on separate lines
             }
-            else currentFunctionEnd = 0;                   // Function size is not known
+            writeSymbolName(nextSymbol);
+            if (symbols[nextSymbol].st_type == STT_FUNC && symbols[nextSymbol].st_bind != STB_LOCAL) {
+                // This is a function            
+                if (debugMode) outFile.put(": ");
+                else outFile.put(" function");
+                isFunction = true;
+                currentFunction = nextSymbol;                  // Remember which function we are in
+                if (symbols[nextSymbol].st_unitsize) {         // Calculate end of current function
+                    if (symbols[nextSymbol].st_unitnum == 0) symbols[nextSymbol].st_unitnum = 1;
+                    currentFunctionEnd = iInstr + symbols[nextSymbol].st_unitsize * symbols[nextSymbol].st_unitnum;
+                }
+                else currentFunctionEnd = 0;                   // Function size is not known
+            }
+            else { // local label        
+                ;
+            }
+            symbols[nextSymbol].st_other |= 0x80000000;        // Remember symbol has been written
         }
-        else { // local label        
-            ;
-        }
-        symbols[nextSymbol].st_other |= 0x80000000;        // Remember symbol has been written
         nextSymbol++;
     }
     if (numSymbols) {
         if (codeMode == 1) {
             if (!isFunction) outFile.put(':'); 
-            outFile.newLine();           // Code. Put label on separate line
+            if (!debugMode) outFile.newLine();             // Code. Put label on separate line
         }
         else {
             outFile.put(':');                              // Data. Make space after last label
@@ -108,8 +121,6 @@ void CDisassembler::writeLabels() {
 }
 
 
-static const int dataSizeTableMax8[8] = {1, 2, 4, 8, 8, 4, 8, 8}; // Data size for each operant type, max = 8
-
 void CDisassembler::writeDataItems() {
     // Write contents of data section to output file
     uint32_t nextLabel = 0;
@@ -117,40 +128,54 @@ void CDisassembler::writeDataItems() {
     uint32_t dataSize = 4;
     uint32_t currentSymbol;
     uint32_t sequenceEnd;
+    ElfFwcReloc rel;                            // relocation record for searching
+    uint32_t irel;                               // index to relocation record
+    uint32_t numRel;                             // number of relocations found at current position
+
     operandType = 2;
     bool isFloat = false;
+
+    // translate addresses if executable
+    ElfFwcSym currentPosition;
+    currentPosition.st_section = section;
+    currentPosition.st_value = iInstr;
+    symbolExeAddress(currentPosition);
+
+    // find first relocation
+    rel.r_offset = iInstr;
+    rel.r_section = section;
+    irel = relocations.findFirst(rel);
+    irel &= 0x7FFFFFFF;
+    if (irel < relocations.numEntries() && relocations[irel].r_section == section) {
+        nextRelocation = (uint32_t)relocations[irel].r_offset;
+    }
+    else nextRelocation = sectionEnd;
 
     // Loop through section
     while (iInstr < sectionEnd) {
         // Search for symbol labels
-        writeLabels(); //
+        writeLabels();
         if (nextSymbol > 1) {
             // Get data size from current symbol
             currentSymbol = nextSymbol - 1;
-            if (symbols[currentSymbol].st_shndx == section) {
+            if (symbols[currentSymbol].st_section == currentPosition.st_section) {
                 dataSize = symbols[currentSymbol].st_unitsize;
                 if (dataSize > 8) dataSize = 8;
                 if (dataSize == 0) dataSize = 4;
                 isFloat = (symbols[currentSymbol].st_other & STV_FLOAT) != 0;
             }
-            else if (symbols[currentSymbol].st_reguse2) {
-                operandType = symbols[currentSymbol].st_reguse2 & 7;
-                dataSize = dataSizeTableMax8[operandType];
-                isFloat = false;
-            }
         }
         // Get position of next symbol
         if (nextSymbol < symbols.numEntries()) {
             nextLabel = (uint32_t)symbols[nextSymbol].st_value;
+            // translate to local offset
+            if (isExecutable) nextLabel -= (uint32_t)sectionHeaders[section].sh_addr;
         }
         else nextLabel = sectionEnd;
         
         // Search for relocations
-        ElfFWC_Rela2 rel;
         rel.r_offset = iInstr;
-        rel.r_section = section;
-        uint32_t irel;  // index to relocation record
-        uint32_t numRel = relocations.findAll(&irel, rel);
+        numRel = relocations.findAll(&irel, rel);
         if (numRel) {
             // Relocation found. Find size
             // Relocation size overrides any symbol size
@@ -200,20 +225,20 @@ void CDisassembler::writeDataItems() {
             // Write comment with relocation type
             outFile.put(' '); outFile.tabulate(asmTab3);
             outFile.put(commentSeparator); outFile.put(' '); 
-            if (sectionEnd > 0xFFFF) outFile.putHex(iInstr, 2); 
-            else outFile.putHex((uint16_t)iInstr, 2); 
+            if (sectionEnd + sectionAddress> 0xFFFF) outFile.putHex((uint32_t)(iInstr + sectionAddress), 2); 
+            else outFile.putHex((uint16_t)(iInstr + sectionAddress), 2); 
             outFile.put(" _ ");
             switch(relocations[irel].r_type & R_FORW_RELTYPEMASK) {
             case R_FORW_ABS:
                 outFile.put("absolute address"); break;
             case R_FORW_SELFREL:
                 outFile.put("self-relative"); break;
-            case R_FORW_CONST:
-                outFile.put("relative to const"); break;
+            case R_FORW_IP_BASE:
+                outFile.put("relative to __ip_base"); break;
             case R_FORW_DATAP:
-                outFile.put("relative to datap"); break;
+                outFile.put("relative to __datap_base"); break;
             case R_FORW_THREADP:
-                outFile.put("relative to threadp"); break;
+                outFile.put("relative to __threadp_base"); break;
             case R_FORW_REFP:
                 outFile.put("relative to ");
                 writeSymbolName(relocations[irel].r_refsym & 0x7FFFFFFF); break;
@@ -269,20 +294,26 @@ void CDisassembler::writeDataItems() {
             // Write items
             uint32_t lineBegin = iInstr;
             while (iInstr < lineEnd) {
-                // Write item
-                switch(dataSize) {
-                case 1:
-                    outFile.putHex(*(uint8_t*)(sectionBuffer + iInstr));
-                    break;
-                case 2:
-                    outFile.putHex(*(uint16_t*)(sectionBuffer + iInstr));
-                    break;
-                case 4:
-                    outFile.putHex(*(uint32_t*)(sectionBuffer + iInstr));
-                    break;
-                case 8:
-                    outFile.putHex(*(uint64_t*)(sectionBuffer + iInstr));
-                    break;
+                if (sectionHeaders[section].sh_type == SHT_NOBITS) {
+                    // BSS section has no data in buffer
+                    outFile.put('0');
+                }
+                else {
+                    // Write item
+                    switch (dataSize) {
+                    case 1:
+                        outFile.putHex(*(uint8_t*)(sectionBuffer + iInstr));
+                        break;
+                    case 2:
+                        outFile.putHex(*(uint16_t*)(sectionBuffer + iInstr));
+                        break;
+                    case 4:
+                        outFile.putHex(*(uint32_t*)(sectionBuffer + iInstr));
+                        break;
+                    case 8:
+                        outFile.putHex(*(uint64_t*)(sectionBuffer + iInstr));
+                        break;
+                    }
                 }
                 iInstr += dataSize;
                 if (iInstr < lineEnd) outFile.put(", ");  // comma if not the last item on line
@@ -290,50 +321,59 @@ void CDisassembler::writeDataItems() {
             // Write data comment
             outFile.put(' '); outFile.tabulate(asmTab3);
             outFile.put(commentSeparator); outFile.put(' '); 
-            // Address
-            if (sectionEnd > 0xFFFF) outFile.putHex(lineBegin, 2); 
-            else outFile.putHex(uint16_t(lineBegin), 2);
-            outFile.put(" _ ");
-            // Write data in alternative form
-            for (uint32_t i = lineBegin; i < lineEnd; i += dataSize) {
-                switch (dataSize) {
-                case 1: {  // bytes. Write as characters
-                    char c = *(char*)(sectionBuffer + i);                   
-                    outFile.put((uint8_t)c < ' ' ? '.' : c);
-                    break;}
-                case 2:  
-                    if (isFloat) { // half precision float
-                        outFile.putFloat(half2float(*(uint16_t*)(sectionBuffer + i)));
+            // write address
+            if (sectionEnd + sectionAddress > 0xFFFF) outFile.putHex(uint32_t(lineBegin + sectionAddress), 2); 
+            else outFile.putHex(uint16_t(lineBegin + sectionAddress), 2);
+
+            if (sectionHeaders[section].sh_type != SHT_NOBITS) { // skip data if BSS section
+                outFile.put(" _ ");
+                // Write data in alternative form
+                for (uint32_t i = lineBegin; i < lineEnd; i += dataSize) {
+                    switch (dataSize) {
+                    case 1: {  // bytes. Write as characters
+                        char c = *(char*)(sectionBuffer + i);
+                        outFile.put((uint8_t)c < ' ' ? '.' : c);
+                        break; }
+                    case 2:
+                        if (isFloat) { // half precision float
+                            outFile.putFloat(half2float(*(uint16_t*)(sectionBuffer + i)));
+                        }
+                        else { // 16 bit integer. Write as signed decimal
+                            outFile.putDecimal(*(int16_t*)(sectionBuffer + i), 1);
+                        }
+                        if (i + dataSize < lineEnd) outFile.put(", "); // Comma except before last item
+                        break;
+                    case 4:
+                        if (isFloat) { // single precision float
+                            outFile.putFloat(*(float*)(sectionBuffer + i));
+                        }
+                        else { // 16 bit integer. Write as signed decimal
+                            outFile.putDecimal(*(int32_t*)(sectionBuffer + i), 1);
+                        }
+                        if (i + dataSize < lineEnd) outFile.put(", "); // Comma except before last item
+                        break;
+                    case 8:
+                        if (isFloat) { // double precision float
+                            outFile.putFloat(*(double*)(sectionBuffer + i));
+                        }
+                        else {  // 64 bit integer. Write as signed decimal if not huge
+                            int64_t x = *(int64_t*)(sectionBuffer + i);
+                            if (x == (int32_t)x) outFile.putDecimal((int32_t)x, 1);
+                        }
+                        if (i + dataSize < lineEnd) outFile.put(", "); // Comma except before last item
+                        break;
+                    default:;
                     }
-                    else { // 16 bit integer. Write as signed decimal
-                        outFile.putDecimal(*(int16_t*)(sectionBuffer + i), 1);
-                    }
-                    if (i + dataSize < lineEnd) outFile.put(", "); // Comma except before last item
-                    break;
-                case 4:
-                    if (isFloat) { // single precision float
-                        outFile.putFloat(*(float*)(sectionBuffer + i));
-                    }
-                    else { // 16 bit integer. Write as signed decimal
-                        outFile.putDecimal(*(int32_t*)(sectionBuffer + i), 1);
-                    }
-                    if (i + dataSize < lineEnd) outFile.put(", "); // Comma except before last item
-                    break;
-                case 8: 
-                    if (isFloat) { // double precision float
-                        outFile.putFloat(*(double*)(sectionBuffer + i));
-                    }
-                    else {  // 64 bit integer. Write as signed decimal if not huge
-                        int64_t x = *(int64_t*)(sectionBuffer + i);
-                        if (x == (int32_t)x) outFile.putDecimal((int32_t)x, 1);
-                    }
-                    if (i + dataSize < lineEnd) outFile.put(", "); // Comma except before last item
-                    break;
-                default: ;
                 }
             }
         }
         if (iInstr < sectionEnd) outFile.newLine();
+    }
+    // write label at end of data section, if any
+    if ((section + 1 == sectionHeaders.numEntries() ||
+    ((sectionHeaders[section].sh_flags ^ sectionHeaders[section + 1].sh_flags) & SHF_BASEPOINTER))
+    && nextSymbol < symbols.numEntries()) {
+        writeLabels();
     }
 }
 
@@ -342,7 +382,7 @@ static const uint32_t relocationSizes[16] = {0, 1, 2, 3, 4, 4, 4, 8, 8, 8, 0, 0,
 void CDisassembler::writeRelocationTarget(uint32_t src, uint32_t size) {
     // Write relocation target for this source position
     // Find relocation
-    ElfFWC_Rela2 rel;
+    ElfFwcReloc rel;
     rel.r_offset = src;
     rel.r_section = section;
     //uint32_t irel;  // index to relocation record
@@ -356,7 +396,7 @@ void CDisassembler::writeRelocationTarget(uint32_t src, uint32_t size) {
     relocations[relocation-1].r_refsym |= 0x80000000;              // Remember relocation has been used OK
     // write scale factor if scale factor != 1 and not a jump target
     bool writeScale = ((relocations[relocation-1].r_type & R_FORW_RELSCALEMASK) && !(fInstr && fInstr->cat == 4 && fInstr->mem & 0x80));
-    if (writeScale) outFile.put('(');
+    if (writeScale || codeMode > 1) outFile.put('(');
     uint32_t isym = relocations[relocation-1].r_sym;
     writeSymbolName(isym);
     // Find any addend
@@ -406,6 +446,7 @@ void CDisassembler::writeRelocationTarget(uint32_t src, uint32_t size) {
     else if (addend < 0) {
         outFile.put('-'); outFile.putHex(uint32_t(-addend));
     }
+    if (codeMode > 1 && !writeScale) outFile.put(')');
 
     // Check for errors
     if (n > 1) writeError("Overlapping relocations here");
@@ -429,11 +470,17 @@ void CDisassembler::writeAlign(uint32_t a) {
 
 void CDisassembler::writeFileBegin() {
     outFile.setFileType(FILETYPE_ASM);
+    if (debugMode) return;
 
     // Initial comment
     outFile.put(commentSeparator);
-    outFile.put("Disassembly of file: ");
-    outFile.put(cmd.inputFile);
+    if (outputFile == cmd.outputListFile) {
+        outFile.put(" Assembly listing of file: ");
+    }
+    else {    
+        outFile.put(" Disassembly of file: ");
+    }
+    outFile.put(cmd.getFilename(cmd.inputFile));
     outFile.newLine();
     // Date and time. 
     // Note: will fail after year 2038 on computers that use 32-bit time_t
@@ -445,12 +492,24 @@ void CDisassembler::writeFileBegin() {
             if (*c < ' ') *c = 0;
         }
         // Write date and time as comment
-        outFile.put(commentSeparator);
+        outFile.put(commentSeparator); outFile.put(' ');
         outFile.put(timestring);
         outFile.newLine();
     }
+    // Write special symbols and addresses if executable file
+    if (isExecutable) {
+        outFile.newLine();  outFile.put(commentSeparator);
+        outFile.put(" __ip_base = ");  outFile.putHex(fileHeader.e_ip_base); 
+        outFile.newLine();  outFile.put(commentSeparator);
+        outFile.put(" __datap_base = ");  outFile.putHex(fileHeader.e_datap_base); 
+        outFile.newLine();  outFile.put(commentSeparator);
+        outFile.put(" __threadp_base = ");  outFile.putHex(fileHeader.e_threadp_base); 
+        outFile.newLine();  outFile.put(commentSeparator);
+        outFile.put(" __entry_point = ");  outFile.putHex(fileHeader.e_entry); 
+        outFile.newLine();
+    }
 
-    // Write syntax-specific initializations
+    // Write imported and exported symbols
     outFile.newLine(); 
     writePublicsAndExternals();
 }
@@ -458,12 +517,13 @@ void CDisassembler::writeFileBegin() {
 
 void CDisassembler::writePublicsAndExternals() {
     // Write public and external symbol definitions
+    if (debugMode) return;
     uint32_t i;                                     // Loop counter
     uint32_t linesWritten = 0;                      // Count lines written
 
     // Loop through public symbols
     for (i = 0; i < symbols.numEntries(); i++) {
-        if (symbols[i].st_bind && symbols[i].st_shndx) {
+        if (symbols[i].st_bind && symbols[i].st_section) {
             // Symbol is public
             outFile.put("public ");
             // Write name
@@ -492,13 +552,18 @@ void CDisassembler::writePublicsAndExternals() {
                 outFile.put("% "); writeSymbolName(i); outFile.put(" = ");                 
                 outFile.putHex(symbols[i].st_value);
             }
+            else if (symbols[i].st_type == 0) {
+                outFile.put(": absolute"); outFile.newLine(); 
+            }
             else {
                 outFile.put(": unknown type. type="); outFile.putHex(symbols[i].st_type);
                 outFile.put(", bind="); outFile.putHex(symbols[i].st_bind);
                 outFile.put(", other="); outFile.putHex(symbols[i].st_other);
             }
             // Check if weak or communal
-            if (symbols[i].st_bind == STB_WEAK) outFile.put(" weak");
+            if (symbols[i].st_bind & STB_WEAK) {
+                outFile.put(" weak");
+            }
             if (symbols[i].st_type == STT_COMMON || (symbols[i].st_other & STV_COMMON)) outFile.put(", communal");
             outFile.newLine();  linesWritten++;
         }
@@ -510,7 +575,7 @@ void CDisassembler::writePublicsAndExternals() {
     }
     // Loop through external symbols
     for (i = 0; i < symbols.numEntries(); i++) {
-        if (symbols[i].st_bind && !symbols[i].st_shndx) {
+        if (symbols[i].st_bind && !symbols[i].st_section) {
             // Symbol is external
             outFile.put("extern ");
             // Write name
@@ -531,13 +596,16 @@ void CDisassembler::writePublicsAndExternals() {
             else if (symbols[i].st_other & STV_THREADP) outFile.put(": threadp");
             else if (symbols[i].st_type == STT_OBJECT) outFile.put(": datap");
             else if (symbols[i].st_type == STT_CONSTANT) outFile.put(": constant");
+            else if (symbols[i].st_type == 0) outFile.put(": absolute");
             else {
                 outFile.put(": unknown type. type="); outFile.putHex(symbols[i].st_type);
-                outFile.put(", bind="); outFile.putHex(symbols[i].st_bind);
                 outFile.put(", other="); outFile.putHex(symbols[i].st_other);
             }
             // Check if weak or communal
-            if (symbols[i].st_bind == STB_WEAK) outFile.put(", weak");
+            if (symbols[i].st_bind & STB_WEAK) {
+                if (symbols[i].st_bind == STB_UNRESOLVED) outFile.put(" // unresolved!");
+                else outFile.put(", weak");
+            }
             if (symbols[i].st_type == STT_COMMON) outFile.put(", communal");
             // Finished line
             outFile.newLine();  linesWritten++;
@@ -580,13 +648,15 @@ void CDisassembler::writeSectionBegin() {
     else if (sectionHeaders[section].sh_flags & SHF_IP) outFile.put(" ip");
     if (sectionHeaders[section].sh_flags & SHF_DATAP) outFile.put(" datap");
     if (sectionHeaders[section].sh_flags & SHF_THREADP) outFile.put(" threadp");
+    if (sectionHeaders[section].sh_flags & SHF_EXCEPTION_HND) outFile.put(" exception_hand");
+    if (sectionHeaders[section].sh_flags & SHF_EVENT_HND) outFile.put(" event_hand");
+    if (sectionHeaders[section].sh_flags & SHF_DEBUG_INFO) outFile.put(" debug_info");
+    if (sectionHeaders[section].sh_flags & SHF_COMMENT) outFile.put(" comment_info");
     if (sectionHeaders[section].sh_type == SHT_NOBITS) outFile.put(" uninitialized");
     if (sectionHeaders[section].sh_type == SHT_COMDAT) outFile.put(" communal");    
 
     // Write alignment
-    uint32_t align = (uint32_t)sectionHeaders[section].sh_addralign;
-    if (align == 0) align = 1;
-    if (align & (align - 1)) writeError("Alignment is not a power of 2");
+    uint32_t align = 1 << sectionHeaders[section].sh_align;
     outFile.put(" align="); 
     if (align < 16) outFile.putDecimal(align); else outFile.putHex(align);
 
@@ -594,8 +664,17 @@ void CDisassembler::writeSectionBegin() {
     outFile.put(" ");  outFile.tabulate(asmTab3);
     outFile.put(commentSeparator);
     // Write section number
-    outFile.put(" section number ");  
+    outFile.put(" section ");  
     outFile.putDecimal(section);
+    // Write library and module, if available
+    if (sectionHeaders[section].sh_module && sectionHeaders[section].sh_module < secStringTableLen) {
+        outFile.put(". ");
+        if (sectionHeaders[section].sh_library) {
+            outFile.put(secStringTable + sectionHeaders[section].sh_library);
+            outFile.put(':');
+        }
+        outFile.put(secStringTable + sectionHeaders[section].sh_module);
+    }
 
     // New line
     outFile.newLine();
@@ -635,7 +714,10 @@ void CDisassembler::writeInstruction() {
 
     if (iRecSearch.category == 4) {                        // jump instruction
         // Set op1 = opj for jump instructions in format 2.5.x and 3.1.0
-        if (fInstr->imm2 & 0x80) iRecSearch.op1 = pInstr->b[0];
+        if (fInstr->imm2 & 0x80) {
+            iRecSearch.op1 = pInstr->b[0];                 // OPJ is in IM1
+            if (fInstr->imm2 & 0x40) iRecSearch.op1 = 63;  // OPJ has fixed value
+        }
         // Set op1 for template D
         if (fInstr->tmpl == 0xD) iRecSearch.op1 &= 0xF8;
     }
@@ -668,7 +750,7 @@ void CDisassembler::writeInstruction() {
         }
         if (fInstr->cat >= 3) {
             // Multi format or jump instruction. Check if format allowed
-            formatFits = (instructionlist[index + i].format & ((uint64_t)1 << fInstr->formatIndex)) != 0;
+            formatFits = (instructionlist[index+i].format & ((uint64_t)1 << fInstr->formatIndex)) != 0;
         }
         if (otFits && formatFits) {
             index += i;          // match found
@@ -727,20 +809,21 @@ uint8_t getRegister(const STemplate * pInstr, int i) {
 void CDisassembler::writeNormalInstruction() {
     // Write operand type
     if (!((variant & VARIANT_D0) /*|| iRecord->sourceoperands == 0*/)) { // skip if no operand type
-        if ((variant & VARIANT_U0) && operandType < 5) outFile.put('u');   // Unsigned
-        else if (variant & VARIANT_U3) {                
+        if ((variant & VARIANT_U0) && operandType < 5 && !debugMode) outFile.put('u');   // Unsigned
+        else if (variant & VARIANT_U3 && operandType < 5) {                
             // Unsigned if option bit 5 is set. 
             // Option bit is in IM3 in E formats
-            if (fInstr->tmpl == 0xE && (pInstr->a.im3 & 0x8)) {
+            if (fInstr->tmpl == 0xE && (pInstr->a.im3 & 0x8) && !debugMode) {
                 outFile.put('u');
             }
         }
-        writeOperandType(operandType);
+        outFile.tabulate(asmTab0);
+        writeOperandType(operandType); outFile.put(' ');
     }
     outFile.tabulate(asmTab1);
 
     // Write destination operand
-    if (!(variant & (VARIANT_D0 | VARIANT_D1))) {                                  // skip if no destination operands        
+    if (!(variant & (VARIANT_D0 | VARIANT_D1))) {          // skip if no destination operands        
         if (variant & VARIANT_M0) {
             writeMemoryOperand();                          // Memory destination operand
         }
@@ -762,24 +845,24 @@ void CDisassembler::writeNormalInstruction() {
         If one in the list is not available, go to the next
     3.  The selected operands are used as source operands in the reversed order
     */
-    int nOp = (int)iRecord->sourceoperands;  // Number of source operands
+    int nOp = (int)iRecord->sourceoperands;                // Number of source operands
 
     // Make list of operands from available operands. 0=none, 1=immediate, 2=memory, 5=RT, 6=RS, 7=RU, 8=RD
-    uint8_t opAvail = fInstr->opAvail;    // Bit index of available operands
-    if (fInstr->cat != 3) {                 // Single format instruction. Immediate operand determined by instruction table
+    uint8_t opAvail = fInstr->opAvail;                     // Bit index of available operands
+    if (fInstr->cat != 3) {                                // Single format instruction. Immediate operand determined by instruction table
         if (iRecord->opimmediate) opAvail |= 1;
         else opAvail &= ~1;
     }
-    if (variant & VARIANT_M0) opAvail &= ~2;     // Memory operand already written as destination
+    if (variant & VARIANT_M0) opAvail &= ~2;               // Memory operand already written as destination
 
     if ((variant & VARIANT_M1) && fInstr->tmpl == 0xE && nOp > 1 && (opAvail & 2)) {
         opAvail |= 1;  // VARIANT_M1 makes IM3 an immediate if there is a memory operand
     }
 
-    uint8_t operands[4] = {0,0,0,0};             // Make list of operands
-    uint32_t a = 0;                              // Index to opAvail
-    int      j = nOp - 1;                        // Index into operands
-    uint8_t fallback;                            // fallback register
+    uint8_t operands[4] = {0,0,0,0};                       // Make list of operands
+    uint32_t a = 0;                                        // Index to opAvail
+    int      j = nOp - 1;                                  // Index into operands
+    uint8_t fallback;                                      // fallback register
 
     // Loop through the bits in opAvail to pick operands according to priority
     while (j >= 0 && a < 8) {     
@@ -789,20 +872,19 @@ void CDisassembler::writeNormalInstruction() {
         }
         a++;
     }
-    // First source register or any remaining register used as fallback
-    if      (opAvail & (1 << 4)) fallback = 5;         // RT
-    else if (opAvail & (1 << 5)) fallback = 6;         // RS
-    else if (opAvail & (1 << 6)) fallback = 7;         // RU
-    else if ((opAvail & (1 << 7)) && (variant & VARIANT_M0)) fallback = 8;  // RD if not used for destination
-    else if (operands[0] > 2) fallback = operands[0];  // first source register operand
-    else fallback = 0x1F;                              // zero
+    // First source register or last remaining register used as fallback
+    if (opAvail & 0x40) fallback = 7;                      // RU
+    else if (opAvail & 0x20) fallback = 6;                 // RS
+    else if (operands[0] > 2) fallback = operands[0];      // first source register operand
+    else fallback = 0x1F;                                  // zero
+
 
     // Write source operands
-    if (nOp) {                                   // Skip if no source operands
+    if (nOp) {                                             // Skip if no source operands
         outFile.put("(");
         // Loop through operands
         for (j = 0; j < nOp; j++) {
-            uint8_t reg = getRegister(pInstr, operands[j]);   // select register
+            uint8_t reg = getRegister(pInstr, operands[j]);// select register
             switch (operands[j]) {
             case 1:  // Immediate operand
                 writeImmediateOperand();
@@ -823,15 +905,17 @@ void CDisassembler::writeNormalInstruction() {
                 else writeVectorRegister(reg);
                 break;
             }
-            if (j+1 < nOp) outFile.put(", ");    // Comma if not the last operand
+            if (operands[j] && j+1 < nOp) outFile.put(", ");              // Comma if not the last operand
         }
         // end parameter list
         outFile.put(")");    // we prefer to end the parenthesis before the mask and options
 
         // write mask register
-        if ((fInstr->tmpl == 0xA || fInstr->tmpl == 0xE) && pInstr->a.mask != 7) {
-            outFile.put(", mask=");
-            if (fInstr->vect) writeVectorRegister(pInstr->a.mask); else writeGPRegister(pInstr->a.mask);
+        if ((fInstr->tmpl == 0xA || fInstr->tmpl == 0xE) && (pInstr->a.mask != 7 || (variant & VARIANT_F1))) {
+            if (pInstr->a.mask != 7) {
+                outFile.put(", mask=");
+                if (fInstr->vect) writeVectorRegister(pInstr->a.mask); else writeGPRegister(pInstr->a.mask);
+            }
             // write fallback 
             uint8_t fallbackreg = getRegister(pInstr, fallback); 
             if ((fallbackreg & 0x1F) == 0x1F) {
@@ -844,12 +928,11 @@ void CDisassembler::writeNormalInstruction() {
         }
         // write options = IM3, if IM3 is used and not already written by writeImmediateOperand
         if ((variant & VARIANT_On) && (fInstr->imm2 & 2) 
-        && (fInstr->cat == 3 || (iRecord->opimmediate != 0 && iRecord->opimmediate != 25))
+        && (fInstr->cat == 3 || (iRecord->opimmediate != 0 && iRecord->opimmediate != OPI_INT886))
         && !((variant & VARIANT_M1) && (fInstr->opAvail & 2))) {
             outFile.put(", options="); 
             outFile.putHex(pInstr->a.im3); 
         }
-        // outFile.put(")");
     }
 }
 
@@ -857,6 +940,7 @@ void CDisassembler::writeNormalInstruction() {
 void CDisassembler::writeJumpInstruction(){
     // Write operand type
     if (!(variant & VARIANT_D0 || iRecord->sourceoperands == 1)) { // skip if no operands other than target
+        outFile.tabulate(asmTab0);
         if ((variant & VARIANT_U0) && operandType < 5) outFile.put("u"); // unsigned
         writeOperandType(operandType);
     }
@@ -887,9 +971,9 @@ void CDisassembler::writeJumpInstruction(){
 
         // Write arithmetic operands
         if (iRecord->sourceoperands > 2) {
-            uint32_t r1 = pInstr->a.rd;                            // First source operand
+            uint32_t r1 = pInstr->a.rd;                              // First source operand
             if ((fInstr->opAvail & 0x21) == 0x21) r1 = pInstr->a.rs; // Two registers and an immediate operand        
-            writeRegister(r1, operandType);                        // Write operand
+            writeRegister(r1, operandType);                          // Write operand
             outFile.put(", ");
 
             // Second source operand
@@ -925,7 +1009,13 @@ void CDisassembler::writeTinyInstruction() {
     ti[0].i = pInstr->t.tiny1;
     ti[1].i = pInstr->t.tiny2;
     // Loop through two tiny instructions
-    for (j = 0; j < 2; j++) {
+    for (j = 0; j < 2; j++) { 
+        // save cross reference for second instruction in pair if not NOP
+        if (debugMode && j == 1 && ti[1].t.op1) {
+            SLineRef xref = {iInstr + sectionAddress + 1, 1, outFile.dataSize()};
+            lineList.push(xref);
+        }
+
         // Find instruction in instruction_list
         SInstruction2 iRecSearch;
         iRecSearch.category = 2;
@@ -989,7 +1079,9 @@ void CDisassembler::writeTinyInstruction() {
             if (rs2 == 15 && (ti[j].t.op1 >= 28 || rsType == 0x20)) rs2 = 31;  // use stack pointer
             // Write operand type
             if (destinationType && !(variant & VARIANT_D0) && ti[j].t.op1 != 16 && ti[j].t.op1 != 17 && ti[j].t.op1 != 30 && ti[j].t.op1 != 31) {
+                outFile.tabulate(asmTab0);
                 writeOperandType(destinationType < 0x10 ? destinationType : sourceType);
+                outFile.put(' ');
             }
             outFile.tabulate(asmTab1);
 
@@ -1029,33 +1121,34 @@ void CDisassembler::writeTinyInstruction() {
             }
             if (ti[j].t.op1) outFile.put(')');
         }
+        if (!debugMode) {
 
-        // write comment 
-        uint32_t sectionAddress = 0;
-        outFile.tabulate(asmTab3);                    // tabulate to comment field
-        outFile.put(commentSeparator); outFile.put(' '); // Start comment
-        // Write address
-        if (sectionEnd + sectionAddress > 0xFFFF) {
-            // Write 32 bit address
-            if (j == 0) outFile.putHex(iInstr + sectionAddress, 2);
-            else outFile.put(">>>>>>>>");
+            // write comment 
+            outFile.tabulate(asmTab3);                    // tabulate to comment field
+            outFile.put(commentSeparator); outFile.put(' '); // Start comment
+            // Write address
+            if (sectionEnd + sectionAddress > 0xFFFF) {
+                // Write 32 bit address
+                if (j == 0) outFile.putHex((uint32_t)(iInstr + sectionAddress), 2);
+                else outFile.put(">>>>>>>>");
+            }
+            else {
+                // Write 16 bit address
+                if (j == 0) outFile.putHex((uint16_t)(iInstr + sectionAddress), 2);
+                else outFile.put(">>>>");
+            }
+
+            // Space after address
+            outFile.put(" _ T ");
+
+            // Write op1 rd.rs
+            outFile.putHex(uint8_t(ti[j].t.op1), 2); outFile.put(' ');
+            outFile.putHex(uint8_t(ti[j].t.rd), 0); outFile.put('.');
+            outFile.putHex((uint8_t)(ti[j].t.rs & 0x0F), 0);
         }
-        else {
-            // Write 16 bit address
-            if (j == 0) outFile.putHex((uint16_t)(iInstr + sectionAddress), 2);
-            else outFile.put(">>>>");
-        }
-
-        // Space after address
-        outFile.put(" _ T ");
-
-        // Write op1 rd.rs
-        outFile.putHex(uint8_t(ti[j].t.op1), 2); outFile.put(' ');
-        outFile.putHex(uint8_t(ti[j].t.rd), 0); outFile.put('.');
-        outFile.putHex((uint8_t)(ti[j].t.rs & 0x0F), 0);
         if (j == 0) outFile.newLine();
     }
-} 
+}
 
 
 void CDisassembler::writeCodeComment() {
@@ -1063,23 +1156,12 @@ void CDisassembler::writeCodeComment() {
     //    uint32_t i;                                     // Index to current byte
     //    uint32_t fieldSize;                             // Number of bytes in field
     //    const char * spacer;                          // Space between fields
-    uint32_t sectionAddress = 0;                 // Restart addressing at each section
 
     outFile.tabulate(asmTab3);                    // tabulate to comment field
+    if (debugMode) return;
     outFile.put(commentSeparator); outFile.put(' '); // Start comment
                                                   
-    // Write address
-    if (sectionEnd + sectionAddress > 0xFFFF) {
-        // Write 32 bit address
-        outFile.putHex(iInstr + sectionAddress, 2);
-    }
-    else {
-        // Write 16 bit address
-        outFile.putHex((uint16_t)(iInstr + sectionAddress), 2);
-    }
-
-    // Space after address
-    outFile.put(" _ ");
+    writeAddress();            // Write address
 
     if (fInstr->tmpl == 0xE && instrLength > 1) {                       // format E
         // Write format_template op1.op2 ot rd.rs.rt.ru mask IM2 IM3
@@ -1101,6 +1183,13 @@ void CDisassembler::writeCodeComment() {
             outFile.put(' ');
             outFile.putHex(pInstr->i[2], 2);                 // IM4
         }
+    }
+    else if (fInstr->tmpl == 0xD) {
+        // Write format_template op1 data
+        outFile.putHex((format >> 8) & 0xF, 0); outFile.putHex(uint8_t(format), 2); outFile.put('_');
+        outFile.putHex(fInstr->tmpl, 0); outFile.put(' ');
+        outFile.putHex(uint8_t(pInstr->a.op1), 2); outFile.put(' ');
+        outFile.putHex(uint32_t(pInstr->d.im2 & 0xFFFFFF), 0);
     }
     else {
         // Write format_template op1 ot rd.rs.rt mask
@@ -1204,7 +1293,6 @@ void CDisassembler::writeCodeComment() {
 }
 
 
-const int dataSizeTable[8] = {1, 2, 4, 8, 16, 4, 8, 16};
 const char * baseRegisterNames[4] = {"thread", "datap", "ip", "sp"};
 
 
@@ -1219,7 +1307,7 @@ void CDisassembler::writeMemoryOperand() {
     // Check if there is a relocation here
     relocation = 0;  // index to relocation record
     if (fInstr->addrSize) {
-        ElfFWC_Rela2 rel;
+        ElfFwcReloc rel;
         rel.r_offset = iInstr + fInstr->addrPos;
         rel.r_section = section;
         uint32_t nrel = relocations.findAll(&relocation, rel);
@@ -1320,7 +1408,7 @@ void CDisassembler::writeMemoryOperand() {
 void CDisassembler::writeImmediateOperand() {
     // Write immediate operand depending on type in instruction list
     // Check if there is a relocation here
-    ElfFWC_Rela2 rel;
+    ElfFwcReloc rel;
     rel.r_offset = (uint64_t)iInstr + fInstr->immPos;
     rel.r_section = section;
     uint32_t irel;  // index to relocation record
@@ -1337,7 +1425,7 @@ void CDisassembler::writeImmediateOperand() {
         return;
     }
     const uint8_t * bb = pInstr->b;  // use this for avoiding pedantic warnings from Gnu compiler when type casting
-
+    if (operandType == 1 && (variant & VARIANT_H0)) operandType = 8;  // half precision float
     if (operandType < 5 || iRecord->opimmediate || (variant & VARIANT_I2)) { 
         // integer, or type specified in instruction list
         // Get value of right size
@@ -1346,7 +1434,7 @@ void CDisassembler::writeImmediateOperand() {
         case 1:   // 8 bits
             x = *(int8_t*)(bb + fInstr->immPos);
             break;
-        case 2:   // 16 bits
+        case 2:    // 16 bits
             x = *(int16_t*)(bb + fInstr->immPos);
             break;
         case 3:   // 24 bits, sign extend to 32 bits
@@ -1360,13 +1448,13 @@ void CDisassembler::writeImmediateOperand() {
             break;
         case 14:   // 4 bits
             x = *(int8_t*)(bb + fInstr->immPos) & 0xF;
-            if (iRecord->opimmediate == 1) x = (int8_t)x << 4 >> 4;  // sign extend 4 bits signed integer
+            if (iRecord->opimmediate == OPI_INT4) x = (int8_t)x << 4 >> 4;  // sign extend 4 bits signed integer
             break; 
         case 0:
             if (fInstr->tmpl == 0xE) {
                 x = (pInstr->s[2]);
-                break;
             }
+            break;
             // else continue in default:
         default:
             writeError("Unknown immediate size");
@@ -1374,14 +1462,14 @@ void CDisassembler::writeImmediateOperand() {
         // Write in the form specified in instruction list
         switch (iRecord->opimmediate) {
         case 0:   // No form specified
-        case 100:  // same as operand type
+        case OPI_OT:  // same as operand type
             if (fInstr->cat == 1 && iRecord->opimmediate == 0 && x != 0) instructionWarning |= 2; // Immediate field not used in this instruction. Write nothing
             switch (fInstr->immSize) {  // Output as hexadecimal
             case 1:  
                 if (operandType > 0) outFile.putDecimal((int32_t)x, 1);  // sign extend to larger size
                 else outFile.putHex(uint8_t(x), 1);   
                 break;
-            case 2:  
+            case 2: 
                 if ((fInstr->imm2 & 4) && pInstr->a.im3 && !(variant & VARIANT_On)) {  // constant is IM2 << IM3
                     if ((int16_t)x < 0) {
                         outFile.put('-');  x = -x;
@@ -1415,19 +1503,21 @@ void CDisassembler::writeImmediateOperand() {
                     outFile.putDecimal((int32_t)x, 1);  // sign extend to larger size
                 }
                 break;
-            case 8:  outFile.putHex(uint64_t(x), 1);  break;
+            case 8:
+                if (operandType == 6) outFile.putFloat(*(double*)(bb + fInstr->immPos));
+                else outFile.putHex(uint64_t(x), 1);  break;
             }
             break;
-        case 2:
+        case OPI_INT8:
             outFile.putDecimal(int8_t(x), 1);
             break;
-        case 3:
+        case OPI_INT16:
             outFile.putDecimal(int16_t(x), 1);
             break;
-        case 4:
+        case OPI_INT32:
             outFile.putDecimal(int32_t(x), 1);
             break;
-        case 6:
+        case OPI_INT8SH:
             if (int8_t(x >> 8) < 0) {
                 outFile.put('-');
                 outFile.putHex(uint8_t(-int8_t(x >> 8)), 1);
@@ -1436,7 +1526,7 @@ void CDisassembler::writeImmediateOperand() {
             outFile.put(" << ");
             outFile.putDecimal(uint8_t(x));
             break;
-        case 8:
+        case OPI_INT16SH16:
             if (x < 0) {
                 outFile.put('-');
                 x = -x;
@@ -1444,49 +1534,49 @@ void CDisassembler::writeImmediateOperand() {
             outFile.putHex(uint16_t(x), 1);
             outFile.put(" << 16");
             break;
-        case 9:
+        case OPI_INT32SH32:
             outFile.putHex(uint32_t(x), 1);
             outFile.put(" << 32");
             break;
-        case 18:
+        case OPI_UINT8:
             outFile.putHex(uint8_t(x), 1);
             break;
-        case 19:
+        case OPI_UINT16:
             outFile.putHex(uint16_t(x), 1);
             break;
-        case 20:
+        case OPI_UINT32:
             outFile.putHex(uint32_t(x), 1);
             break;
-        case 5: case 21: 
+        case OPI_INT64: case OPI_UINT64: 
             outFile.putHex(uint64_t(x), 1);
             break;
-        case 24:                     // Two unsigned integers
+        case OPI_2INT8:                     // Two unsigned integers
             outFile.putHex(uint8_t(x), 1);  outFile.put(", ");
             outFile.putHex(uint8_t(x >> 8), 1);
             break;
-        case 25:                     // Three unsigned integers, including IM3
+        case OPI_INT886:                     // Three unsigned integers, including IM3
             outFile.putDecimal(uint8_t(x));  outFile.put(", ");
             outFile.putDecimal(uint8_t(x >> 8));  outFile.put(", ");
             outFile.putDecimal(uint8_t(pInstr->a.im3));
             break;
-        case 26:                     // Two 16-bit unsigned integers
+        case OPI_2INT16:                     // Two 16-bit unsigned integers
             outFile.putHex(uint16_t(x >> 16), 1);  outFile.put(", ");
             outFile.putHex(uint16_t(x), 1);
             break;
-        case 27:                     // One 16-bit and one 32-bit unsigned integer
+        case OPI_INT1632:                     // One 16-bit and one 32-bit unsigned integer
             outFile.putHex(uint32_t(pInstr->i[1]), 1);  outFile.put(", ");
             outFile.putHex(uint16_t(x), 1);            
             break;
-        case 28:                     // Two 32-bit unsigned integer
+        case OPI_2INT32:                     // Two 32-bit unsigned integer
             outFile.putHex(uint32_t(x >> 32), 1);  outFile.put(", ");
             outFile.putHex(uint32_t(x), 1);
             break;
-        case 29:                     // 16 + 8 + 8 bits
+        case OPI_INT1688:                     // 16 + 8 + 8 bits
             outFile.putHex(uint16_t(x), 1);  outFile.put(", ");
             outFile.putHex(uint8_t(x >> 16), 1);  outFile.put(", ");
             outFile.putHex(uint8_t(x >> 24), 1);
             break;
-        case 64:                     // Half precision float
+        case OPI_FLOAT16:                     // Half precision float
             outFile.putFloat(half2float(uint16_t(x)));
             break;
         default:
@@ -1593,7 +1683,10 @@ void CDisassembler::finalErrorCheck() {
     uint32_t linesWritten = 0;                   // Count lines written
     // Check for orphaned symbols
     for (i = 0; i < symbols.numEntries(); i++) {
-        if ((symbols[i].st_other & 0x80000000) == 0 && (symbols[i].st_shndx || symbols[i].st_value) && symbols[i].st_shndx != SHN_ABS && symbols[i].st_type != STT_FILE) {
+        if ((symbols[i].st_other & 0x80000000) == 0 
+            && (symbols[i].st_section || symbols[i].st_value) 
+            && symbols[i].st_type != STT_CONSTANT 
+            && symbols[i].st_type != STT_FILE) {
             // This symbol has not been written out
             if (linesWritten == 0) {
                 // First orphaned symbol. Write text            
@@ -1603,7 +1696,7 @@ void CDisassembler::finalErrorCheck() {
             }
             outFile.put(commentSeparator); outFile.put(' ');
             writeSymbolName(i); outFile.put(" = "); 
-            outFile.putHex(symbols[i].st_shndx, 0); outFile.put(':'); outFile.putHex(symbols[i].st_value, 0);
+            outFile.putHex(symbols[i].st_section, 0); outFile.put(':'); outFile.putHex(symbols[i].st_value, 0);
             outFile.newLine();  linesWritten++;
         }
     }
@@ -1626,5 +1719,35 @@ void CDisassembler::finalErrorCheck() {
             writeSymbolName(relocations[i].r_sym & 0x7FFFFFFF);
             outFile.newLine();  linesWritten++;
         }
+    }
+}
+
+void CDisassembler::writeAddress() {
+    // write code address
+    if (sectionEnd + sectionAddress > 0xFFFF) {
+        // Write 32 bit address
+        outFile.putHex(iInstr + sectionAddress, 2);
+    }
+    else {
+        // Write 16 bit address
+        outFile.putHex((uint16_t)(iInstr + sectionAddress), 2);
+    }
+    if (debugMode) outFile.put(" ");
+    else outFile.put(" _ ");    // Space after address
+}
+
+void CDisassembler::setTabStops() {
+    // set tab stops for output
+    if (debugMode) {
+        asmTab0 = 18;                        // Column for operand type
+        asmTab1 = 26;                        // Column for opcode
+        asmTab2 = 40;                        // Column for first operand
+        asmTab3 = 64;                        // Column for destination value
+    }
+    else {
+        asmTab0 =  0;                        // unused
+        asmTab1 =  8;                        // Column for opcode
+        asmTab2 = 16;                        // Column for first operand
+        asmTab3 = 56;                        // Column for comment
     }
 }

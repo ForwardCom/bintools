@@ -1,8 +1,8 @@
 /****************************    elf.cpp    *********************************
 * Author:        Agner Fog
 * Date created:  2006-07-18
-* Last modified: 2017-11-03
-* Version:       1.00
+* Last modified: 2018-03-30
+* Version:       1.01
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        elf.cpp
 * Description:
@@ -16,7 +16,7 @@
 * I have included limited support for x86-64 ELF (e_machine == EM_X86_64) for 
 * testing purposes. This may be removed.
 *
-* Copyright 2006-2017 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2006-2018 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 #include "stdafx.h"
 
@@ -29,9 +29,9 @@ SIntTxt ELFFileClassNames[] = {
 
 // Data encoding names
 SIntTxt ELFDataEncodeNames[] = {
-    {ELFDATANONE,        "None"},
-    {ELFDATA2LSB,        "Little Endian"},
-    {ELFDATA2MSB,        "Big Endian"}
+    {ELFDATANONE,       "None"},
+    {ELFDATA2LSB,       "Little Endian"},
+    {ELFDATA2MSB,       "Big Endian"}
 };
 
 // ABI names
@@ -45,12 +45,21 @@ SIntTxt ELFABINames[] = {
 
 // File type names
 SIntTxt ELFFileTypeNames[] = {
-    {ET_NONE,   "None"},
-    {ET_REL,    "Relocatable"},
-    {ET_EXEC,   "Executable"},
-    {ET_DYN,    "Shared object"},
-    {ET_CORE,   "Core file"}
+    {ET_NONE,           "None"},
+    {ET_REL,            "Relocatable"},
+    {ET_EXEC,           "Executable"},
+    {ET_DYN,            "Shared object"},
+    {ET_CORE,           "Core file"}
 };
+
+// File header flag names
+SIntTxt ELFFileFlagNames[] = {
+    {EF_INCOMPLETE,     "Has unresolved references"},
+    {EF_RELINKABLE,     "Relinkable"},
+    {EF_RELOCATE,       "Relocate when loading"},
+    {EF_POSITION_DEPENDENT, "Position dependent"}
+};
+
 
 // Section type names
 SIntTxt ELFSectionTypeNames[] = {
@@ -59,19 +68,16 @@ SIntTxt ELFSectionTypeNames[] = {
     {SHT_SYMTAB,        "Symbol table"},
     {SHT_STRTAB,        "String table"},
     {SHT_RELA,          "Relocation w addends"},
-    {SHT_HASH,          "Symbol hash table"},
-    {SHT_DYNAMIC,       "Dynamic linking info"},
     {SHT_NOTE,          "Notes"},
     {SHT_NOBITS,        "uinitialized"},
-    {SHT_REL,           "Relocation entries"},
-    {SHT_SHLIB,         "Reserved"},
-    {SHT_DYNSYM,        "Dynamic linker symbol table"},
     {SHT_COMDAT,        "Communal section"},    
-    {SHT_INIT_ARRAY,    "Array of constructors"},
-    {SHT_FINI_ARRAY,    "Array of destructors"},
-    {SHT_PREINIT_ARRAY, "Array of pre-constructors"},
-    {SHT_GROUP,         "Section group"},
-    {SHT_SYMTAB_SHNDX,  "Extended section indices"}
+    {SHT_LIST,          "List"}    
+//    {SHT_HASH,          "Symbol hash table"},
+//    {SHT_DYNAMIC,       "Dynamic linking info"},
+//    {SHT_REL,           "Relocation entries"},
+//    {SHT_SHLIB,         "Reserved"},
+//    {SHT_DYNSYM,        "Dynamic linker symbol table"},
+//    {SHT_GROUP,         "Section group"},
 };
 
 // Program header type names
@@ -87,54 +93,60 @@ SIntTxt ELFPTypeNames[] = {
 
 // Section flag names
 SIntTxt ELFSectionFlagNames[] = {
-    {SHF_EXEC,          "Executable"},
-    {SHF_READ,          "Readable"},
-    {SHF_WRITE,         "Writeable"},
-    {SHF_ALLOC,         "Allocate"},
-    {SHF_IP,            "IP address"},
-    {SHF_DATAP,         "DATAP address"},
-    {SHF_THREADP,       "THREADP address"},
-    {SHF_MERGE,         "Merge"},
-    {SHF_STRINGS,       "Strings"},
-    {SHF_INFO_LINK,     "sh_info"}
+    {SHF_EXEC,          "executable"},
+    {SHF_WRITE,         "writeable"},
+    {SHF_READ,          "readable"},
+    {SHF_ALLOC,         "allocate"},
+    {SHF_IP,            "IP"},
+    {SHF_DATAP,         "DATAP"},
+    {SHF_THREADP,       "THREADP"},
+    {SHF_MERGE,         "merge"},
+    {SHF_STRINGS,       "strings"},
+    {SHF_INFO_LINK,     "sh_info"},
+    {SHF_EVENT_HND,     "event handler"},
+    {SHF_DEBUG_INFO,    "debug info"},
+    {SHF_COMMENT,       "comment"},
+    {SHF_RELINK,        "relinkable"},
+    {SHF_AUTOGEN,       "auto-generated"}
 };
 
 // Symbol binding names
 SIntTxt ELFSymbolBindingNames[] = {
-    {STB_LOCAL,  "Local"},
-    {STB_GLOBAL, "Global"},
-    {STB_WEAK,   "Weak"}
+    {STB_LOCAL,         "local"},
+    {STB_GLOBAL,        "global"},
+    {STB_WEAK,          "weak"},
+    {STB_WEAK2,         "weak2"},
+    {STB_UNRESOLVED,    "unresolved"}
 };
 
 // Symbol Type names
 SIntTxt ELFSymbolTypeNames[] = {
-    {STT_NOTYPE,  "None"},
-    {STT_OBJECT,  "Object"},
-    {STT_FUNC,    "Function"},
-    {STT_SECTION, "Section"},
-    {STT_FILE,    "File"}
+    {STT_NOTYPE,        "None"},
+    {STT_OBJECT,        "Object"},
+    {STT_FUNC,          "Function"},
+    {STT_SECTION,       "Section"},
+    {STT_FILE,          "File"},
+    {STT_CONSTANT,      "Constant"}
 };
 
 // Symbol st_other info names
 SIntTxt ELFSymbolInfoNames[] = {
-    {STV_EXEC,     "executable"},
-    {STV_READ,     "read"},
-    {STV_WRITE,    "write"},
-    {STV_IP,       "ip"},
-    {STV_DATAP,    "datap"},
-    {STV_THREADP,  "threadp"},
-    {STV_REGUSE,   "reguse"},
-    {STV_FLOAT,    "float"},
-    {STV_STRING,   "string"}, 
-    {STV_CTOR,     "constructor"},
-    {STV_DTOR,     "destructor"},
-    {STV_UNWIND,   "unwind"},
-    {STV_DEBUG,    "debug"},
-    {STV_COMMON,   "communal"},
-    {STV_RELINK,   "relinkable"},
-    {STV_MAIN,     "main"},
-    {STV_EXPORTED, "exported"},
-    {STV_THREAD,   "thread"}
+    {STV_EXEC,          "executable"},
+    {STV_READ,          "read"},
+    {STV_WRITE,         "write"},
+    {STV_IP,            "ip"},
+    {STV_DATAP,         "datap"},
+    {STV_THREADP,       "threadp"},
+    {STV_REGUSE,        "reguse"},
+    {STV_FLOAT,         "float"},
+    {STV_STRING,        "string"}, 
+    {STV_UNWIND,        "unwind"},
+    {STV_DEBUG,         "debug"},
+    {STV_COMMON,        "communal"},
+    {STV_RELINK,        "relinkable"},
+    {STV_MAIN,          "main"},
+    {STV_EXPORTED,      "exported"},
+    {STV_THREAD,        "thread"}
 };
 
 // Relocation type names x86 64 bit
@@ -162,9 +174,9 @@ SIntTxt ELF64RelocationNames[] = {
 SIntTxt ELFFwcRelocationTypes[] = {
     {R_FORW_ABS,        "Absolute address"},
     {R_FORW_SELFREL,    "Self relative"},
-    {R_FORW_CONST,      "Relative to CONST section"},
-    {R_FORW_DATAP,      "Relative to data pointer"},
-    {R_FORW_THREADP,    "Relative to thread data pointer"},
+    {R_FORW_IP_BASE,    "Relative to __ip_base"},
+    {R_FORW_DATAP,      "Relative to __datap_base"},
+    {R_FORW_THREADP,    "Relative to __threadp_base"},
     {R_FORW_REFP,       "Relative to arbitrary reference point"},
     {R_FORW_SYSFUNC,    "System function ID"},
     {R_FORW_SYSMODUL,   "System module ID"},
@@ -268,14 +280,18 @@ SIntTxt ELFMachineNames[] = {
 // Class CELF members:
 // Constructor
 CELF::CELF() {
-    memset(this, 0, sizeof(*this));
+    zeroAllMembers(*this);
 }
 
 // ParseFile
 void CELF::parseFile() {
     // Load and parse file buffer
     uint32_t i;
-    fileHeader = *(Elf64_Ehdr*)buf();             // Copy file header
+    if (dataSize() == 0) {
+        nSections = 0;
+        return;
+    }
+    fileHeader = *(ElfFwcEhdr*)buf();             // Copy file header
     nSections = fileHeader.e_shnum;
     sectionHeaders.setNum(nSections);            // Allocate space for section headers
     uint32_t symtabi = 0;                         // Index to symbol table
@@ -288,9 +304,11 @@ void CELF::parseFile() {
     if (fileHeader.e_phoff >= dataSize() || fileHeader.e_phoff + (uint32_t)fileHeader.e_phentsize * fileHeader.e_phnum > dataSize()) err.submit(ERR_ELF_INDEX_RANGE);
     if (fileHeader.e_shoff >= dataSize() || fileHeader.e_shoff + (uint32_t)fileHeader.e_shentsize * fileHeader.e_shnum > dataSize()) err.submit(ERR_ELF_INDEX_RANGE);
     if (fileHeader.e_shstrndx >= dataSize()) err.submit(ERR_ELF_INDEX_RANGE);
+    if (err.number()) 
+        return;
 
     for (i = 0; i < nSections; i++) {
-        sectionHeaders[i] = get<Elf64_Shdr>(SectionOffset);
+        sectionHeaders[i] = get<ElfFwcShdr>(SectionOffset);
         // check section header integrity
         if (sectionHeaders[i].sh_offset > dataSize() 
             || (sectionHeaders[i].sh_offset + sectionHeaders[i].sh_size > dataSize() && sectionHeaders[i].sh_type != SHT_NOBITS)
@@ -340,9 +358,9 @@ void CELF::parseFile() {
         int8_t * symtab = buf() + symbolTableOffset;
         uint32_t symname = 0;
         for (uint32_t symi = 0; symi < symbolTableEntries; symi++) {
-            // Copy ElfFWC_Sym symbol or convert Elf64_Sym symbol
+            // Copy ElfFwcSym symbol or convert Elf64_Sym symbol
             if (fileHeader.e_machine == EM_FORWARDCOM) {
-                symname = ((ElfFWC_Sym*)symtab)[symi].st_name;
+                symname = ((ElfFwcSym*)symtab)[symi].st_name;
             }
             else {
                 // x64 type symbol table entry
@@ -356,9 +374,12 @@ void CELF::parseFile() {
 
 // Dump
 void CELF::dump(int options) {
+    printf("\nDump of ELF file %s", cmd.getFilename(cmd.inputFile));
+
+    if (options == 0) options = DUMP_FILEHDR;
+
     if (options & DUMP_FILEHDR) {
         // File header
-        printf("\nDump of ELF file %s", fileName);
         printf("\n-----------------------------------------------");
         printf("\nFile size: %i", dataSize());
         printf("\nFile header:");
@@ -373,25 +394,77 @@ void CELF::dump(int options) {
             Lookup(ELFFileTypeNames, fileHeader.e_type),
             Lookup(ELFMachineNames, fileHeader.e_machine),
             fileHeader.e_version);
-        printf("\nNumber of sections: %2i, Processor flags: 0x%X",
-            nSections, fileHeader.e_flags);
+
+        printf("\nNumber of sections: %2i", nSections);
+    }
+    // Always show flags
+    if (fileHeader.e_flags) {
+        printf("\nFlags:");
+        for (int i = 0; i < 32; i++) {
+            if (fileHeader.e_flags & (1 << i)) {
+                printf(" %s,", Lookup(ELFFileFlagNames, 1 << i));
+            }
+        }
+    }
+
+    if (options & DUMP_RELINKABLE) {
+        // Show names of relinkable modules and libraries
+        CDynamicArray<SLCommand> mnames;  // list of relinkable modules
+        CDynamicArray<SLCommand> lnames;  // list of relinkable libraries
+        SLCommand nameRec;                // record containing name
+        uint32_t r;                       // record index
+        uint32_t sec;                     // section index
+        const char * modName;             // module name
+        const char * libName;             // library name
+        // loop through sections
+        for (sec = 0; sec < sectionHeaders.numEntries(); sec++) {
+            ElfFwcShdr & secHdr = sectionHeaders[sec];
+            if (secHdr.sh_type == 0) continue;
+
+            if (secHdr.sh_flags & SHF_RELINK) {
+                // section is relinkable
+                if (secHdr.sh_library && secHdr.sh_library < secStringTableLen) {
+                    libName = secStringTable + secHdr.sh_library;             // library name
+                    nameRec.value = cmd.fileNameBuffer.pushString(libName);
+                    lnames.addUnique(nameRec);                                // add only one instance to lnames
+                }
+                if (secHdr.sh_module && secHdr.sh_module < secStringTableLen) {
+                    modName = secStringTable + secHdr.sh_module;              // module name
+                    nameRec.value = cmd.fileNameBuffer.pushString(modName);
+                    mnames.addUnique(nameRec);                                // add only one instance to mnames
+                }
+            }
+        }
+        if (lnames.numEntries()) {
+            printf("\n\nRelinkable libraries:");
+            for (r = 0; r < lnames.numEntries(); r++) {
+                printf("\n   %s", cmd.getFilename((uint32_t)lnames[r].value));
+            }
+        }
+        if (mnames.numEntries()) {
+            printf("\n\nRelinkable modules:");
+            for (r = 0; r < mnames.numEntries(); r++) {
+                printf("\n   %s", cmd.getFilename((uint32_t)mnames[r].value));
+            }
+        }
     }
 
     if ((options & DUMP_SECTHDR) && fileHeader.e_phnum) {
         // Dump program headers
+        printf("\n\nProgram headers:");
         uint32_t nProgramHeaders = fileHeader.e_phnum;
         uint32_t programHeaderSize = fileHeader.e_phentsize;
         if (nProgramHeaders && programHeaderSize <= 0) err.submit(ERR_ELF_RECORD_SIZE);
         uint32_t programHeaderOffset = (uint32_t)fileHeader.e_phoff;
-        Elf64_Phdr pHeader;
+        ElfFwcPhdr pHeader;
         for (uint32_t i = 0; i < nProgramHeaders; i++) {
-            pHeader = get<Elf64_Phdr>(programHeaderOffset);
+            pHeader = get<ElfFwcPhdr>(programHeaderOffset);
             printf("\nProgram header Type: %s, flags 0x%X",
                 Lookup(ELFPTypeNames, (uint32_t)pHeader.p_type), (uint32_t)pHeader.p_flags);
             printf("\noffset = 0x%X, vaddr = 0x%X, paddr = 0x%X, filesize = 0x%X, memsize = 0x%X, align = 0x%X",
-                (uint32_t)pHeader.p_offset, (uint32_t)pHeader.p_vaddr, (uint32_t)pHeader.p_paddr, (uint32_t)pHeader.p_filesz, (uint32_t)pHeader.p_memsz, (uint32_t)pHeader.p_align);
+                (uint32_t)pHeader.p_offset, (uint32_t)pHeader.p_vaddr, (uint32_t)pHeader.p_paddr, (uint32_t)pHeader.p_filesz, (uint32_t)pHeader.p_memsz, 1 << pHeader.p_align);
             programHeaderOffset += programHeaderSize;
-            if (pHeader.p_filesz < 0x100 && (uint32_t)pHeader.p_offset < dataSize() && memchr(buf() + pHeader.p_offset, 0, (uint32_t)pHeader.p_filesz)) {
+            if (pHeader.p_filesz < 0x100 && (uint32_t)pHeader.p_offset < dataSize() && (pHeader.p_flags & SHF_STRINGS)) {
                 printf("\nContents: %s", buf() + (int)pHeader.p_offset);
             }
         }
@@ -402,7 +475,7 @@ void CELF::dump(int options) {
         printf("\n\nSection headers:");
         for (uint32_t sc = 0; sc < nSections; sc++) {
             // Get copy of 32-bit header or converted 64-bit header
-            Elf64_Shdr sheader = sectionHeaders[sc];
+            ElfFwcShdr sheader = sectionHeaders[sc];
             uint32_t entrysize = (uint32_t)(sheader.sh_entsize);
             uint32_t namei = sheader.sh_name;
             if (namei >= secStringTableLen) { err.submit(ERR_ELF_STRING_TABLE); break; }
@@ -410,48 +483,53 @@ void CELF::dump(int options) {
                 Lookup(ELFSectionTypeNames, sheader.sh_type));
             if (sheader.sh_flags) {
                 printf("\n  Flags: 0x%X:", uint32_t(sheader.sh_flags));
-                for (int fi = 1; fi < (1 << 30); fi <<= 1) {
+                for (uint32_t fi = 1; fi != 0; fi <<= 1) {
                     if (uint32_t(sheader.sh_flags) & fi) {
                         printf(" %s", Lookup(ELFSectionFlagNames, fi));
                     }
                 }
             }
-            if (sheader.sh_addr) {
+            //if (sheader.sh_addr) 
                 printf("\n  Address: 0x%X", uint32_t(sheader.sh_addr));
-            }
             if (sheader.sh_offset || sheader.sh_size) {
                 printf("\n  FileOffset: 0x%X, Size: 0x%X",
                     uint32_t(sheader.sh_offset), uint32_t(sheader.sh_size));
             }
-            if (sheader.sh_addralign) {
-                printf("\n  Alignment: 0x%X", uint32_t(sheader.sh_addralign));
+            if (sheader.sh_align) {
+                printf("\n  Alignment: 0x%X", 1 << sheader.sh_align);
             }
             if (sheader.sh_entsize) {
                 printf("\n  Entry size: 0x%X", uint32_t(sheader.sh_entsize));
                 switch (sheader.sh_type) {
+                /*
                 case SHT_DYNAMIC:
                     printf("\n  String table: %i", sheader.sh_link);
                     break;
                 case SHT_HASH:
                     printf("\n  Symbol table: %i", sheader.sh_link);
+                    break; */
+                case SHT_RELA: // case SHT_REL:
+                    printf("\n  Symbol table: %i",
+                        sheader.sh_link);
                     break;
-                case SHT_REL: case SHT_RELA:
-                    printf("\n  Symbol table: %i, Reloc. section: %i",
-                        sheader.sh_link, sheader.sh_info);
-                    break;
-                case SHT_SYMTAB: case SHT_DYNSYM:
+                case SHT_SYMTAB: //case SHT_DYNSYM:
                     printf("\n  Symbol string table: %i, First global symbol: %i",
-                        sheader.sh_link, sheader.sh_info);
+                        sheader.sh_link, sheader.sh_module);
                     break;
                 default:
                     if (sheader.sh_link) {
                         printf("\n  Link: %i", sheader.sh_link);
                     }
-                    if (sheader.sh_info) {
-                        printf("\n  Info: %i", sheader.sh_info);
+                    if (sheader.sh_module) {
+                        printf("\n  Info: %i", sheader.sh_module);
                     }
                 }
             }
+            if (sheader.sh_module && sheader.sh_module < secStringTableLen) {
+                printf("\n  Module: %s", secStringTable + sheader.sh_module);
+                if (sheader.sh_library) printf(", Library: %s", secStringTable + sheader.sh_library);
+            }
+
             if (sheader.sh_type == SHT_STRTAB && (options & DUMP_STRINGTB)) {
                 // Print string table
                 printf("\n  String table:");
@@ -464,7 +542,7 @@ void CELF::dump(int options) {
                     p += len + 1;
                 }
             }
-            if ((sheader.sh_type == SHT_SYMTAB || sheader.sh_type == SHT_DYNSYM) && (options & DUMP_SYMTAB)) {
+            if ((sheader.sh_type == SHT_SYMTAB) && (options & DUMP_SYMTAB)) {
                 // Dump symbol table
 
                 // Find associated string table
@@ -485,10 +563,10 @@ void CELF::dump(int options) {
                 // Loop through symbol table
                 int symi;  // Symbol number
                 for (symi = 0; symtab < symtabend; symtab += entrysize, symi++) {
-                    // Copy ElfFWC_Sym symbol or convert Elf64_Sym symbol
-                    ElfFWC_Sym sym;
+                    // Copy ElfFwcSym symbol or convert Elf64_Sym symbol
+                    ElfFwcSym sym;
                     if (fileHeader.e_machine == EM_FORWARDCOM) {
-                        sym = *(ElfFWC_Sym*)symtab;
+                        sym = *(ElfFwcSym*)symtab;
                     }
                     else {
                         // Translate x64 type symbol table entry
@@ -497,7 +575,7 @@ void CELF::dump(int options) {
                         sym.st_type = sym64.st_type;
                         sym.st_bind = sym64.st_bind;
                         sym.st_other = sym64.st_other;
-                        sym.st_shndx = sym64.st_shndx;
+                        sym.st_section = sym64.st_section;
                         sym.st_value = sym64.st_value;
                         sym.st_unitsize = (uint32_t)sym64.st_size;
                         sym.st_unitnum = 1;
@@ -512,8 +590,9 @@ void CELF::dump(int options) {
                     else {
                         printf("\n  %2i Unnamed,", symi);
                     }
-                    if (sym.st_value || type == STT_OBJECT || type == STT_FUNC || int16_t(sym.st_shndx) < 0)
+                    if (sym.st_value || type == STT_OBJECT || type == STT_FUNC || (int16_t)sym.st_section == SHN_ABS_X86) {
                         printf(" Value: 0x%X", uint32_t(sym.st_value));
+                    }
                     if (sym.st_unitsize)  printf(" size: %X*%X", sym.st_unitsize, sym.st_unitnum);
                     if (sym.st_other) {
                         for (int i = 0; i < 32; i++) {
@@ -522,17 +601,19 @@ void CELF::dump(int options) {
                             }
                         }
                     }
-                    if (int16_t(sym.st_shndx) > 0) printf(", section: %i", sym.st_shndx);
-                    else { // Special segment values
-                        switch (sym.st_shndx) {
-                        case 0: 
-                        case SHN_ABS_X86:  // not used in ForwardCom
-                            printf(", absolute,"); break;
-                        case SHN_COMMON:
-                            printf(", common,"); break;
-                        default:
-                            printf(", section: 0x%X", sym.st_shndx);
-                        }
+                    if (sym.st_reguse1 | sym.st_reguse2) {
+                        printf(", register use 0x%X, 0x%X", sym.st_reguse1, sym.st_reguse2);
+                    }
+                    //if (int32_t(sym.st_section) > 0) printf(", section: %i", sym.st_section);
+                    //else { // Special segment values
+                    if (sym.st_section == 0) {
+                        printf(" extern,");
+                    }
+                    else if (sym.st_type == STT_CONSTANT) {
+                        printf(", absolute,");
+                    }
+                    else {
+                        printf(", section: 0x%X", sym.st_section);
                     }
                     if (sym.st_type || sym.st_bind) {
                         printf(" type: %s, binding: %s",
@@ -542,27 +623,22 @@ void CELF::dump(int options) {
                 }
             }
             // Dump relocation table
-            if ((sheader.sh_type == SHT_REL || sheader.sh_type == SHT_RELA) && (options & DUMP_RELTAB)) {
+            if ((sheader.sh_type == SHT_RELA) && (options & DUMP_RELTAB)) {
                 printf("\n  Relocations:");
                 int8_t * reltab = buf() + uint32_t(sheader.sh_offset);
                 int8_t * reltabend = reltab + uint32_t(sheader.sh_size);
+                /*
                 uint32_t expectedentrysize = sheader.sh_type == SHT_RELA ?
                     sizeof(Elf64_Rela) :                // Elf32_Rela, Elf64_Rela
                     sizeof(Elf64_Rela) - wordSize / 8;  // Elf32_Rel,  Elf64_Rel
+                    */
+                uint32_t expectedentrysize = sizeof(Elf64_Rela);
                 if (entrysize < expectedentrysize) { err.submit(ERR_ELF_RECORD_SIZE); entrysize = expectedentrysize; }
 
                 // Loop through entries
                 for (; reltab < reltabend; reltab += entrysize) {
                     // Copy relocation table entry with or without addend
-                    ElfFWC_Rela rel;
-                    if (sheader.sh_type == SHT_REL) {
-                        memcpy(&rel, reltab, 16);     // Obsolete Elf64_Rel
-                        rel.r_addend = 0;
-                        rel.r_refsym = 0;
-                    }
-                    else {
-                        rel = *(ElfFWC_Rela*)reltab;
-                    }
+                    ElfFwcReloc rel = *(ElfFwcReloc*)reltab;
                     const char * relocationName, *relocationSize;
                     char text[128];
                     if (machineType == EM_X86_64) {
@@ -580,7 +656,7 @@ void CELF::dump(int options) {
                     }
 
                     memcpy(&rel, reltab, entrysize);
-                    printf("\n  Offset: 0x%X, Symbol: %i, Name: %s\n   Type: %s",
+                    printf("\n  Section: %i, Offset: 0x%X, Symbol: %i, Name: %s\n   Type: %s", rel.r_section,
                         uint32_t(rel.r_offset), rel.r_sym, symbolName(rel.r_sym), relocationName);
                     if (machineType == EM_FORWARDCOM && rel.r_type >> 16 == 8) {
                         printf(", ref. point %i", rel.r_refsym);
@@ -589,13 +665,14 @@ void CELF::dump(int options) {
                         printf(", Addend: 0x%X", uint32_t(rel.r_addend));
                     }
 
+                    /* Inline addend not used by ForwardCom
                     // Find inline addend
-                    Elf64_Shdr relsheader = sectionHeaders[sheader.sh_info];
+                    ElfFwcShdr relsheader = sectionHeaders[rel.r_section];
                     uint32_t relsoffset = uint32_t(relsheader.sh_offset);
                     if (relsoffset + rel.r_offset < dataSize() && relsheader.sh_type != SHT_NOBITS) {
                         int32_t * piaddend = (int32_t*)(buf() + relsoffset + rel.r_offset);
                         if (*piaddend) printf(", Inline value: 0x%X", *piaddend);
-                    }
+                    }*/
                 }
             }
         }
@@ -604,20 +681,24 @@ void CELF::dump(int options) {
 
 
 // PublicNames
-void CELF::publicNames(CMemoryBuffer * strings, CDynamicArray<SStringEntry> * index, int m) {
-    // Make list of public names
+void CELF::listSymbols(CMemoryBuffer * strings, CDynamicArray<SSymbolEntry> * index, uint32_t m, uint32_t l, int scope) {
+    // Make list of public and external symbols, including weak symbols
+    // SStringEntry::member is set to m and library is set to l;
+    // scope: 1: exported, 
+    //        2: imported (includes STB_WEAK2),
+    //        3: both
+
     // Interpret header:
     parseFile();
+    if (err.number()) return;
 
     // Loop through section headers
     for (uint32_t sc = 0; sc < nSections; sc++) {
         // Get copy of 32-bit header or converted 64-bit header
-        Elf64_Shdr sheader = sectionHeaders[sc];
+        ElfFwcShdr sheader = sectionHeaders[sc];
         uint32_t entrysize = uint32_t(sheader.sh_entsize);
 
-        if (sheader.sh_type == SHT_SYMTAB || sheader.sh_type == SHT_DYNSYM) {
-            // Dump symbol table
-
+        if (sheader.sh_type == SHT_SYMTAB) {
             // Find associated string table
             if (sheader.sh_link >= (uint32_t)nSections) { err.submit(ERR_ELF_INDEX_RANGE); sheader.sh_link = 0; }
             int8_t * strtab = buf() + uint32_t(sectionHeaders[sheader.sh_link].sh_offset);
@@ -630,10 +711,10 @@ void CELF::publicNames(CMemoryBuffer * strings, CDynamicArray<SStringEntry> * in
 
             // Loop through symbol table
             for (int symi = 0; symtab < symtabend; symtab += entrysize, symi++) {
-                // Copy ElfFWC_Sym symbol table entry or convert Elf64_Sym bit entry
-                ElfFWC_Sym sym;
+                // Copy ElfFwcSym symbol table entry or convert Elf64_Sym bit entry
+                ElfFwcSym sym;
                 if (fileHeader.e_machine == EM_FORWARDCOM) {
-                    sym = *(ElfFWC_Sym*)symtab;
+                    sym = *(ElfFwcSym*)symtab;
                 }
                 else {
                     // Translate x64 type symbol table entry
@@ -642,7 +723,7 @@ void CELF::publicNames(CMemoryBuffer * strings, CDynamicArray<SStringEntry> * in
                     sym.st_type = sym64.st_type;
                     sym.st_bind = sym64.st_bind;
                     sym.st_other = sym64.st_other;
-                    sym.st_shndx = sym64.st_shndx;
+                    sym.st_section = sym64.st_section;
                     sym.st_value = sym64.st_value;
                     sym.st_unitsize = (uint32_t)sym64.st_size;
                     sym.st_unitnum = 1;
@@ -650,20 +731,40 @@ void CELF::publicNames(CMemoryBuffer * strings, CDynamicArray<SStringEntry> * in
                 }
                 int type = sym.st_type;
                 int binding = sym.st_bind;
-                if (sym.st_shndx > 0
-                    && type != STT_SECTION && type != STT_FILE
-                    && (binding == STB_GLOBAL || binding == STB_WEAK)) {
-                    // Public symbol found
-                    SStringEntry se;
-                    se.member = m;
-                    // Store name
-                    se.string = strings->pushString((char*)strtab + sym.st_name);
-                    // Store name index
-                    index->push(se);
+                if (type != STT_SECTION && type != STT_FILE && (binding & (STB_GLOBAL | STB_WEAK))) {
+                    // Public or external symbol found
+                    if (((scope & 1) && (sym.st_section != 0))      // scope 1: public
+                    || ((scope & 2) && (sym.st_section == 0 || binding == STB_WEAK2))) {  // scope 2: external
+                        SSymbolEntry se;
+                        se.member = m;
+                        se.library = l;
+                        se.st_type = type;
+                        se.st_bind = binding;
+                        se.symindex = symi;
+                        se.sectioni = sym.st_section;
+                        se.st_other = (uint16_t)sym.st_other;
+                        se.status = (scope & 1) << 1;
+                        // Store name
+                        const char * name = (char*)strtab + sym.st_name;
+                        se.name = strings->pushString(name);
+                        // Store name index
+                        index->push(se);
+                    }
                 }
             }
         }
     }
+}
+
+// get a symbol record
+ElfFwcSym * CELF::getSymbol(uint32_t symindex) {
+    if (symbolTableOffset) {
+        uint32_t symi = symbolTableOffset + symindex * symbolTableEntrySize;
+        if (symi < dataSize()) {
+            return &get<ElfFwcSym>(symi);
+        }
+    }
+    return 0;
 }
 
 // SymbolName
@@ -688,9 +789,10 @@ const char * CELF::symbolName(uint32_t index) {
 int CELF::split() {
     uint32_t sc;                                 // Section index
     uint32_t type;                               // Section type
+    if (dataSize() == 0) return 0;
     parseFile();                                 // Parse file, get section headers, check integrity
-    CDynamicArray<Elf64_Shdr> newSectionHeaders; // Remake list of section headers
-    newSectionHeaders.setSize(nSections*(uint32_t)sizeof(Elf64_Shdr)); // Reserve space but leave getNumEntries() zero
+    CDynamicArray<ElfFwcShdr> newSectionHeaders; // Remake list of section headers
+    newSectionHeaders.setSize(nSections*(uint32_t)sizeof(ElfFwcShdr)); // Reserve space but leave getNumEntries() zero
     CDynamicArray<uint32_t> sectionIndexTrans;   // Translate old section indices to new indices
     sectionIndexTrans.setNum(nSections + 2);
 
@@ -699,9 +801,9 @@ int CELF::split() {
     uint32_t programHeaderSize = fileHeader.e_phentsize;
     if (nProgramHeaders && programHeaderSize <= 0) err.submit(ERR_ELF_RECORD_SIZE);
     uint32_t programHeaderOffset = (uint32_t)fileHeader.e_phoff;
-    Elf64_Phdr pHeader;
+    ElfFwcPhdr pHeader;
     for (uint32_t i = 0; i < nProgramHeaders; i++) {
-        pHeader = get<Elf64_Phdr>(programHeaderOffset);
+        pHeader = get<ElfFwcPhdr>(programHeaderOffset + i * programHeaderSize);
         if (pHeader.p_filesz > 0 && (uint32_t)pHeader.p_offset < dataSize()) {
             uint32_t phOffset = dataBuffer.push(buf() + (uint32_t)pHeader.p_offset, (uint32_t)pHeader.p_filesz);
             pHeader.p_offset = phOffset;         // New offset refers to dataBuffer
@@ -711,7 +813,8 @@ int CELF::split() {
 
     // Make section list
     // Make dummy empty section
-    Elf64_Shdr sheader2 = {0,0,0,0,0,0,0,0,0,0};
+    ElfFwcShdr sheader2;
+    zeroAllMembers(sheader2);
     newSectionHeaders.push(sheader2);
 
     for (sc = 0; sc < nSections; sc++) {
@@ -720,7 +823,7 @@ int CELF::split() {
         type = sheader2.sh_type;                           // Section type
         if (type == SHT_NULL /* && sc == 0 */) continue;   // skip first/all empty section headers
         // Skip symbol, relocation, and string tables. They are converted to containers:
-        if (type == SHT_SYMTAB || type == SHT_STRTAB || type == SHT_RELA || type == SHT_REL || type == SHT_DYNSYM) continue;
+        if (type == SHT_SYMTAB || type == SHT_STRTAB || type == SHT_RELA) continue;
 
         // Get section name
         uint32_t namei = sheader2.sh_name;
@@ -740,7 +843,7 @@ int CELF::split() {
             sheader2.sh_offset = newOffset;       // New offset refers to dataBuffer
         }
         else {
-            sheader2.sh_offset = sheader2.sh_size = 0;
+            sheader2.sh_offset = dataBuffer.dataSize();
         }
 
         // Save modified header and new index
@@ -757,10 +860,10 @@ int CELF::split() {
     uint32_t NumSymbols = 0;
 
     for (sc = 0; sc < nSections; sc++) {
-        Elf64_Shdr & sheader = sectionHeaders[sc];
+        ElfFwcShdr & sheader = sectionHeaders[sc];
         uint32_t entrysize = (uint32_t)(sheader.sh_entsize);
 
-        if (sheader.sh_type == SHT_SYMTAB || sheader.sh_type == SHT_DYNSYM) {
+        if (sheader.sh_type == SHT_SYMTAB) {
             // This is a symbol table
 
             // Offset for symbols in this symbol table = number of preceding symbols from other symbol tables
@@ -777,17 +880,17 @@ int CELF::split() {
             int8_t * symtab = buf() + uint32_t(sheader.sh_offset);
             int8_t * symtabend = symtab + symtabsize;
             if (entrysize < (uint32_t)sizeof(Elf64_Sym)) { 
-                err.submit(ERR_ELF_RECORD_SIZE); entrysize = (uint32_t)sizeof(ElfFWC_Sym); 
+                err.submit(ERR_ELF_RECORD_SIZE); entrysize = (uint32_t)sizeof(ElfFwcSym); 
             }
 
             // Loop through symbol table
             uint32_t symi1;                           // Symbol number in this table
-            ElfFWC_Sym sym;                           // copy of symbol table entry
+            ElfFwcSym sym;                           // copy of symbol table entry
             for (symi1 = 0; symtab < symtabend; symtab += entrysize, symi1++) {
 
                 // Copy or convert symbol table entry
                 if (fileHeader.e_machine == EM_FORWARDCOM) {
-                    sym = *(ElfFWC_Sym*)symtab;
+                    sym = *(ElfFwcSym*)symtab;
                 }
                 else {
                     // Translate x64 type symbol table entry
@@ -796,7 +899,7 @@ int CELF::split() {
                     sym.st_type = sym64.st_type;
                     sym.st_bind = sym64.st_bind;
                     sym.st_other = sym64.st_other;
-                    sym.st_shndx = sym64.st_shndx;
+                    sym.st_section = sym64.st_section;
                     sym.st_value = sym64.st_value;
                     sym.st_unitsize = (uint32_t)sym64.st_size;
                     sym.st_unitnum = 1;
@@ -805,8 +908,8 @@ int CELF::split() {
                 // if (sym.st_type == STT_NOTYPE && symi1 == 0) continue; // Include empty symbols to avoid changing indexes
 
                 // Translate section index in symbol record
-                if (sym.st_shndx < sectionIndexTrans.numEntries()) {
-                    sym.st_shndx = sectionIndexTrans[sym.st_shndx];
+                if (sym.st_section < sectionIndexTrans.numEntries()) {
+                    sym.st_section = sectionIndexTrans[sym.st_section];
                 }
 
                 // Get name
@@ -830,21 +933,21 @@ int CELF::split() {
     // Make relocation list
     union {
         Elf64_Rela   a;
-        ElfFWC_Rela  i;
-        ElfFWC_Rela2 r2;
+        ElfFwcReloc r2;
     } rel;
 
     // Loop through sections
     for (sc = 0; sc < nSections; sc++) {
         // Get section header
-        Elf64_Shdr & sheader = sectionHeaders[sc];
+        ElfFwcShdr & sheader = sectionHeaders[sc];
 
-        if (sheader.sh_type == SHT_RELA || sheader.sh_type == SHT_REL) {
+        if (sheader.sh_type == SHT_RELA) {
             // Relocations section
             int8_t * reltab = buf() + uint32_t(sheader.sh_offset);
             int8_t * reltabend = reltab + uint32_t(sheader.sh_size);
             int entrysize = (uint32_t)(sheader.sh_entsize);
-            int expectedentrysize = sheader.sh_type == SHT_RELA ? sizeof(Elf64_Rela) : 16;  // Elf64_Rela : Elf64_Rel
+            //int expectedentrysize = sheader.sh_type == SHT_RELA ? sizeof(Elf64_Rela) : 16;  // Elf64_Rela : Elf64_Rel
+            int expectedentrysize = sizeof(Elf64_Rela);
             if (entrysize < expectedentrysize) {
                 err.submit(ERR_ELF_RECORD_SIZE); entrysize = expectedentrysize;
             }
@@ -856,23 +959,13 @@ int CELF::split() {
             // Symbol offset is zero if there is only one symbol section, which is the normal case
             uint32_t symbolOffset = SymbolTableOffset[symbolSection];
 
-            uint32_t relSection = sheader.sh_info; // Section to relocate, old index
-            if (relSection == 0 || relSection >= nSections) {
-                err.submit(ERR_ELF_UNKNOWN_SECTION, relSection); relSection = 0;
-            }
-            else { // Translate index of relocated section
-                relSection = sectionIndexTrans[relSection];
-            }
-
             // Loop through entries
             for (; reltab < reltabend; reltab += entrysize) {
                 // Copy or translate relocation table entry 
-                rel.a = *(Elf64_Rela*)reltab;
-                if (sheader.sh_type == SHT_REL) {
-                    rel.a.r_addend = 0;
-                }
                 if (fileHeader.e_machine == EM_X86_64) {
                     // Translate relocation type
+                    rel.a = *(Elf64_Rela*)reltab;
+                    //if (sheader.sh_type == SHT_REL) rel.a.r_addend = 0;
                     switch (rel.a.r_type) {
                     case R_X86_64_64:    // Direct 64 bit 
                         rel.a.r_type = R_FORW_ABS | R_FORW_64;
@@ -885,14 +978,16 @@ int CELF::split() {
                         rel.a.r_type = R_FORW_ABS | R_FORW_32;
                         break;
                     }
-                    rel.i.r_refsym = 0;
+                    rel.r2.r_refsym = 0;
+                    rel.r2.r_section = sheader.sh_module; // sh_module = sh_info in x86
+                }
+                else {
+                    rel.r2 = *(ElfFwcReloc*)reltab;
                 }
 
                 // Target symbol
-                rel.a.r_sym += symbolOffset;
-
-                // Insert relocated section
-                rel.r2.r_section = relSection;
+                rel.r2.r_sym += symbolOffset;
+                if (rel.r2.r_refsym) rel.r2.r_refsym += symbolOffset;
 
                 // Save relocation
                 relocations.push(rel.r2);
@@ -906,28 +1001,34 @@ int CELF::split() {
 }
 
 // Join containers into ELF file
-int CELF::join(uint32_t e_type) {
+int CELF::join(ElfFwcEhdr * header) {
     uint32_t sc;                                 // Section index
-    uint32_t os;                                 // Offset of data in file
+    uint64_t os;                                 // Offset of data in file
     uint32_t size;                               // Size of section data
     uint32_t shtype;                             // Section header type
+    uint32_t ph;                                 // Program header index
     const char * name;                           // Name of a symbol
-    CDynamicArray<Elf64_Shdr> newSectionHeaders; // Modify list of section headers
-    CDynamicArray<Elf64_Shdr> newRelocHeaders;   // Make new relocation section headers here
+    uint32_t progheadi = 0;                      // program header index
+    uint32_t pHfistSection = 0;                  // first section covered by current program header
+    uint32_t pHnumSections = 0;                  // number of sections covered by current program header
+    bool hasProgHead = false;                    // current section is covered by a program header
+
+    CDynamicArray<ElfFwcShdr> newSectionHeaders;// Modify list of section headers
     CDynamicArray<uint32_t> sectionIndexTrans;   // Translate old section indices to new indices
     CMemoryBuffer newStrtab;                     // Temporary symbol string table
     CMemoryBuffer newShStrtab;                   // Temporary section string table
-    char text[128];                              // Temporary text
     nSections = sectionHeaders.numEntries();     // Number of sections
-    newSectionHeaders.setSize(nSections*sizeof(Elf64_Shdr)); // Allocate space for section headers, but don't set number
+    if (nSections == 0) return 0;
+    newSectionHeaders.setSize(nSections*sizeof(ElfFwcShdr)); // Allocate space for section headers, but don't set number
     sectionIndexTrans.setNum(nSections + 1);     // Indices are initialized to zero
 
     // Clear any previous file
     setSize(0);
 
     // Make file header
-    Elf64_Ehdr fileheader;
-    memset(&fileheader, 0, sizeof(fileheader));
+    ElfFwcEhdr fileheader;
+    if (header) fileheader = *header;
+    else zeroAllMembers(fileheader);
     uint8_t * eident = fileheader.e_ident;
     *(uint32_t*)eident = ELFMAG; // Put file type magic number in
     fileheader.e_ident[EI_CLASS] = ELFCLASS64; // file class        
@@ -935,55 +1036,112 @@ int CELF::join(uint32_t e_type) {
     fileheader.e_ident[EI_VERSION] = EV_CURRENT; //  current ELF version
     fileheader.e_ident[EI_OSABI] = ELFOSABI_FORWARDCOM; // ForwardCom ABI
     fileheader.e_ident[EI_ABIVERSION] = EI_ABIVERSION_FORWARDCOM; // ForwardCom ABI version
-    fileheader.e_type = e_type;        // File type: object or executable
+    if (fileheader.e_type == 0) fileheader.e_type = ET_REL; // File type: object or executable
     fileheader.e_machine = EM_FORWARDCOM; // Machine type: ForwardCom 
     fileheader.e_ehsize = sizeof(fileheader);
     push(&fileheader, sizeof(fileheader));       // Insert file header into new file
 
     // Prepare string tables to be put in last
-    Elf64_Shdr strtabHeader = { 0, SHT_STRTAB, 0, 0, 0, 0, 0, 0, 1, 1 };
-    Elf64_Shdr shstrtabHeader = { 0, SHT_STRTAB, 0, 0, 0, 0, 0, 0, 1, 1 };
+    ElfFwcShdr strtabHeader;
+    zeroAllMembers(strtabHeader);
+    strtabHeader.sh_type = SHT_STRTAB;
+    strtabHeader.sh_align = 0;
+    strtabHeader.sh_entsize = 1;
+    ElfFwcShdr shstrtabHeader = strtabHeader;
     newStrtab.pushString("");                   // Dummy empty string at start to avoid zero offset
     newShStrtab.pushString("");
 
-    if (e_type == ET_EXEC) {
+    if (fileheader.e_type == ET_EXEC) {
         // Executable file. Insert program headers
         uint32_t ph;  // Program header index
         fileheader.e_phoff = dataSize();
-        fileheader.e_phentsize = (uint16_t)sizeof(Elf64_Phdr);
+        fileheader.e_phentsize = (uint16_t)sizeof(ElfFwcPhdr);
+        fileheader.e_phnum = programHeaders.numEntries();
         for (ph = 0; ph < programHeaders.numEntries(); ph++) {
-            push(&programHeaders[ph], sizeof(Elf64_Phdr));
+            push(&programHeaders[ph], sizeof(ElfFwcPhdr));
         }
-        // Insert program header data
-        for (uint32_t ph = 0; ph < programHeaders.numEntries(); ph++) {
-            if (programHeaders[ph].p_filesz) {
+        // Insert program header data only if they are not the same as section data
+        for (ph = 0; ph < programHeaders.numEntries(); ph++) {
+            if ((programHeaders[ph].p_type == PT_INTERP || programHeaders[ph].p_type == PT_NOTE) && programHeaders[ph].p_filesz) {
                 os = push(dataBuffer.buf() + programHeaders[ph].p_offset, (uint32_t)programHeaders[ph].p_filesz);
-                get<Elf64_Phdr>(uint32_t(fileheader.e_phoff + ph*sizeof(Elf64_Phdr))).p_offset = os;
-                fileheader.e_phnum++;
+                get<ElfFwcPhdr>(uint32_t(fileheader.e_phoff + ph * sizeof(ElfFwcPhdr))).p_offset = os;
             }
+        }
+        // translate dataBuffer offset to file offset
+        os = dataSize();
+        for (ph = 0; ph < programHeaders.numEntries(); ph++) {
+            if (programHeaders[ph].p_filesz) {
+                //programHeaders[ph].p_offset += dataSize();
+                get<ElfFwcPhdr>(uint32_t(fileheader.e_phoff + ph * sizeof(ElfFwcPhdr))).p_offset = os;
+                os += (uint32_t)programHeaders[ph].p_filesz;
+            }
+        }
+        // sections covered by first program header
+        progheadi = 0;
+        pHfistSection = pHnumSections = 0;
+        if (programHeaders.numEntries()) {
+            pHfistSection = (uint32_t)programHeaders[progheadi].p_paddr;
+            pHnumSections = (uint32_t)(programHeaders[progheadi].p_paddr >> 32);
         }
     }
 
     // Put section data into file
     for (sc = 0; sc < sectionHeaders.numEntries(); sc++) {
-        Elf64_Shdr sectionHeader = sectionHeaders[sc];  // Copy section header
+        ElfFwcShdr sectionHeader = sectionHeaders[sc];  // Copy section header
         shtype = sectionHeader.sh_type;  // Section type
         // Skip sections with no data        
         // Skip relocation sections, they are reconstructed later.
         // Skip string tables, they are reconstructed later.
-        if (shtype == SHT_NULL || shtype == SHT_RELA || shtype == SHT_REL || shtype == SHT_STRTAB) {
+        if (shtype == SHT_NULL || shtype == SHT_RELA || shtype == SHT_STRTAB) {
             continue;
         }
         else if (shtype != SHT_NOBITS && sectionHeader.sh_size != 0) {
             // Section contains data
-            os = (uint32_t)sectionHeader.sh_offset;
+            if (fileheader.e_type == ET_EXEC) {
+                // find correcponding program header, if any
+                while (sc >= pHfistSection + pHnumSections && progheadi+1 < programHeaders.numEntries()) {
+                    progheadi++;
+                    pHfistSection = (uint32_t)programHeaders[progheadi].p_paddr;
+                    pHnumSections = (uint32_t)(programHeaders[progheadi].p_paddr >> 32);
+                }
+                // is this section covered by a program header?
+                hasProgHead = sc >= pHfistSection && sc < pHfistSection + pHnumSections;
+            }
+            if (hasProgHead) {
+                // check if there is filler space between this section and any previous 
+                // section under the same program header
+                uint64_t lastSecEnd = 0;
+                if (sc > pHfistSection && sectionHeaders[sc-1].sh_type != SHT_NOBITS) {
+                    // end of previous section in dataBuffer:
+                    lastSecEnd = sectionHeaders[sc-1].sh_offset + sectionHeaders[sc-1].sh_size;
+                    if (sectionHeader.sh_offset > lastSecEnd) {
+                        // number of bytes to insert as filler
+                        uint64_t fill = sectionHeader.sh_offset - lastSecEnd;
+                        if (fill > MAX_ALIGN) err.submit(ERR_LINK_OVERFLOW, "","",""); // should not occur
+                        uint64_t fillValue = 0;
+                        if (sectionHeader.sh_flags & SHF_EXEC) {   // use filler instruction
+                            fillValue = fillerInstruction | ((uint64_t)fillerInstruction << 32);
+                        }
+                        while (fill >= 8) {                           // loop to insert fillers
+                            push(&fillValue, 8);
+                            fill -= 8;
+                        }
+                        if (fill) push(&fillValue, (uint32_t)fill);
+                    }
+                }
+            }
+            // error check
+            os = sectionHeader.sh_offset;
             size = (uint32_t)sectionHeader.sh_size;
             if (os + size > dataBuffer.dataSize()) {
                 err.submit(ERR_ELF_INDEX_RANGE); return ERR_ELF_INDEX_RANGE;
             }
-            // Put raw data into file and save the offset
+            // Put raw data into file and save the new offset
             os = push(dataBuffer.buf() + os, size);
             sectionHeader.sh_offset = os;
+        }
+        else {
+            sectionHeader.sh_offset = dataSize();
         }
         // Get section name
         if (sectionHeader.sh_name >= stringBuffer.dataSize()) {
@@ -996,26 +1154,45 @@ int CELF::join(uint32_t e_type) {
             }
         }
         // Save modified header and index
-        sectionIndexTrans[sc] = newSectionHeaders.numEntries() + 1;
+        //sectionIndexTrans[sc] = newSectionHeaders.numEntries() + 1;
+        sectionIndexTrans[sc] = newSectionHeaders.numEntries();
         newSectionHeaders.push(sectionHeader);
     }
     // Number of sections with program code and data:
     uint32_t numDataSections = newSectionHeaders.numEntries();
 
-    // Check which sections need relocations
-    for (sc = 0; sc < relocations.numEntries(); sc++) {
-        uint32_t rsection = uint32_t(relocations[sc].r_section);
-        if (rsection < sectionHeaders.numEntries()) {
-            // Mark that this section needs relocation
-            // This will not go into the file, and sh_addr is unused in ForwardCom anyway           
-            sectionHeaders[rsection].sh_addr = 999999999;
+    // put module names and library names into shstrtab for relinkable sections
+    updateModuleNames(newSectionHeaders, newShStrtab);
+
+    // Update program segments that cover the same data as sections
+    for (ph = 0; ph < programHeaders.numEntries(); ph++) {
+        // reference to program header in binary file
+        ElfFwcPhdr & pHeader = get<ElfFwcPhdr>(uint32_t(fileheader.e_phoff + ph*sizeof(ElfFwcPhdr)));
+        // sections covered by this program header
+        uint32_t fistSection = (uint32_t)programHeaders[ph].p_paddr;
+        uint32_t numSections = (uint32_t)(programHeaders[ph].p_paddr >> 32);
+        uint32_t lastSection = fistSection + numSections - 1;
+        // update file offset
+        if (fistSection < sectionIndexTrans.numEntries()) {
+            uint32_t sc1 = sectionIndexTrans[fistSection];
+            if (sc1 < newSectionHeaders.numEntries()) {
+                os = newSectionHeaders[sc1].sh_offset;
+                pHeader.p_offset = os;
+            }
+            if (lastSection < sectionIndexTrans.numEntries()) {
+                uint32_t sc2 = sectionIndexTrans[lastSection];
+                if (sc2 < newSectionHeaders.numEntries()) {
+                    // update segment size (it may have been increased by alignment fillers)
+                    os = newSectionHeaders[sc2].sh_offset;
+                    if (newSectionHeaders[sc2].sh_type != SHT_NOBITS) {
+                        os += newSectionHeaders[sc2].sh_size;
+                    }
+                    pHeader.p_filesz = os - pHeader.p_offset;
+                }
+            }
         }
     }
-    // Count sections that need relocations
-    uint32_t numRelocationSections = 0;
-    for (sc = 0; sc < sectionHeaders.numEntries(); sc++) {
-        if ((int)sectionHeaders[sc].sh_addr == 999999999) numRelocationSections++;
-    }
+    uint32_t numRelocationSections = 1;  // ForwardCom needs only one relocation section
 
     // Now we know how many headers the new file will contain. Assign indexes:
     // one empty header at start
@@ -1032,12 +1209,17 @@ int CELF::join(uint32_t e_type) {
 
     // Insert symbol table and make temporary string table
     align(8);
-    Elf64_Shdr symtabHeader = { 0, SHT_SYMTAB, 0, 0, 0, 0, strtabSection, 0, 8, sizeof(ElfFWC_Sym) };
+    ElfFwcShdr symtabHeader;
+    zeroAllMembers(symtabHeader);
+    symtabHeader.sh_type = SHT_SYMTAB;
+    symtabHeader.sh_link = strtabSection;
+    symtabHeader.sh_entsize = sizeof(ElfFwcSym);
+    symtabHeader.sh_align = 3;
     symtabHeader.sh_offset = dataSize();
 
     // Loop through symbol table
     for (uint32_t sym = 0; sym < symbols.numEntries(); sym++) {
-        ElfFWC_Sym ss = symbols[sym];
+        ElfFwcSym ss = symbols[sym];
         uint32_t nameOffset = ss.st_name;
         ss.st_name = 0;
         if (nameOffset >= stringBuffer.dataSize()) {
@@ -1049,42 +1231,26 @@ int CELF::join(uint32_t e_type) {
                 ss.st_name = newStrtab.pushString(name);
             }
         }
-        push(&ss, sizeof(ElfFWC_Sym));
+        push(&ss, sizeof(ElfFwcSym));
     }
     // Calculate size of symtab
     symtabHeader.sh_size = dataSize() - symtabHeader.sh_offset;
     symtabHeader.sh_name = newShStrtab.pushString("symtab"); // Assign name
 
    // Insert relocation table   
-   // For each section that needs relocations, make relocation section header and save relocation data
-    Elf64_Shdr relocationHeader = { 0, SHT_RELA, SHF_INFO_LINK, 0, 0, 0, 0, 0, 0, sizeof(ElfFWC_Rela) };
-
-    for (sc = 0; sc < sectionHeaders.numEntries(); sc++) { // Loop through sections
-        if ((int)sectionHeaders[sc].sh_addr == 999999999) { // This section needs relocation.
-            relocationHeader.sh_info = sectionIndexTrans[sc]; // Section to relocate, new index
-            relocationHeader.sh_link = symbolSection; // Symbol table index
-            // Name of relocation section = "rela_" + name of relocated section
-            // Limit the section name length that is used. This has no significance because the name of SHT_RELA sections is ignored
-            const int sectionNameLimit = 32;
-            strcpy(text, "rela_");
-            strncpy(text + 5, (char*)stringBuffer.buf() + sectionHeaders[sc].sh_name, sectionNameLimit);
-            text[sectionNameLimit] = 0;
-            relocationHeader.sh_name = newShStrtab.pushString(text); // Save name
-            relocationHeader.sh_offset = dataSize();              // Save offset
-
-            // Search for relocation records for this section and put them into file
-            for (uint32_t r = 0; r < relocations.numEntries(); r++) {
-                ElfFWC_Rela2 rel = relocations[r];
-                if (rel.r_section == sc) {
-                    push(&rel, (uint32_t)sizeof(ElfFWC_Rela));  // push relocation record, except r_section which is known from the header
-                }
-            }
-            // Calculate size of this relocation section
-            relocationHeader.sh_size = dataSize() - relocationHeader.sh_offset;
-            // Save header in temporary list
-            newRelocHeaders.push(relocationHeader);
-        }
-    }
+    ElfFwcShdr relocationHeader;
+    zeroAllMembers(relocationHeader);
+    relocationHeader.sh_type = SHT_RELA;
+    relocationHeader.sh_flags = SHF_INFO_LINK;
+    relocationHeader.sh_entsize = sizeof(ElfFwcReloc);
+    relocationHeader.sh_module = 0;
+    relocationHeader.sh_link = symbolSection; // Symbol table index
+    relocationHeader.sh_name = newShStrtab.pushString("relocations"); // Save name
+    relocationHeader.sh_offset = dataSize();              // Save offset
+    // insert all relocations
+    push(relocations.buf(), relocations.dataSize());
+    // Calculate size of this relocation section
+    relocationHeader.sh_size = dataSize() - relocationHeader.sh_offset;
 
     // Make string tables
     shstrtabHeader.sh_name = newShStrtab.pushString("shstrtab");
@@ -1099,47 +1265,154 @@ int CELF::join(uint32_t e_type) {
     // Insert section headers
     align(8);
     fileheader.e_shoff = dataSize();
-    fileheader.e_shentsize = sizeof(Elf64_Shdr);
+    fileheader.e_shentsize = sizeof(ElfFwcShdr);
     fileheader.e_shstrndx = shstrtabSection;
-    Elf64_Shdr nullhdr = { 0,0,0,0,0,0,0,0,0,0 };            // First section header must be empty
-    push(&nullhdr, sizeof(Elf64_Shdr));
-    push(newSectionHeaders.buf(), newSectionHeaders.numEntries() * sizeof(Elf64_Shdr));
-    push(&symtabHeader, sizeof(Elf64_Shdr));
-    push(newRelocHeaders.buf(), newRelocHeaders.numEntries() * sizeof(Elf64_Shdr));
-    push(&shstrtabHeader, sizeof(Elf64_Shdr));
-    push(&strtabHeader, sizeof(Elf64_Shdr));
+    ElfFwcShdr nullhdr;            // First section header must be empty
+    zeroAllMembers(nullhdr);
+    push(&nullhdr, sizeof(ElfFwcShdr));
+    push(newSectionHeaders.buf(), newSectionHeaders.numEntries() * sizeof(ElfFwcShdr));
+    push(&symtabHeader, sizeof(ElfFwcShdr));
+    push(&relocationHeader, sizeof(ElfFwcShdr));
+    push(&shstrtabHeader, sizeof(ElfFwcShdr));
+    push(&strtabHeader, sizeof(ElfFwcShdr));
 
     // Update file header
     fileheader.e_shnum = numSections;
-    get<Elf64_Ehdr>(0) = fileheader;
+    get<ElfFwcEhdr>(0) = fileheader;
     return 0;
 }
 
-
 // Add section header and section data
-uint32_t  CELF::addSection(Elf64_Shdr & section, CMemoryBuffer const & strings, CMemoryBuffer const & data) {
-    Elf64_Shdr section2 = section;             // copy section header
+uint32_t CELF::addSection(ElfFwcShdr & section, CMemoryBuffer const & strings, CMemoryBuffer const & data) {
+    ElfFwcShdr section2 = section;             // copy section header
     int nul = 0;
     section2.sh_name = stringBuffer.pushString((const char*)strings.buf() + section.sh_name); // copy string
     if (dataBuffer.dataSize() == 0) dataBuffer.push(&nul, 4);     // add a zero to avoid offset beginning at zero
-    section2.sh_offset = dataBuffer.push(data.buf() + section.sh_offset, (uint32_t)section.sh_size); // copy data
+    if (section.sh_type != SHT_NOBITS) {        
+        section2.sh_offset = dataBuffer.push(data.buf() + section.sh_offset, (uint32_t)section.sh_size); // copy data
+    }
+    else {
+        section2.sh_offset = dataBuffer.dataSize() + section.sh_offset; // BSS section
+    }
     if (sectionHeaders.dataSize() == 0) {    // make empty section 0
-        Elf64_Shdr section0 = {0,0,0,0,0,0,0,0,0,0};
+        ElfFwcShdr section0;
+        zeroAllMembers(section0);
         sectionHeaders.push(section0);
     }
     sectionHeaders.push(section2);         // save section header
-    return sectionHeaders.numEntries() - 1;  // return section number
+    nSections = sectionHeaders.numEntries();
+    return nSections - 1;  // return section number
 }
 
+// Extend previously added section
+void CELF::extendSection(ElfFwcShdr & section, CMemoryBuffer const & data) {
+    if (sectionHeaders.numEntries() == 0) {
+        err.submit(ERR_LINK_OVERFLOW, "","","");
+        return;
+    }
+    uint32_t pre = sectionHeaders.numEntries() - 1;  // previously added section
+
+    // insert new data
+    if (section.sh_type != SHT_NOBITS) {            
+        dataBuffer.push(data.buf() + section.sh_offset, (uint32_t)section.sh_size); 
+        sectionHeaders[pre].sh_size = dataBuffer.dataSize() - sectionHeaders[pre].sh_offset;
+    }
+    else {
+        // adjust header
+        sectionHeaders[pre].sh_size += section.sh_size;
+    }
+}
+
+// Insert alignment fillers between sections
+void CELF::insertFiller(uint64_t numBytes) {
+    if (sectionHeaders.numEntries() == 0) {
+        err.submit(ERR_LINK_OVERFLOW, "","","");
+        return;
+    }
+    uint32_t pre = sectionHeaders.numEntries() - 1;        // previously added section
+    uint64_t fillValue = 0;
+    if (sectionHeaders[pre].sh_flags & SHF_EXEC) {         // use filler instruction
+        fillValue = fillerInstruction | ((uint64_t)fillerInstruction << 32);
+    }
+    uint64_t f = numBytes;                                 // loop counter
+    while (f >= 8) {                                       // loop to insert fillers
+        dataBuffer.push(&fillValue, 8);  
+        f -= 8;
+    }
+    if (f) dataBuffer.push(&fillValue, (uint32_t)f);
+}
+
+
+// Add module name and library name to relinkable sections
+void CELF::addModuleNames(CDynamicArray<uint32_t> &moduleNames1, CDynamicArray<uint32_t> &libraryNames1) {
+    // moduleNames and libraryNames contain indexes into cmd.fileNameBuffer
+    moduleNames << moduleNames1;
+    libraryNames << libraryNames1;
+}
+
+// Put module names and library names into section string table for relinkable sections
+void CELF::updateModuleNames(CDynamicArray<ElfFwcShdr> &newSectionHeaders, CMemoryBuffer &newShStrtab) {
+    uint32_t sec;                                // section number
+    uint32_t mod;                                // module number
+    uint32_t lib;                                // library number
+    const char * name;                           // module or library name
+
+    CDynamicArray<uint32_t> moduleNames2;        // module names as index into stringBuffer
+    CDynamicArray<uint32_t> libraryNames2;       // library names as index into stringBuffer
+    moduleNames2.setNum(moduleNames.numEntries());
+    libraryNames2.setNum(libraryNames.numEntries());
+
+    // avoid storing same name multiple times by first checking which names are needed
+    for (sec = 1; sec < newSectionHeaders.numEntries(); sec++) {
+        if ((newSectionHeaders[sec].sh_flags & SHF_RELINK) | cmd.debugOptions) {
+            mod = newSectionHeaders[sec].sh_module;
+            if (mod < moduleNames.numEntries() && moduleNames[mod]) moduleNames2[mod] = 1;
+            lib = newSectionHeaders[sec].sh_library;
+            if (lib && lib < libraryNames.numEntries()) libraryNames2[lib] = 1;
+        }
+    }
+    // store needed names in shstrtab
+    for (mod = 0; mod < moduleNames.numEntries(); mod++) {
+        if (moduleNames2[mod]) {
+            name = cmd.getFilename(moduleNames[mod]);
+            moduleNames2[mod] = newShStrtab.pushString(name);
+        }
+    }
+    for (lib = 0; lib < libraryNames.numEntries(); lib++) {
+        if (libraryNames2[lib]) {
+            name = cmd.getFilename(libraryNames[lib]);
+            libraryNames2[lib] = newShStrtab.pushString(name);
+        }
+    }
+    // insert updated name indexes
+    for (sec = 1; sec < newSectionHeaders.numEntries(); sec++) {
+        if ((newSectionHeaders[sec].sh_flags & SHF_RELINK) | cmd.debugOptions) {
+            mod = newSectionHeaders[sec].sh_module;
+            if (mod < moduleNames2.numEntries() && moduleNames2[mod]) {
+                newSectionHeaders[sec].sh_module = moduleNames2[mod];
+            }
+            lib = newSectionHeaders[sec].sh_library;
+            if (lib && lib < libraryNames2.numEntries()) {
+                newSectionHeaders[sec].sh_library = libraryNames2[lib];
+            }
+        }
+        else {
+            newSectionHeaders[sec].sh_module = 0;
+            newSectionHeaders[sec].sh_library = 0;
+        }
+    }
+}
+
+
 // Add program header
-void CELF::addProgHeader(Elf64_Phdr & header) {
+void CELF::addProgHeader(ElfFwcPhdr & header) {
     programHeaders.push(header);
 }
 
 
 // Add a symbol
-uint32_t CELF::addSymbol(ElfFWC_Sym & symbol, CMemoryBuffer const & strings) {
-    ElfFWC_Sym symbol2 = symbol;   // copy symbol
+uint32_t CELF::addSymbol(ElfFwcSym & symbol, CMemoryBuffer const & strings) {
+    ElfFwcSym symbol2 = symbol;   // copy symbol
     if (symbol2.st_unitnum == 0) symbol2.st_unitnum = 1;
     if (stringBuffer.numEntries() == 0) stringBuffer.pushString(""); // put empty string at position zero to avoid zero index
     symbol2.st_name = stringBuffer.pushString((const char*)strings.buf() + symbol.st_name);  // copy name
@@ -1148,7 +1421,7 @@ uint32_t CELF::addSymbol(ElfFWC_Sym & symbol, CMemoryBuffer const & strings) {
 }
 
 // Add a relocation
-void CELF::addRelocation(ElfFWC_Rela2 & relocation) {
+void CELF::addRelocation(ElfFwcReloc & relocation) {
     relocations.push(relocation);
 }
 
@@ -1161,14 +1434,16 @@ struct SSymbolCleanup {
 
 // remove local symbols and adjust relocation records with new symbol indexes
 void CELF::removePrivateSymbols() {
-    CDynamicArray<SSymbolCleanup> symbolTranslate;     // list for translating symbol indexes
+    CDynamicArray<SSymbolCleanup> symbolTranslate;         // list for translating symbol indexes
     symbolTranslate.setNum(symbols.numEntries());
-    uint32_t symi;                                     // symbol index
-    uint32_t reli;                                     // relocation index
-                                                       // loop through symbols
+    uint32_t symi;                                         // symbol index
+    uint32_t reli;                                         // relocation index
+                                                           // loop through symbols
     for (symi = 1; symi < symbols.numEntries(); symi++) {
-        if (symbols[symi].st_bind != STB_LOCAL && !(symbols[symi].st_other & STV_HIDDEN)) {
-            symbolTranslate[symi].preserve = 1;               // mark public symbols
+        if (symbols[symi].st_bind != STB_LOCAL             // skip local symbols
+            && symbols[symi].st_section                      // skip external symbols
+            && !(symbols[symi].st_other & STV_HIDDEN)) {   // skip hidden symbols
+            symbolTranslate[symi].preserve = 1;            // mark public symbols
         }
     }
     // loop through relocations. preserve any symbols that relocations refer to
@@ -1183,7 +1458,7 @@ void CELF::removePrivateSymbols() {
         }
     }
     // make new symbol list
-    CDynamicArray<ElfFWC_Sym> symbols2;
+    CDynamicArray<ElfFwcSym> symbols2;
     symbols2.setNum(1);                        // make first symbol empty
     for (symi = 1; symi < symbols.numEntries(); symi++) {
         if (symbolTranslate[symi].preserve) {
@@ -1201,4 +1476,21 @@ void CELF::removePrivateSymbols() {
     }
     // replace symbol table
     symbols << symbols2;
+}
+
+// Reset everything
+void CELF::reset() {
+    nSections = 0;
+    moduleName = 0;
+    library = 0;
+    relinkable = false;
+    symbols.setSize(0);
+    sectionHeaders.setSize(0);
+    programHeaders.setSize(0);
+    relocations.setSize(0);
+    stringBuffer.setSize(0);
+    dataBuffer.setSize(0);
+    moduleNames.setSize(0);
+    libraryNames.setSize(0);
+    setSize(0);
 }

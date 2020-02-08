@@ -1,8 +1,8 @@
 /****************************  containers.cpp  **********************************
 * Author:        Agner Fog
 * Date created:  2006-07-15
-* Last modified: 2017-11-03
-* Version:       1.00
+* Last modified: 2018-03-30
+* Version:       1.01
 * Project:       Binary tools for ForwardCom instruction set
 *
 * This module contains container classes CMemoryBuffer and CFileBuffer for
@@ -18,9 +18,10 @@
 SIntTxt FileFormatNames[] = {
     {FILETYPE_ELF,          "x86 ELF"},
     {FILETYPE_FWC,          "ForwardCom ELF"},
-    {FILETYPE_ASM,          "Assembly"},
-    {FILETYPE_FWC_EXE,      "ForwardCom executable"},
-    {FILETYPE_FWC_LIB,      "ForwardCom library"}
+    {FILETYPE_ASM,          "assembly"},
+    {FILETYPE_FWC_EXE,      "forwardCom executable"},
+    {FILETYPE_FWC_LIB,      "forwardCom library"},
+    {FILETYPE_LIBRARY,      "library"}
 };
 
 
@@ -44,6 +45,11 @@ void CMemoryBuffer::clear() {
     num_entries = data_size = buffer_size = 0;
 }
 
+// Set all contents to zero without changing data size
+void CMemoryBuffer::zero() {
+    if (buffer) memset(buffer, 0, buffer_size);
+}
+
 void CMemoryBuffer::setSize(uint32_t size) {
     // Allocate, reallocate or deallocate buffer of specified size.
     // DataSize is initially zero. It is increased by push or pushString.
@@ -52,6 +58,7 @@ void CMemoryBuffer::setSize(uint32_t size) {
     if (size < data_size) {
         // Request to delete some data
         data_size = size;
+        if (size == 0) num_entries = 0;
         return;
     }
     if (size <= buffer_size) {
@@ -70,6 +77,17 @@ void CMemoryBuffer::setSize(uint32_t size) {
     }
     buffer = buffer2;                            // Save pointer to buffer
     buffer_size = size;                          // Save size
+}
+
+void CMemoryBuffer::setDataSize(uint32_t size) {
+    // Set data size and fill any new data with zeroes
+    if (size > buffer_size) {
+        setSize(size);
+    }
+    else if (size > data_size) {
+        memset(buffer + data_size, 0, size - data_size);
+    }
+    data_size = size;
 }
 
 uint32_t CMemoryBuffer::push(void const * obj, uint32_t size) {
@@ -168,23 +186,15 @@ void CMemoryBuffer::copy(CMemoryBuffer const & b) {
 // Members of class CFileBuffer
 CFileBuffer::CFileBuffer() : CMemoryBuffer() {  
     // Default constructor
-    fileName = 0;
-    outputFileName = 0;
     fileType = wordSize = executable = 0;
 }
 
-CFileBuffer::CFileBuffer(char const * filename) : CMemoryBuffer() {  
-    // Constructor
-    fileName = filename;
-    fileType = wordSize = 0;
-}
-
-void CFileBuffer::read(int ignoreError) {                   
+void CFileBuffer::read(const char * filename, int ignoreError) {                   
     // Read file into buffer
-    // InoreError: 0: abort on error, 1: ignore error, 2: search for file also in exe directory
+    // InoreError: 0: abort on error, CMDL_FILE_IN_IF_EXISTS: ignore error, CMDL_FILE_SEARCH_PATH: search for file also in exe directory
     uint32_t status;                             // Error status
 
-    const int MAXPATHL = 1024;                   // Buffer for constructing file path
+    const int MAXPATHL = 1024;  //!!                 // Buffer for constructing file path
     char name[MAXPATHL];
 #if defined (_WIN32) || defined (__WINDOWS__)
     const char slash[2] = "\\";  // path separator depends on operating system
@@ -195,9 +205,9 @@ void CFileBuffer::read(int ignoreError) {
 #ifdef _MSC_VER  // Microsoft compiler prefers this:
 
     int fh;                                      // File handle
-    fh = _open(fileName, O_RDONLY | O_BINARY);   // Open file in binary mode
+    fh = _open(filename, O_RDONLY | O_BINARY);   // Open file in binary mode
     if (fh == -1) {
-        if (ignoreError == 2 && strlen(cmd.programName) + strlen(fileName) < MAXPATHL) {
+        if (ignoreError == CMDL_FILE_SEARCH_PATH && strlen(cmd.programName) + strlen(filename) < MAXPATHL) {
             // Search for file in directory of executable file
             strcpy(name, cmd.programName);
             char *s1 = name, * s2;               // find last slash
@@ -206,31 +216,31 @@ void CFileBuffer::read(int ignoreError) {
                 if (s2) s1 = s2;  else *s1 = 0;
             } while(s2);
             strcat(name, slash);
-            strcat(name, fileName);
+            strcat(name, filename);
             fh = _open(name, O_RDONLY | O_BINARY); // Open file in binary mode
         }
         if (fh == -1) {
             // Cannot read file
-            if (ignoreError != 1) err.submit(ERR_INPUT_FILE, fileName); // Error. Input file must be read
+            if (ignoreError != CMDL_FILE_IN_IF_EXISTS) err.submit(ERR_INPUT_FILE, filename); // Error. Input file must be read
             setSize(0); return;                  // Make empty file buffer
         }
     }
     data_size = _filelength(fh);                 // Get file size
     if (data_size <= 0) {
-        if (ignoreError != 1) err.submit(ERR_FILE_SIZE, fileName); // Wrong size
+        if (ignoreError == 0) err.submit(ERR_FILE_SIZE, filename); // Wrong size
         return;}
     setSize(data_size + 2048);                   // Allocate buffer, 2k extra
     status = _read(fh, buf(), data_size);        // Read from file
-    if (status != data_size) err.submit(ERR_INPUT_FILE, fileName);
+    if (status != data_size) err.submit(ERR_INPUT_FILE, filename);
     status = _close(fh);                         // Close file
-    if (status != 0) err.submit(ERR_INPUT_FILE, fileName);
+    if (status != 0) err.submit(ERR_INPUT_FILE, filename);
 
 #else              // Works with most compilers:
 
-    FILE * fh = fopen(fileName, "rb");
+    FILE * fh = fopen(filename, "rb");
     if (!fh) {
         // Cannot read file
-        if (ignoreError == 2 && strlen(cmd.programName) + strlen(fileName) < MAXPATHL) {
+        if (ignoreError == CMDL_FILE_SEARCH_PATH && strlen(cmd.programName) + strlen(filename) < MAXPATHL) {
             // Search for file in directory of executable file
             strcpy(name, cmd.programName);
             char *s1 = name, * s2;               // find last slash
@@ -239,21 +249,25 @@ void CFileBuffer::read(int ignoreError) {
                 if (s2) s1 = s2;  else *s1 = 0;
             } while(s2);
             strcat(name, slash);
-            strcat(name, fileName);
+            strcat(name, filename);
             fh = fopen(name, "rb");
         }
         if (!fh) {
             // Cannot read file
-            if (ignoreError != 1) err.submit(ERR_INPUT_FILE, fileName); // Error. Input file must be read
+            if (ignoreError != CMDL_FILE_IN_IF_EXISTS) err.submit(ERR_INPUT_FILE, filename); // Error. Input file must be read
             setSize(0); return;                  // Make empty file buffer
         }
     }
     // Find file size
     fseek(fh, 0, SEEK_END);
     long int fsize = ftell(fh);
-    if (fsize <= 0 || (unsigned long)fsize >= 0xFFFFFFFF) {
-        // File too big or zero size
-        err.submit(ERR_FILE_SIZE, fileName); fclose(fh); return;
+    if (fsize <= 0 && ignoreError == 0) {
+        // File zero size
+        err.submit(ERR_FILE_SIZE, filename); fclose(fh); return;
+    }
+    if ((unsigned long)fsize >= 0xFFFFFFFF) {
+        // File too big 
+        err.submit(ERR_FILE_SIZE, filename); fclose(fh); return;
     }
     data_size = (uint32_t)fsize;
     rewind(fh);
@@ -261,20 +275,16 @@ void CFileBuffer::read(int ignoreError) {
     setSize(data_size + 2048);                    // Allocate buffer, 2k extra
     // Read entire file
     status = (uint32_t)fread(buf(), 1, data_size, fh);
-    if (status != data_size) err.submit(ERR_INPUT_FILE, fileName);
+    if (status != data_size) err.submit(ERR_INPUT_FILE, filename);
     status = fclose(fh);
-    if (status != 0) err.submit(ERR_INPUT_FILE, fileName);
+    if (status != 0) err.submit(ERR_INPUT_FILE, filename);
 
 #endif
 }
 
-void CFileBuffer::write() {                  
+void CFileBuffer::write(const char * filename) {                  
     // Write buffer to file:
-    if (outputFileName) fileName = outputFileName;
-    else {
-        err.submit(ERR_OUTPUT_FILE);
-        return;
-    }
+
     // Two alternative ways to write a file:
 
 #ifdef _MSC_VER    // Microsoft compiler prefers this:
@@ -282,39 +292,39 @@ void CFileBuffer::write() {
     int fh;                                      // File handle
     uint32_t status;                             // Error status
     // Open file in binary mode
-    fh = _open(fileName, O_RDWR | O_BINARY | O_CREAT | O_TRUNC, _S_IREAD | _S_IWRITE); 
+    fh = _open(filename, O_RDWR | O_BINARY | O_CREAT | O_TRUNC, _S_IREAD | _S_IWRITE); 
     // Check if error
-    if (fh == -1) {err.submit(ERR_OUTPUT_FILE, fileName);  return;}
+    if (fh == -1) {err.submit(ERR_OUTPUT_FILE, filename);  return;}
     // Write file
     status = _write(fh, buf(), data_size);
     // Check if error
-    if (status != data_size) err.submit(ERR_OUTPUT_FILE, fileName);
+    if (status != data_size) err.submit(ERR_OUTPUT_FILE, filename);
     // Close file
     status = _close(fh);
     // Check if error
-    if (status != 0) err.submit(ERR_OUTPUT_FILE, fileName);
+    if (status != 0) err.submit(ERR_OUTPUT_FILE, filename);
 
 #else              // Works with most compilers:
 
     // Open file in binary mode
-    FILE * ff = fopen(fileName, "wb");
+    FILE * ff = fopen(filename, "wb");
     // Check if error
-    if (!ff) {err.submit(ERR_OUTPUT_FILE, fileName);  return;}
+    if (!ff) {err.submit(ERR_OUTPUT_FILE, filename);  return;}
     // Write file
     uint32_t n = (uint32_t)fwrite(buf(), 1, data_size, ff);
     // Check if error
-    if (n != data_size) err.submit(ERR_OUTPUT_FILE, fileName);
+    if (n != data_size) err.submit(ERR_OUTPUT_FILE, filename);
     // Close file
     n = fclose(ff);
     // Check if error
-    if (n) {err.submit(ERR_OUTPUT_FILE, fileName);  return;}
+    if (n) {err.submit(ERR_OUTPUT_FILE, filename);  return;}
 
 #endif
 }
 
 int CFileBuffer::getFileType() {
     // Detect file type
-    if (fileType) return fileType;               // File type already known
+    //if (fileType) return fileType;             // Must re-evaluate fileType in case buffer is reused
     if (!data_size) return 0;                    // No file
     if (!buf()) return 0;                        // No contents
 
@@ -324,19 +334,24 @@ int CFileBuffer::getFileType() {
     if (get<uint32_t>(0) == ELFMAG) { 
         // ELF file
         fileType = FILETYPE_ELF;
-        executable = get<Elf64_Ehdr>(0).e_type != ET_REL;
+        executable = get<ElfFwcEhdr>(0).e_type != ET_REL;
         switch (buf()[EI_CLASS]) {
         case ELFCLASS32:
             wordSize = 32; break;
         case ELFCLASS64:
             wordSize = 64; break;
         }
-        machineType = get<Elf64_Ehdr>(0).e_machine;   // Copy file header.e_machine;
+        machineType = get<ElfFwcEhdr>(0).e_machine;   // Copy file header.e_machine;
+        if (machineType == EM_FORWARDCOM) fileType = FILETYPE_FWC;
+    }
+    else if (memcmp(buf(), archiveSignature, 8) == 0) {
+        fileType = FILETYPE_LIBRARY;
     }
     else {
         // Unknown file type
         int utype = get<uint32_t>(0);        
-        err.submit(ERR_UNKNOWN_FILE_TYPE, utype, fileName); 
+       // err.submit(ERR_UNKNOWN_FILE_TYPE, utype, fileName); 
+        err.submit(ERR_UNKNOWN_FILE_TYPE, utype, "!!"); 
         fileType = 0;
     }
     return fileType;
@@ -356,60 +371,13 @@ void CFileBuffer::setFileType(int type) {
 
 void CFileBuffer::reset() {
     // Set all members to zero
-    setSize(0);                                  // Deallocate memory buffer
-    memset(this, 0, sizeof(*this));
-}
-
-char * CFileBuffer::setFileNameExtension(const char * f) {
-    // Set file name extension according to FileType
-    static char name[MAXFILENAMELENGTH+8];
-    int i;
-
-    if (strlen(f) > MAXFILENAMELENGTH) err.submit(ERR_FILE_NAME_LONG, f);
-    strncpy(name, f, MAXFILENAMELENGTH);
-
-    // Search for last '.' in file name
-    for (i = (int)strlen(name)-1; i > 0; i--) if (name[i] == '.') break;
-    if (i < 1) {
-        // '.' not found. Append '.' to name
-        i = (int)strlen(name); if (i > MAXFILENAMELENGTH-4) i = MAXFILENAMELENGTH-4;
-    }
-    // Get default extension
-    const char * defaultExtension;
-    switch (cmd.outputType) {
-    case FILETYPE_ASM:
-        defaultExtension = ".as"; break;
-    case FILETYPE_FWC: case FILETYPE_ELF:
-        defaultExtension = ".ob"; break;
-    case FILETYPE_FWC_EXE:
-        defaultExtension = ".ex"; break;
-    case FILETYPE_FWC_LIB:
-        defaultExtension = ".li"; break;
-    default:
-        defaultExtension = ".txt";
-    }
-    strcpy(name + i, defaultExtension);          // Add default extension
-    return name;
-}
-
-void CFileBuffer::checkOutputFileName() {
-    // Make output file name or check that requested name is valid
-    if (!(cmd.fileOptions & CMDL_FILE_OUTPUT)) return;
-
-    outputFileName = cmd.outputFile;
-    if (outputFileName == 0) {
-        // Output file name not specified. Make filename
-        outputFileName = cmd.outputFile = setFileNameExtension(fileName);
-    }
-    if (strcmp(fileName,outputFileName) == 0 && !(cmd.fileOptions & CMDL_FILE_IN_OUT_SAME)) {
-        // Input and output files have same name
-        err.submit(ERR_FILES_SAME_NAME, fileName);
-    }
+    clear();                                  // Deallocate memory buffer
+    zeroAllMembers(*this);
 }
 
 void operator >> (CMemoryBuffer & a, CMemoryBuffer & b) {
     // Transfer ownership of buffer and other properties from a to b
-    b.setSize(0);                                // De-allocate old buffer from target if it has one
+    b.clear();                                   // De-allocate old buffer from target if it has one
     b.buffer = a.buffer;                         // Transfer buffer
     a.buffer = 0;                                // Remove buffer from source, so that buffer has only one owner
 
@@ -417,12 +385,12 @@ void operator >> (CMemoryBuffer & a, CMemoryBuffer & b) {
     b.data_size   = a.dataSize();                // Size of data, offset to vacant space
     b.buffer_size = a.bufferSize();              // Size of allocated buffer
     b.num_entries = a.numEntries();              // Number of objects pushed
-    a.setSize(0);                                // Reset a's properties
+    a.clear();                                   // Reset a's properties
 }
 
 void operator >> (CFileBuffer & a, CFileBuffer & b) {
     // Transfer ownership of buffer and other properties from a to b
-    b.setSize(0);                                // De-allocate old buffer from target if it has one
+    b.clear();                                   // De-allocate old buffer from target if it has one
     b.buffer = a.buffer;                         // Transfer buffer
     a.buffer = 0;                                // Remove buffer from source, so that buffer has only one owner
 
@@ -433,10 +401,10 @@ void operator >> (CFileBuffer & a, CFileBuffer & b) {
     b.executable = a.executable;                 // File is executable
     b.machineType = a.machineType;               // Machine type
     if (a.wordSize) b.wordSize = a.wordSize;     // Segment word size (16, 32, 64)
-    if (a.fileName) b.fileName = a.fileName;     // Name of input file
-    if (a.outputFileName) b.outputFileName = a.outputFileName;// Name of output file
-    if (a.getFileType())  b.fileType = a.getFileType();       // Object file type
-    a.setSize(0);                                // Reset a's properties
+    if (a.getFileType()) {
+        b.fileType = a.getFileType();            // Object file type
+    }
+    a.clear();                                   // Reset a's properties
 }
 
 
@@ -543,6 +511,14 @@ void CTextFileBuffer::putHex(uint64_t x, int ox) {
     }
     put(text);
 }
+
+void CTextFileBuffer::putFloat16(uint16_t x) {
+    // Write half precision floating point number to buffer
+    char text[32];
+    sprintf(text, "%.3G", half2float(x));
+    put(text);
+}
+
 
 void CTextFileBuffer::putFloat(float x) {
     // Write floating point number to buffer

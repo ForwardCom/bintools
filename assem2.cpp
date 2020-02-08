@@ -1,8 +1,8 @@
 /****************************    assem2.cpp    ********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2017-11-03
-* Version:       1.00
+* Last modified: 2018-03-30
+* Version:       1.01
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.cpp
 * Description:
@@ -49,7 +49,7 @@ SExpression CAssembler::expression(uint32_t tok1, uint32_t maxtok, uint32_t opti
     uint8_t endbracket;           // expected end bracket
 
     SExpression exp1, exp2;       // expressions during evaluation
-    memset(&exp1, 0, sizeof(exp1)); // reset exp1
+    zeroAllMembers(exp1);         // reset exp1
     exp1.tokens = 1;
 
     for (tok = tok1; tok < tok1 + maxtok; tok++) {
@@ -131,6 +131,9 @@ SExpression CAssembler::expression(uint32_t tok1, uint32_t maxtok, uint32_t opti
                 case TOK_NUM: case TOK_FLT: case TOK_CHA: case TOK_STR:
                 case TOK_REG: case TOK_SYM: case TOK_XPR: case TOK_OPT:
                     state = 1; // allowed value tokens
+                    break;
+                case TOK_TYP:
+                    state = 1; // type expression
                     break;
                 default:
                     errors.report(tokens[tok]);  break;
@@ -218,9 +221,9 @@ SExpression CAssembler::expression(uint32_t tok1, uint32_t maxtok, uint32_t opti
                 break;
             case TOK_STR:  {          // string
                 exp1.etype = XPR_STRING;
-                exp1.value.u = stringBuffer.dataSize();  // save position of string
-                exp1.sym2 = tokens[tok1].stringLength;   // string length
-                bool escape = false;                     // check for \ escape characters
+                exp1.value.u = stringBuffer.dataSize();    // save position of string
+                exp1.sym2 = tokens[tok1].stringLength;     // string length
+                bool escape = false;                       // check for \ escape characters
                 for (i = 0; i < tokens[tok1].stringLength; i++) {
                     char c = get<char>(tokens[tok1].pos + i);
                     if (c == '\\' && !escape) {
@@ -234,11 +237,12 @@ SExpression CAssembler::expression(uint32_t tok1, uint32_t maxtok, uint32_t opti
                         case 't':  c = '\t';  break;
                         }
                     }
+                    if (escape && exp1.sym2) exp1.sym2--;  // reduce length
                     stringBuffer.put(c);
                     escape = false;
                 }
-                stringBuffer.put(char(0));  // terminate string
-                if (options & 2) {   // string not allowed in memory operand
+                stringBuffer.put(char(0));                 // terminate string
+                if (options & 2) {                         // string not allowed in memory operand
                     errors.report(tokens[tok1].pos, tokens[tok1].stringLength, ERR_WRONG_TYPE);
                 }
                 break;}
@@ -277,6 +281,10 @@ SExpression CAssembler::expression(uint32_t tok1, uint32_t maxtok, uint32_t opti
                 }
                 else errors.report(tokens[tok1]);
                 break;
+            case TOK_TYP:
+                exp1.etype = XPR_TYPENAME;
+                exp1.value.u = tokens[tok1].id;
+                break;
             default:
                 errors.report(tokens[tok1]);
             }
@@ -296,7 +304,7 @@ SExpression CAssembler::expression(uint32_t tok1, uint32_t maxtok, uint32_t opti
                 exp1.tokens++;   // unresolved expression. return unresolved result
                 goto RETURNEXP1;
             }
-            memset(&exp2, 0, sizeof(exp2));  // zero exp2
+            zeroAllMembers(exp2);  // zero exp2
             switch (tokens[toklow].id) {
             case '+':            // value is unchanged
                 exp1.tokens++;
@@ -313,10 +321,12 @@ SExpression CAssembler::expression(uint32_t tok1, uint32_t maxtok, uint32_t opti
                 tokid = '-';
                 break;  // continue in dyadic operators with 0-exp2
             case '!':
+                exp1.tokens++;
                 if (exp1.instruction == II_COMPARE
                 && (exp1.etype & XPR_REG1) && (exp1.etype & (XPR_REG2 | XPR_INT))) {
                     // compare instruction. invert condition
                     exp1.optionbits ^= 1;
+                    if ((exp1.reg1 & REG_V) && (dataType & TYP_FLOAT)) exp1.optionbits ^= 8; // floating point compare. invert gives unordered
                     goto RETURNEXP1;
                 }
                 if (exp1.instruction == II_AND
@@ -1454,7 +1464,7 @@ double interpretFloat(const char * s, uint32_t length) {
 // make expression out of symbol
 SExpression CAssembler::symbol2expression(uint32_t symi) {
     SExpression expr;
-    memset(&expr, 0, sizeof(expr));
+    zeroAllMembers(expr);
     switch (symbols[symi].st_type) {
     case STT_CONSTANT:  case STT_VARIABLE:
         expr.etype = XPR_INT;   // default type
