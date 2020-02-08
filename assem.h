@@ -1,8 +1,8 @@
 /****************************    assem.h    ***********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2017-11-03
-* Version:       1.00
+* Last modified: 2018-03-30
+* Version:       1.01
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.h
 * Description:
@@ -48,12 +48,17 @@ const int ATT_READ     = ((TOK_ATT << 24) + SHF_READ);
 const int ATT_WRITE    = ((TOK_ATT << 24) + SHF_WRITE);
 const int ATT_EXEC     = ((TOK_ATT << 24) + SHF_EXEC);
 const int ATT_ALIGN    = ((TOK_ATT << 24) + 0x10);
-const int ATT_WEAK     = ((TOK_ATT << 24) + 0x20);
 
 // Attributes of variables, constants and functions
-const int ATT_CONSTANT = ((TOK_ATT << 24) + 0x10000);  // used for external constants
-const int ATT_UNINIT   = ((TOK_ATT << 24) + 0x20000);  // uninitialized section (BSS)
-const int ATT_COMDAT   = ((TOK_ATT << 24) + 0x40000);  // communal section. duplicates and unreferenced sections are removed
+const int ATT_WEAK     = ((TOK_ATT << 24) + 0x20);              // weak public or weak external symbol
+const int ATT_REGUSE   = ((TOK_ATT << 24) + 0x21);              // register use of function
+const int ATT_CONSTANT = ((TOK_ATT << 24) + 0x10000);           // used for external constants
+const int ATT_UNINIT   = ((TOK_ATT << 24) + 0x20000);           // uninitialized section (BSS)
+const int ATT_COMDAT   = ((TOK_ATT << 24) + 0x40000);           // communal section. duplicates and unreferenced sections are removed
+const int ATT_EXCEPTION= ((TOK_ATT << 24) + SHF_EXCEPTION_HND); // exception handler info
+const int ATT_EVENT    = ((TOK_ATT << 24) + SHF_EVENT_HND);     // event handler info
+const int ATT_DEBUG    = ((TOK_ATT << 24) + SHF_DEBUG_INFO);    // debug info
+const int ATT_COMMENT  = ((TOK_ATT << 24) + SHF_COMMENT);       // comments
 
 // Type definitions
 const int TYP_INT8     = ((TOK_TYP << 24) + 0x10);
@@ -148,73 +153,79 @@ const int XPR_MASK      = 0x400000;    // contains mask register
 const int XPR_FALLBACK  = 0x800000;    // contains fallback register
 const int XPR_OPTIONS  = 0x1000000;    // contains options or signbits in IM3
 const int XPR_JUMPOS   = 0x2000000;    // contains self-relative jump offset
+const int XPR_TYPENAME =0x10000000;    // contains type name in value
 const int XPR_UNRESOLV =0x40000000;    // contains unresolved name or value
 const int XPR_ERROR    =0x80000000;    // an error occurred during the generation
 
-// Instruction id's (16 bits)
-const int II_NOP            =  0x30000;
-const int II_STORE          =        1;
-const int II_MOVE           =        2;
-const int II_COMPARE        =        7;
-const int II_ADD            =        8;
-const int II_SUB            =        9;
-const int II_SUB_REV        =       10;
-const int II_MUL            =       11;
-const int II_MUL_HI         =       12;
-const int II_MUL_EX         =       14;
-const int II_DIV            =       16;
-const int II_DIV_U          =       17;
-const int II_DIV_REV        =       18;
-const int II_DIV_EX         =  0x12018;
-const int II_REM            =       20;
-const int II_REM_U          =       21;
-const int II_MIN            =       22;
-const int II_MIN_U          =       23;
-const int II_MAX            =       24;
-const int II_MAX_U          =       25;
-const int II_AND            =       28; // 0x1C
-const int II_AND_NOT        =       29;
-const int II_OR             =       30; // 0x1E
-const int II_XOR            =       31; // 0x1F
-const int II_SHIFT_LEFT     =       32;
-const int II_MUL_2POW       =       32;
-const int II_ROTATE         =       33;
-const int II_SHIFT_RIGHT_S  =       34;
-const int II_SHIFT_RIGHT_U  =       35;  // must be = II_SHIFT_RIGHT_S | 1
-const int II_SET_BIT        =       36;
-const int II_CLEAR_BIT      =       37;
-const int II_TOGGLE_BIT     =       38;
-const int II_AND_BIT        =       39; // 0x27
-const int II_TEST_BIT       =       40; // 0x28
-const int II_MUL_ADD        =       48;
-const int II_MUL_ADD2       =       49;
-const int II_ADD_ADD        =       50;
-const int II_SHIFT_U_ADD    =   0x0101;
-const int II_ADD_H          =  0x50008;  // float16
-const int II_SUB_H          =  0x50009;
-const int II_MUL_H          =  0x5000B;
-const int II_DIV_H          =  0x50010;
-const int II_MUL_ADD_H      =  0x50030;
-const int II_REPLACE        =  0xA0001;
-const int II_REPLACE_EVEN   =  0x26004;
-const int II_REPLACE_ODD    =  0x26005;
+// Instruction id's
+const uint32_t II_NOP            =  0x30000;
+const uint32_t II_STORE          =        1;
+const uint32_t II_MOVE           =        2;
+const uint32_t II_COMPARE        =        7;
+const uint32_t II_ADD            =        8;
+const uint32_t II_SUB            =        9;
+const uint32_t II_SUB_REV        =       10;
+const uint32_t II_MUL            =       11;
+const uint32_t II_MUL_HI         =       12;
+const uint32_t II_MUL_EX         =       14;
+const uint32_t II_DIV            =       16;
+const uint32_t II_DIV_U          =       17;
+const uint32_t II_DIV_REV        =       18;
+const uint32_t II_DIV_EX         =  0x12018;
+const uint32_t II_REM            =       20;
+const uint32_t II_REM_U          =       21;
+const uint32_t II_MIN            =       22;
+const uint32_t II_MIN_U          =       23;
+const uint32_t II_MAX            =       24;
+const uint32_t II_MAX_U          =       25;
+const uint32_t II_AND            =       28; // 0x1C
+const uint32_t II_AND_NOT        =       29;
+const uint32_t II_OR             =       30; // 0x1E
+const uint32_t II_XOR            =       31; // 0x1F
+const uint32_t II_SHIFT_LEFT     =       32;
+const uint32_t II_MUL_2POW       =       32;
+const uint32_t II_ROTATE         =       33;
+const uint32_t II_SHIFT_RIGHT_S  =       34;
+const uint32_t II_SHIFT_RIGHT_U  =       35;  // must be = II_SHIFT_RIGHT_S | 1
+const uint32_t II_SET_BIT        =       36;
+const uint32_t II_CLEAR_BIT      =       37;
+const uint32_t II_TOGGLE_BIT     =       38;
+const uint32_t II_AND_BIT        =       39; // 0x27
+const uint32_t II_TEST_BIT       =       40; // 0x28
+const uint32_t II_MUL_ADD        =       49;
+const uint32_t II_MUL_ADD2       =       50;
+const uint32_t II_ADD_ADD        =       51;
+const uint32_t II_SHIFT_U_ADD    =   0x0101;
+const uint32_t II_ADD_H          =  0x50008;  // float16
+const uint32_t II_SUB_H          =  0x50009;
+const uint32_t II_MUL_H          =  0x5000B;
+const uint32_t II_DIV_H          =  0x50010;
+const uint32_t II_MUL_ADD_H      =  0x50031;
 
-const int II_INCREMENT      =   0x0051;  // increment. combine with II_JUMP_POSITIVE
-const int II_SUB_MAXLEN     =   0x0052;  // sbutract max vector length. combine with II_JUMP_POSITIVE
-const int II_JUMP           = 0x101000;  // jump codes may be combined with II_ADD etc.
-const int II_JUMP_ZERO      = 0x101200;  // xor with 0x100 for opposite condition
-const int II_JUMP_NOTZERO   = 0x101300;  // not zero or not equal
-const int II_JUMP_POSITIVE  = 0x101400;  // positive or signed above
-const int II_JUMP_NEGATIVE  = 0x101600;  // positive or signed below
-const int II_JUMP_OVERFLOW  = 0x101800;  // signed overflow
-const int II_JUMP_CARRY     = 0x102000;  // carry, borrow, unsigned below, abs below. Reverse condition if sub n replaced by add (-n)
-const int II_JUMP_UABOVE    = 0x102200;  // unsigned above, abs above
-const int II_JUMP_ALL1      = 0x102400;
-const int II_JUMP_NFINITE   = 0x102600;
-const int II_JUMP_INSTR     = 0x100000;  // bit to identify direct jump and call instructions
-const int II_JUMP_INVERT    =   0x0100;  // flip this bit to invert condition
+const uint32_t II_REPLACE        =  0xA0001;
+const uint32_t II_REPLACE_EVEN   =  0x26004;
+const uint32_t II_REPLACE_ODD    =  0x26005;
 
-const int II_ALIGN          = 0x100000;  // align directive
+const uint32_t II_INCREMENT      =   0x0051;  // increment. combine with II_JUMP_POSITIVE
+const uint32_t II_SUB_MAXLEN     =   0x0052;  // sbutract max vector length. combine with II_JUMP_POSITIVE
+const uint32_t II_JUMP           = 0x101000;  // jump codes may be combined with II_ADD etc.
+const uint32_t II_JUMP_ZERO      = 0x101200;  // xor with 0x100 for opposite condition
+const uint32_t II_JUMP_NOTZERO   = 0x101300;  // not zero or not equal
+const uint32_t II_JUMP_POSITIVE  = 0x101400;  // positive or signed above
+const uint32_t II_JUMP_NEGATIVE  = 0x101600;  // negative or signed below
+const uint32_t II_JUMP_OVERFLOW  = 0x101800;  // signed overflow
+const uint32_t II_JUMP_CARRY     = 0x102000;  // carry, borrow, unsigned below. Reverse condition if sub n replaced by add (-n)
+const uint32_t II_JUMP_UABOVE    = 0x102200;  // unsigned above
+const uint32_t II_JUMP_ALL1      = 0x102400;
+
+const uint32_t II_JUMP_INFINITE  = 0x102600;
+const uint32_t II_JUMP_ORDERED   = 0x103000;
+
+const uint32_t II_JUMP_INSTR     = 0x100000;  // bit to identify direct jump and call instructions
+const uint32_t II_JUMP_INVERT    =   0x0100;  // flip this bit to invert condition
+const uint32_t II_JUMP_UNORDERED =   0x8000;  // flip this bit to jump if unordered
+
+const uint32_t II_ALIGN          = 0x100000;  // align directive
 
 const int MAX_ALIGN         =     4096;  // maximum allowed alignment  (note: if changed, change also in error.cpp at ERR_ALIGNMENT)
 
@@ -244,6 +255,35 @@ const int FFIT_32       = 0x2000000;  // fits into normal single precision
 const int FFIT_64       = 0x4000000;  // fits into double precision
 const int IFIT_RELOC   = 0x10000000;  // relocation record needed
 const int IFIT_LARGE   = 0x20000000;  // choose the larger size if uncertain. This input is used if optimization process has convergence problems
+
+// values for immediate operand types
+const int OPI_INT4            =   1;  // int4
+const int OPI_INT8            =   2;  // int8
+const int OPI_INT16           =   3;  // int16
+const int OPI_INT32           =   4;  // int32
+const int OPI_INT64           =   5;  // int64
+const int OPI_INT8SH          =   6;  // int8 << i
+const int OPI_INT16SH         =   7;  // int16 << i
+const int OPI_INT16SH16       =   8;  // int16 << 16
+const int OPI_INT32SH32       =   9;  // int32 << 32
+const int OPI_UINT4           =  17;  // uint4
+const int OPI_UINT8           =  18;  // uint8
+const int OPI_UINT16          =  19;  // uint16
+const int OPI_UINT32          =  20;  // uint32
+const int OPI_UINT64          =  21;  // uint64
+const int OPI_2INT8           =  24;  // int8+int8
+const int OPI_INT886          =  25;  // int8+int8+int6
+const int OPI_2INT16          =  26;  // int16+int16
+const int OPI_INT1632         =  27;  // int16+int32
+const int OPI_2INT32          =  28;  // int32+int32
+const int OPI_INT1688         =  29;  // int16+int8+int8
+const int OPI_UINT4F          =  33;  // uint4 converted to float
+const int OPI_INT8F           =  34;  // int8 converted to float
+const int OPI_INT16F          =  35;  // int16 converted to float
+const int OPI_FLOAT16         =  64;  // float16
+const int OPI_FLOAT32         =  65;  // float32
+const int OPI_FLOAT64         =  66;  // float64
+const int OPI_OT              = 100;  // determined by operand type field
 
 
 // struct SLine contains information about each line in the input file
@@ -391,21 +431,16 @@ static inline bool operator < (SKeyword const & a, SKeyword const & b) {
 }
 
 // redefine symbol structure sorted by name
-struct ElfFWC_Sym2 : public ElfFWC_Sym {
+struct ElfFWC_Sym2 : public ElfFwcSym {
 };
-
-// Buffer for symbol names during assembly
-// symbolNameBuffer is made global in order to make it accessible to bool operator < (ElfFWC_Sym2 const &, ElfFWC_Sym2 const &)
-// It is defined in assem1.cpp
-extern CTextFileBuffer symbolNameBuffer;      // Buffer for symbol names 
 
 
 static inline bool operator < (ElfFWC_Sym2 const & a, ElfFWC_Sym2 const & b) {
-    return strcmp((char*)symbolNameBuffer.buf()+a.st_name, (char*)symbolNameBuffer.buf()+b.st_name) < 0;
+    return strcmp(symbolNameBuffer.getString(a.st_name), symbolNameBuffer.getString(b.st_name)) < 0;
 }
 
 static inline bool operator == (ElfFWC_Sym2 const & a, ElfFWC_Sym2 const & b) {
-    return strcmp((char*)symbolNameBuffer.buf()+a.st_name, (char*)symbolNameBuffer.buf()+b.st_name) == 0;
+    return strcmp(symbolNameBuffer.getString(a.st_name), symbolNameBuffer.getString(b.st_name)) == 0;
 }
 
 // structure in list of assembly errors
@@ -452,6 +487,7 @@ protected:
     int64_t  value0;                             // original value of immediate operand   
     uint32_t tokenB;                             // index to first token in current line
     uint32_t tokenN;                             // number of tokens in current line
+    uint32_t dataType;                           // data type for current instruction
     uint32_t section;                            // Current section
     uint32_t sectionFlags;                       // current section information flags
     uint32_t linei;                              // index to current line
@@ -473,11 +509,11 @@ protected:
     CDynamicArray<SOperator> operators;          // List of operators
     CDynamicArray<SKeyword> keywords;            // List of keywords
     CDynamicArray<ElfFWC_Sym2> symbols;          // List of symbols
-    CDynamicArray<ElfFWC_Rela2> relocations;     // List of relocations
+    CDynamicArray<ElfFwcReloc> relocations;     // List of relocations
     CDynamicArray<uint8_t> brackets;             // Stack of nested brackets during evaluation of expression
     CDynamicArray<SCode> codeBuffer;             // Coded instructions
     CDynamicArray<SCode> codeBuffer2;            // Temporary storage of instructions for loops and switch statements
-    CDynamicArray<Elf64_Shdr> sectionHeaders;    // Section headers
+    CDynamicArray<ElfFwcShdr> sectionHeaders;    // Section headers
     CDynamicArray<SFormat> formatList3;          // Subset of formatList for multiformat instruction formats
     CDynamicArray<SFormat> formatList4;          // Subset of formatList for jump instruction formats
     CDynamicArray<SBlock>  hllBlocks;            // Tracking of {} blocks    
@@ -486,6 +522,7 @@ protected:
     CMetaBuffer<CMemoryBuffer> dataBuffers;      // databuffer for each section
     CAssemErrors errors;                         // Error reporting
     void initializeWordLists();                  // Initialize and sort instruction list, operator list, and keyword list
+    void feedBackText1();                        // write feedback text on stdout
     void pass1();                                // Split input file into lines and tokens. Handle preprocessing directives. Find symbol definitions
     void interpretSectionDirective();            // Interpret section directive during pass 2 or 3
     void interpretFunctionDirective();           // Interpret function directive during pass 2 or 3
@@ -496,7 +533,6 @@ protected:
     void pass2();                                // A. Handle metaprogramming directives
                                                  // B. Classify lines
                                                  // C. Identify symbol names, sections, labels, functions 
-
     void interpretExternDirective();             // Interpret extern directive during pass 2
     void interpretPublicDirective();             // Interpret public directive during pass 2
     void interpretLabel(uint32_t tok);           // Interpret code or data label during pass 2
@@ -531,6 +567,8 @@ protected:
     void optimizeCode(SCode & code);             // optimize instruction. replace by more efficient instruction if possible
     void pass4();                                // Resolve symbol addresses and cross references, optimize forward references
     void pass5();                                // Make binary file
+    void copySections();                         // copy sections to outFile
+    void copySymbols();                          // copy symbols to outFile
     void removePrivateSymbols();                 // remove local symbols and adjust relocation records with new symbol indexes
     void makeListFile();                         // make output listing
     int64_t calculateMemoryOffset(SCode & code);    // calculate memory address possibly involving symbol. generate relocation if necessary
@@ -563,5 +601,4 @@ protected:
     void interpretCondition(SCode & code);       // interpret condition in if(), while(), and for(;;) statements
     void codePush();                             // push register on stack. (may be replaced by macros later)
     void codePop();                              // pop register from stack. (may be replaced by macros later)
-
 };

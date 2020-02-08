@@ -1,28 +1,50 @@
 /****************************    elf_forwardcom.h    **************************
 * Author:              Agner Fog
 * Date created:        2016-06-25
-* Last modified:       2017-11-03
-* ForwardCom version:  1.07
-* Program version:     1.00
-* Project:       ForwardCom development tools
-* Description:
-* Header file for definition of structures in 64 bit ELF object file format 
-* for the ForwardCom instruction set architecture.
+* Last modified: 2018-03-30
+* ForwardCom version:  1.08
+* Program version:     1.01
+* Project:             ForwardCom binary tools
+* Description:         Definition of ELF file format. See below
 *
 * To do: define exception handler and stack unwind information
-* To do: define constructor and destructor information
+* To do: define stack size and heap size information
+* To do: define memory reservation for runtime linking
 * To do: define formats for debug information
 * To do: define access rights of executable file or device driver
 *
-* Copyright 2016-2017 GNU General Public License v. 3
+* Copyright 2016-2018 GNU General Public License v. 3
 * http://www.gnu.org/licenses/gpl.html
+*******************************************************************************
+
+This C/C++ header file contains the official definition of the ForwardCom
+variant of the ELF file format for object files and executable files.
+The latest version is stored at https://github.com/ForwardCom/bintools
+
+An executable file contains the following elements:
+1. ELF file header with the structure ElfFwcEhdr 
+2. Any number of program headers with the structure ElfFwcPhdr
+3. Raw data
+4. Any number of section headers with the structure ElfFwcShdr
+   The sections can have different types as defined by sh_type, including
+   code, data, symbol tables, string tables, and relocation records.
+
+The program headers and section headers may point to the same raw data. The
+program headers are used by the loader and the section headers are used by the
+linker. An object file has the same format, but with no program headers.
+
+ForwardCom library files have the standard UNIX archive format with a sorted
+symbol table. The details are described below. Dynamic link libraries and 
+shared objects are not used in the ForwardCom system.
+
 ******************************************************************************/
+
 #ifndef ELF_FORW_H
-#define ELF_FORW_H  107
+#define ELF_FORW_H  108    // version number
 
-/********************** FILE HEADER **********************/
+/********************** ELF FILE HEADER **********************/
 
-struct Elf64_Ehdr {
+struct ElfFwcEhdr {
   uint8_t   e_ident[16];   // Magic number and other info
                            // e_ident[EI_CLASS] = ELFCLASS64: file class
                            // e_ident[EI_DATA] = ELFDATA2LSB: 2's complement, little endian
@@ -41,8 +63,14 @@ struct Elf64_Ehdr {
   uint16_t  e_phentsize;   // Program header table entry size
   uint16_t  e_phnum;       // Program header table entry count
   uint16_t  e_shentsize;   // Section header table entry size
-  uint16_t  e_shnum;       // Section header table entry count
-  uint16_t  e_shstrndx;    // Section header string table index
+  uint32_t  e_shnum;       // Section header table entry count (was uint16_t)
+  uint32_t  e_shstrndx;    // Section header string table index (was uint16_t)
+  // additional fields for ForwardCom
+  uint32_t  e_stackvect;   // number of vectors to store on stack. multiply by max vector length and add to stacksize
+  uint64_t  e_stacksize;   // size of stack for main thread
+  uint64_t  e_ip_base;     // __ip_base relative to first ip based segment
+  uint64_t  e_datap_base;  // __datap_base relative to first datap based segment
+  uint64_t  e_threadp_base;// __threadp_base relative to first threadp based segment
 };
 
 
@@ -175,77 +203,73 @@ struct Elf64_Ehdr {
 #define EV_CURRENT       1    // Current version
 #define EV_NUM           2
 
+// Values for e_flags (file header flags)
+#define EF_INCOMPLETE            0x01  // Incomplete executable file contains unresolved references
+#define EF_RELINKABLE            0x02  // Relinking of executable file is possible
+#define EF_RELOCATE              0x10  // Relocation needed when program is loaded
+#define EF_POSITION_DEPENDENT    0x20  // Contains position-dependent relocations. Multiple processes cannot share same read-only data and code
+
+
 // Section header.
-struct Elf64_Shdr {
+struct ElfFwcShdr {
   uint32_t  sh_name;      // Section name (string table index)
-  uint32_t  sh_type;      // Section type
-  uint64_t  sh_flags;     // Section flags
-  uint64_t  sh_addr;      // Section virtual addr at execution. ForwardCom: Address relative to section group begin
+  uint32_t  sh_flags;     // Section flags
+  uint64_t  sh_addr;      // Address relative to section group begin
   uint64_t  sh_offset;    // Section file offset
   uint64_t  sh_size;      // Section size in bytes
-  uint32_t  sh_link;      // Link to another section
-  uint32_t  sh_info;      // Additional section information
-  uint64_t  sh_addralign; // Section alignment
-  uint64_t  sh_entsize;   // Entry size if section holds table
+  uint32_t  sh_link;      // Link to symbol section or string table
+  uint32_t  sh_entsize;   // Entry size if section holds table
+  uint32_t  sh_module;    // Module name in relinkable executable
+  uint32_t  sh_library;   // Library name in relinkable executable
+  uint32_t  unused1;      // Alignment filler
+  uint8_t   sh_type;      // Section type
+  uint8_t   sh_align;     // Section alignment = 1 << sh_align
+  uint8_t   sh_relink;    // Commands used during relinking. Unused in file
+  uint8_t   unused2;      // Unused filler
 };
 
-// Special section indices. not used
-
-#define SHN_UNDEF                     0  // Undefined section
-//#define SHN_LORESERVE  ((int16_t)0xff00) // Start of reserved indices
-//#define SHN_LOPROC     ((int16_t)0xff00) // Start of processor-specific
-//#define SHN_HIPROC     ((int16_t)0xff1f) // End of processor-specific
-//#define SHN_LOOS       ((int16_t)0xff20) // Start of OS-specific
-//#define SHN_HIOS       ((int16_t)0xff3f) // End of OS-specific
-#define SHN_ABS_X86      ((int16_t)0xfff1) // Associated symbol is absolute (x86 ELF)
-#define SHN_ABS          0xFFFFFFF1        // Associated symbol is absolute and defined (ForwardCom)
-#define SHN_COMMON       ((int16_t)0xfff2) // Associated symbol is common (x86 ELF)
-//#define SHN_XINDEX     ((int16_t)0xffff) // Index is in extra table
-//#define SHN_HIRESERVE  ((int16_t)0xffff) // End of reserved indices
-
-// Legal values for sh_type (section type).
+// Legal values for sh_type (section type)
 #define SHT_NULL                    0  // Section header table entry unused
-#define SHT_PROGBITS                1  // Program data
-#define SHT_SYMTAB                  2  // Symbol table
-#define SHT_STRTAB                  3  // String table
+#define SHT_SYMTAB                  2  // Symbol table. There can be only one symbol table
+#define SHT_STRTAB                  3  // String table. There are two string tables, one for symbol names and one for section names
 #define SHT_RELA                    4  // Relocation entries with addends
-#define SHT_HASH                    5  // Symbol hash table
-#define SHT_DYNAMIC                 6  // Dynamic linking information
 #define SHT_NOTE                    7  // Notes
-#define SHT_NOBITS                  8  // Uninitialized data space (bss)
-#define SHT_REL                     9  // Relocation entries, no addends
-#define SHT_SHLIB                  10  // Reserved
-#define SHT_DYNSYM                 11  // Dynamic linker symbol table
-#define SHT_COMDAT                 12  // Communal data or code. Duplicate and unreferenced sections are removed
-#define SHT_INIT_ARRAY             14  // Array of constructors
-#define SHT_FINI_ARRAY             15  // Array of destructors
-#define SHT_PREINIT_ARRAY          16  // Array of pre-constructors
-#define SHT_GROUP                  17  // Section group
-#define SHT_SYMTAB_SHNDX           18  // Extended section indeces
-#define SHT_NUM                    19  // Number of defined types. 
-#define SHT_LOOS           0x60000000  // Start OS-specific
-#define SHT_HIOS           0x6fffffff  // End OS-specific type
-#define SHT_LOPROC         0x70000000  // Start of processor-specific
-#define SHT_STACKSIZE      0x70000001  // Records for calculation of stack size
-#define SHT_ACCESSRIGHTS   0x70000002  // Records for indicating desired access rights of executable file or device driver
-#define SHT_HIPROC         0x7fffffff  // End of processor-specific
-#define SHT_LOUSER         0x80000000  // Start of application-specific
-#define SHT_HIUSER         0x8fffffff  // End of application-specific
+#define SHT_PROGBITS             0x11  // Program data
+#define SHT_NOBITS               0x12  // Uninitialized data space (bss)
+#define SHT_COMDAT               0x14  // Communal data or code. Duplicate and unreferenced sections are removed
+#define SHT_ALLOCATED            0x10  // Allocated at runtime. This bits indicates SHT_PROGBITS, SHT_NOBITS, SHT_COMDAT
+#define SHT_LIST                 0x20  // Other list. Not loaded into memory. (unsorted event list, )
+#define SHT_STACKSIZE            0x41  // Records for calculation of stack size
+#define SHT_ACCESSRIGHTS         0x42  // Records for indicating desired access rights of executable file or device driver
+// obsolete types, not belonging to ForwardCom
+//#define SHT_REL                     9  // Relocation entries, no addends
+//#define SHT_HASH                    5  // Symbol hash table
+//#define SHT_DYNAMIC                 6  // Dynamic linking information
+//#define SHT_DYNSYM                0xB  // Dynamic linker symbol table
+//#define SHT_SHLIB                 0xA  // Reserved
+//#define SHT_GROUP                0x11  // Section group
 
 // Legal values for sh_flags (section flags). 
+#define SHF_EXEC                  0x1  // Executable
+#define SHF_WRITE                 0x2  // Writable
+#define SHF_READ                  0x4  // Readable
+#define SHF_PERMISSIONS          (SHF_EXEC | SHF_WRITE | SHF_READ) // access permissions mask
 #define SHF_MERGE                0x10  // Elements with same value might be merged
 #define SHF_STRINGS              0x20  // Contains nul-terminated strings
 #define SHF_INFO_LINK            0x40  // sh_info contains section header index
 #define SHF_ALLOC               0x100  // Occupies memory during execution
-#define SHF_EXEC                0x200  // Executable
-#define SHF_READ                0x400  // Readable
-#define SHF_WRITE               0x800  // Writable
 #define SHF_IP                 0x1000  // Addressed relative to IP (executable and read-only sections)
 #define SHF_DATAP              0x2000  // Addressed relative to DATAP (writeable data sections)
 #define SHF_THREADP            0x4000  // Addressed relative to THREADP (thread-local data sections)
+#define SHF_BASEPOINTER      (SHF_IP | SHF_DATAP | SHF_THREADP)  // mask to detect base pointer
+#define SHF_EVENT_HND        0x100000  // Event handler list, contains ElfFwcEvent structures
+#define SHF_EXCEPTION_HND    0x200000  // Exception handler and stack unroll information
+#define SHF_DEBUG_INFO       0x400000  // Debug information
+#define SHF_COMMENT          0x800000  // Comments, including copyright and required libraries
+#define SHF_RELINK          0x1000000  // Section in executable file can be relinked
+#define SHF_FIXED           0x2000000  // Non-relinkable section in relinkable file has fixed address relative to base pointers
+#define SHF_AUTOGEN         0x4000000  // Section is generated by the linker. remake when relinking
 
-// Section group handling.
-//#define GRP_COMDAT  0x1    // Mark group as COMDAT.
 
 // Symbol table entry, x64
 struct Elf64_Sym {
@@ -253,18 +277,19 @@ struct Elf64_Sym {
     uint8_t   st_type: 4,    // Symbol type
               st_bind: 4;    // Symbol binding
     uint8_t   st_other;      // Symbol visibility
-    uint16_t  st_shndx;      // Section index
+    uint16_t  st_section;      // Section index
     uint64_t  st_value;      // Symbol value
     uint64_t  st_size;       // Symbol size
 };
 
 // Symbol table entry, ForwardCom
-struct ElfFWC_Sym {
+struct ElfFwcSym {
   uint32_t  st_name;       // Symbol name (string table index)
-  uint16_t  st_type;       // Symbol type
-  uint16_t  st_bind;       // Symbol binding
+  uint8_t   st_type;       // Symbol type
+  uint8_t   st_bind;       // Symbol binding
+  uint8_t   unused1, unused2;// Alignment fillers
   uint32_t  st_other;      // Symbol visibility and additional type information
-  uint32_t  st_shndx;      // Section index
+  uint32_t  st_section;    // Section header index (zero for external symbols)
   uint64_t  st_value;      // Symbol value
   uint32_t  st_unitsize;   // Size of array elements or data unit. Data type is given by st_unitsize and STV_FLOAT
                            // st_unitsize is 4 or more for executable code
@@ -273,15 +298,14 @@ struct ElfFWC_Sym {
   uint32_t  st_reguse2;    // Register use. bit 0-31 = v0-v31
 };
 
-
 // Values for st_bind: symbol binding
 #define STB_LOCAL           0     // Local symbol
 #define STB_GLOBAL          1     // Global symbol
 #define STB_WEAK            2     // Weak symbol
-#define STB_NUM             3     // Number of defined types. 
-#define STB_LOOS           10     // Start of OS-specific
-#define STB_HIOS           12     // End of OS-specific
-#define STB_LOPROC         13     // Start of processor-specific
+#define STB_WEAK2           6     // Weak public symbol with local reference is both import and export
+#define STB_UNRESOLVED   0x0A     // Symbol is unresolved. Treat as weak
+#define STB_IGNORE       0x10     // This value is used only internally in the linker (ignore weak/strong during search; ignore overridden weak symbol)
+#define STB_EXE          0x80     // This value is used only internally in the linker (copy to executable file)
 
 // Values for st_type: symbol type
 #define STT_NOTYPE          0     // Symbol type is unspecified
@@ -294,6 +318,7 @@ struct ElfFWC_Sym {
 #define STT_CONSTANT     0x10     // Symbol is a constant with no address
 #define STT_VARIABLE     0x11     // Symbol is a variable used during assembly. Should not occur in object file
 #define STT_EXPRESSION   0x12     // Symbol is an expression used during assembly. Should not occur in object file
+#define STT_TYPENAME     0x14     // Symbol is a type name used during assembly. Should not occur in object file
 
 // Symbol visibility specification encoded in the st_other field. 
 #define STV_DEFAULT         0     // Default symbol visibility rules
@@ -301,25 +326,44 @@ struct ElfFWC_Sym {
 #define STV_HIDDEN         0x20     // Symbol unavailable in other modules
 //#define STV_PROTECTED       3     // Not preemptible, not exported
 // st_other types added for ForwardCom:
-#define STV_EXEC         SHF_EXEC    // = 0x200. Executable code
-#define STV_READ         SHF_READ    // = 0x400. Readable data
-#define STV_WRITE        SHF_WRITE   // = 0x800. Writable data
+#define STV_EXEC         SHF_EXEC    // = 0x1. Executable code
+#define STV_WRITE        SHF_WRITE   // = 0x2. Writable data
+#define STV_READ         SHF_READ    // = 0x4. Readable data
 #define STV_IP           SHF_IP      // = 0x1000. Addressed relative to IP (in executable and read-only sections)
 #define STV_DATAP        SHF_DATAP   // = 0x2000. Addressed relative to DATAP (in writeable data sections)
 #define STV_THREADP      SHF_THREADP // = 0x4000. Addressed relative to THREADP (in thrad local data sections)
-#define STV_SECT_ATTR    (SHF_EXEC | SHF_READ | SHF_WRITE | SHF_IP | SHF_DATAP | SHF_THREADP) // section attributes to copy to symbol
 #define STV_REGUSE       0x10000     // st_reguse field contains register use information
 #define STV_FLOAT        0x20000     // st_value is a double precision floating point (with STT_CONSTANT)
 #define STV_STRING       0x40000     // st_value is an assemble-time string. Should not occur in object file
-#define STV_CTOR        0x100000     // Symbol is a constructor to be called before main. st_reguse1 contains priority and options
-#define STV_DTOR        0x200000     // Symbol is a destructor to be called after main. st_reguse1 contains priority and options
+#define STV_COMMON      0x100000     // Symbol is communal. Multiple identical instances can be joined. Unreferenced instances can be removed
 #define STV_UNWIND      0x400000     // Symbol is a table with exception handling and stack unwind information
 #define STV_DEBUG       0x800000     // Symbol is a table with debug information
-#define STV_COMMON     0x1000000     // Symbol is communal. Multiple identical instances can be joined. Unreferenced instances can be removed
-#define STV_RELINK     0x2000000     // Symbol in executable file can be relinked
+#define STV_RELINK    SHF_RELINK     // Symbol in executable file can be relinked
+#define STV_AUTOGEN   SHF_AUTOGEN    // Symbol is generated by the linker. remake when relinking
 #define STV_MAIN      0x10000000     // Main entry point in executable file
 #define STV_EXPORTED  0x20000000     // Exported from executable file
 #define STV_THREAD    0x40000000     // Thread function. Requires own stack
+#define STV_SECT_ATTR (SHF_EXEC | SHF_READ | SHF_WRITE | SHF_IP | SHF_DATAP | SHF_THREADP | SHF_RELINK | SHF_AUTOGEN) // section attributes to copy to symbol
+
+
+/* Definition of absolute symbols:
+x86 ELF uses symbols with st_section = SHN_ABS_X86 to indicate a public absolute symbol.
+ForwardCom uses st_type = STT_CONSTANT and sets st_section to the index of an arbitrary
+section in the same module as the absolute symbol. This is necessary for indicating which
+module an absolute symbol belongs to in a relinkable executable file. An object file
+defining absolute symbols must have at least one section, even if it is empty.
+*/
+// Special section indices. not used in ForwardCom
+#define SHN_UNDEF                     0    // Undefined section. external symbol
+//#define SHN_LORESERVE  ((int16_t)0xff00) // Start of reserved indices
+//#define SHN_LOPROC     ((int16_t)0xff00) // Start of processor-specific
+//#define SHN_HIPROC     ((int16_t)0xff1f) // End of processor-specific
+//#define SHN_LOOS       ((int16_t)0xff20) // Start of OS-specific
+//#define SHN_HIOS       ((int16_t)0xff3f) // End of OS-specific
+#define SHN_ABS_X86      ((int16_t)0xfff1) // Associated symbol is absolute (x86 ELF)
+//#define SHN_COMMON     ((int16_t)0xfff2) // Associated symbol is common (x86 ELF)
+//#define SHN_XINDEX     ((int16_t)0xffff) // Index is in extra table
+//#define SHN_HIRESERVE  ((int16_t)0xffff) // End of reserved indices
 
 
 // Relocation table entry with addend, x86-64 in section of type SHT_RELA. Not used in ForwardCom
@@ -330,18 +374,14 @@ struct Elf64_Rela {
     int64_t   r_addend;           // Addend
 };
 
-// Relocation table entry for ForwardCom (in section of type SHT_RELA)
-struct ElfFWC_Rela {
-    uint64_t  r_offset;           // Address
+// Relocation table entry for ForwardCom (in section of type SHT_RELA).
+struct ElfFwcReloc {
+    uint64_t  r_offset;           // Address relative to section
+    uint32_t  r_section;          // Section index
     uint32_t  r_type;             // Relocation type
     uint32_t  r_sym;              // Symbol index
     int32_t   r_addend;           // Addend
     uint32_t  r_refsym;           // Reference symbol
-};
-
-// Relocation record with section. Used only internally in the software
-struct ElfFWC_Rela2 : public ElfFWC_Rela {
-    uint32_t  r_section;             // Section
 };
 
 
@@ -382,13 +422,15 @@ struct ElfFWC_Rela2 : public ElfFWC_Rela {
 // The system function ID relocations are done by the loader, where r_sym indicates the name
 // of the function in the string table, and r_addend indicates the name of the module or
 // device driver.
+// The value at r_offset is not used in the calculation but overwritten with the calculated 
+// target address. 
 
 // ForwardCom relocation types
 #define R_FORW_ABS           0x000000       // Absolute address. No scale factor allowed
 #define R_FORW_SELFREL       0x010000       // Self relative. Usually scale by 4.
-#define R_FORW_CONST         0x040000       // Relative to CONST section begin. Any scale
-#define R_FORW_DATAP         0x050000       // Relative to data pointer. Any scale
-#define R_FORW_THREADP       0x060000       // Relative to thread data pointer. Any scale
+#define R_FORW_IP_BASE       0x040000       // Relative to __ip_base. Any scale
+#define R_FORW_DATAP         0x050000       // Relative to __datap_base. Any scale
+#define R_FORW_THREADP       0x060000       // Relative to __threadp_base. Any scale
 #define R_FORW_REFP          0x080000       // Relative to arbitrary reference point. Reference symbol index in high 32 bits of r_addend. Any scale
 #define R_FORW_SYSFUNC       0x100000       // System function ID for system_call, 16 or 32 bit
 #define R_FORW_SYSMODUL      0x110000       // System module ID for system_call, 16 or 32 bit
@@ -421,31 +463,21 @@ struct ElfFWC_Rela2 : public ElfFWC_Rela {
 
 // Relocation options
 #define R_FORW_RELINK      0x01000000       // Refers to relinkable symbol in executable file
+#define R_FORW_LOADTIME    0x02000000       // Must be relocated at load time. Records with this bit must come first
 
 
 // Program header
 
-/*
-struct Elf32_Phdr {
-  uint32_t  p_type;      // Segment type
-  uint32_t  p_offset;    // Segment file offset
-  uint32_t  p_vaddr;     // Segment virtual address
-  uint32_t  p_paddr;     // Segment physical address
-  uint32_t  p_filesz;    // Segment size in file
-  uint32_t  p_memsz;     // Segment size in memory
-  uint32_t  p_flags;     // Segment flags
-  uint32_t  p_align;     // Segment alignment
-};*/
-
-struct Elf64_Phdr {
+struct ElfFwcPhdr {
   uint32_t  p_type;      // Segment type
   uint32_t  p_flags;     // Segment flags
   uint64_t  p_offset;    // Segment file offset
   uint64_t  p_vaddr;     // Segment virtual address
-  uint64_t  p_paddr;     // Segment physical address
+  uint64_t  p_paddr;     // Segment physical address (not used. indicates first section instead)
   uint64_t  p_filesz;    // Segment size in file
   uint64_t  p_memsz;     // Segment size in memory
-  uint64_t  p_align;     // Segment alignment
+  uint8_t   p_align;     // Segment alignment
+  uint8_t   unused[7];
 };
 
 // Legal values for p_type (segment type). 
@@ -457,22 +489,17 @@ struct Elf64_Phdr {
 #define PT_NOTE             4    // Auxiliary information
 #define PT_SHLIB            5    // Reserved
 #define PT_PHDR             6    // Entry for header table itself
-#define PT_NUM              7    // Number of defined types
+//#define PT_NUM              7    // Number of defined types
 #define PT_LOOS    0x60000000    // Start of OS-specific
 #define PT_HIOS    0x6fffffff    // End of OS-specific
-#define PT_LOPROC  0x70000000    // Start of processor-specific
-#define PT_HIPROC  0x7fffffff    // End of processor-specific
+#define PT_LOPROC        0x10    // Start of processor-specific
+#define PT_HIPROC  0x5fffffff    // End of processor-specific
 
-// Legal values for p_flags (segment flags). 
+// Legal values for p_flags (segment flags) are the same as section flags, 
+// see sh_flags above
 
-#define PF_X           (1 << 0)  // Segment is executable
-#define PF_W           (1 << 1)  // Segment is writable
-#define PF_R           (1 << 2)  // Segment is readable
-#define PF_MASKOS    0x0ff00000  // OS-specific
-#define PF_MASKPROC  0xf0000000  // Processor-specific
-
+/*
 // Legal values for note segment descriptor types for core files.
-
 #define NT_PRSTATUS    1    // Contains copy of prstatus struct
 #define NT_FPREGSET    2    // Contains copy of fpregset struct
 #define NT_PRPSINFO    3    // Contains copy of prpsinfo struct
@@ -486,8 +513,8 @@ struct Elf64_Phdr {
 #define NT_UTSNAME    15    // Contains copy of utsname struct
 #define NT_LWPSTATUS  16    // Contains copy of lwpstatus struct
 #define NT_LWPSINFO   17    // Contains copy of lwpinfo struct
-#define NT_PRFPXREG   20    // Contains copy of fprxregset struct*/
-
+#define NT_PRFPXREG   20    // Contains copy of fprxregset struct
+*/
 // Legal values for the note segment descriptor types for object files.
 #define NT_VERSION  1       // Contains a version string.
 
@@ -496,9 +523,9 @@ struct Elf64_Phdr {
 // Note section contents.  Each entry in the note section begins with a header of a fixed form.
 
 struct Elf64_Nhdr {
-  uint32_t n_namesz;      /* Length of the note's name.  */
-  uint32_t n_descsz;      /* Length of the note's descriptor.  */
-  uint32_t n_type;        /* Type of the note.  */
+  uint32_t n_namesz;      // Length of the note's name
+  uint32_t n_descsz;      // Length of the note's descriptor
+  uint32_t n_type;        // Type of the note
 };
 
 /* Defined note types for GNU systems.  */
@@ -513,44 +540,55 @@ struct Elf64_Nhdr {
 
 /* Known OSes.  These value can appear in word 0 of an ELF_NOTE_ABI
    note section entry.  */
-#define ELF_NOTE_OS_LINUX     0
-#define ELF_NOTE_OS_GNU       1
-#define ELF_NOTE_OS_SOLARIS2  2
+#define ELF_NOTE_OS_LINUX         0
+#define ELF_NOTE_OS_GNU           1
+#define ELF_NOTE_OS_SOLARIS2      2
+
+// Memory map definitions
+#define MEMORY_MAP_ALIGN          3  // align memory map entries by 1 << MEMORY_MAP_ALIGN
+#define DATA_EXTRA_SPACE      0x100  // extra space after const data section and last data section
 
 
-/* Move records.  */
-struct Elf32_Move {
-  uint64_t m_value;      /* Symbol value.  */
-  uint32_t m_info;       /* Size and index.  */
-  uint32_t m_poffset;    /* Symbol offset.  */
-  uint16_t m_repeat;     /* Repeat count.  */
-  uint16_t m_stride;     /* Stride info.  */
+/*                      Event handler system        
+
+A program module may contain a table of event handler records in a read-only
+section with the attribute SHF_EVENT_HND. The event handler system may be used
+for handling events, commands, and messages. It is also used for initialization
+and clean-up. This replaces the constructors and destructors sections of other
+systems.
+
+The linker will sort the event records of all modules according to event id, key,
+and priority. If there is more than one event handler for a particular event,
+then all the event handlers will be called in the order of priority.
+*/
+
+// event record
+struct ElfFwcEvent {
+    int32_t  functionPtr;              // scaled relative pointer to event handler function = (function_address - __ip_base) / 4
+    uint32_t priority;                 // priority. Highest values are called first. Normal priority = 0x1000
+    uint32_t key;                      // keyboard hotkey, menu item, or icon id for user command events
+    uint32_t event;                    // event ID
 };
 
-struct Elf64_Move {
-  uint64_t m_value;     /* Symbol value.  */
-  uint64_t m_info;      /* Size and index.  */
-  uint64_t m_poffset;   /* Symbol offset.  */
-  uint16_t m_repeat;    /* Repeat count.  */
-  uint16_t m_stride;    /* Stride info.  */
-};
-
-/* Macro to construct move records.  */
-#define ELF32_M_SYM(info)        ((info) >> 8)
-#define ELF32_M_SIZE(info)       ((uint8_t) (info))
-#define ELF32_M_INFO(sym, size)  (((sym) << 8) + (uint8_t) (size))
-
-#define ELF64_M_SYM(info)        ELF32_M_SYM (info)
-#define ELF64_M_SIZE(info)       ELF32_M_SIZE (info)
-#define ELF64_M_INFO(sym, size)  ELF32_M_INFO (sym, size)
-
-
-/********************** Strings **********************/
-//#define ELF_CONSTRUCTOR_NAME    ".ctors"   // Name of constructors segment
+// Mask bits. These bits are used in instruction masks to specify various options
+#define MSK_ENABLE                 0x01     // the instruction is not executed if this bit is 0
+#define MSK_OVERFL_UNSIGN          0x40     // generate a trap if unsigned integer overflow
+#define MSK_OVERFL_SIGN            0x80     // generate a trap if signed integer overflow
+#define MSK_SUBNORMAL          0x100000     // support subnormal numbers
+#define MSK_NAN_PAYLOAD        0x200000     // options for error information in NAN payloads. 2 bits. not defined yet
+#define MSK_CONST_TIME         0x800000     // constant execution time, independent of data (for cryptographic security)
+#define MSK_OVERFL_FLOAT      0x4000000     // generate a trap if floating point overflow, including floating point division by zero
+#define MSK_FLOAT_INVALID     0x8000000     // generate a trap if floating point invalid operation
+#define MSK_FLOAT_UNDERFL    0x10000000     // generate a trap if floating point underflow or precision loss
+#define MSK_FLOAT_NAN_LOSS   0x20000000     // generate a trap if floating point nan propagation loss (nan input to compare or conversion to integer)
+#define MSKI_OPTIONS                 10     // bit number 10-15 contain instruction-specific options
+#define MSKI_ROUNDING                18     // bit number 18-19 indicate rounding mode
+#define MSK_OVERFL_I         (MSK_OVERFL_UNSIGN | MSK_OVERFL_SIGN) // combined signed and unsigned integer overflow
+#define MSK_OVERFL_ALL       (MSK_OVERFL_UNSIGN | MSK_OVERFL_SIGN | MSK_OVERFL_FLOAT) // combined float and signed/unsigned integer overflow
 
 
 // SHT_STACKSIZE stack table entry
-struct Elf64_Stacksize {
+struct ElfFwcStacksize {
   uint32_t  ss_syma;                   // Public symbol index
   uint32_t  ss_symb;                   // External symbol index. Zero for frame function or to indicate own stack use
   uint64_t  ss_framesize;              // Size of data stack frame in syma when calling symb
@@ -558,5 +596,62 @@ struct Elf64_Stacksize {
   uint32_t  ss_calls;                  // Size of call stack when syma calls symb (typically 1). Multiply by stack word size = 8
 };
 
+/******************************************************************************
+
+                      Format for library files
+
+ForwardCom libraries use the standard Unix archive format.
+The preferred filename extension is .li
+
+The first archive member is a sorted symbol list, using the same format as used
+by Apple/Mac named "/SYMDEF SORTED/". It contains a sorted list of public symbols. 
+The sort order is determined by the unsigned bytes of the ASCII/UTF-8 string. 
+This format is chosen because it provides the fastest symbol search.
+
+The obsolete archive members with the name "/" containing symbol lists in less
+efficient formats are not included.
+
+The second archive member is a longnames record named "//" as used in Linux 
+and Windows systems. It contains module names longer than 15 characters. 
+Module names are stored without path so that they can be extracted on another 
+computer that does not have the same file structure.
+
+The remaining modules contain object files in the format described above.
+******************************************************************************/
+
+// Signature defining the start of an archive file
+#define archiveSignature  "!<arch>\n"
+
+// Each library member starts with a UNIX archive member header:
+struct SUNIXLibraryHeader {
+    char name[16];                      // member name, terminated by '/'
+    char date[12];                      // member date, seconds, decimal ASCII
+    char userID[6];                     // member User ID, decimal ASCII
+    char groupID[6];                    // member Group ID, decimal ASCII
+    char fileMode[8];                   // member file mode, octal ASCII
+    char fileSize[10];                  // member file size not including header, decimal ASCII
+    char headerEnd[2];                  // "`\n"
+};
+
+// Member names no longer than 15 characters are stored in the name field and 
+// terminated by '/'. Longer names are stored in the longnames record. The name
+// field contains '/' followed by an index into the longnames string table. 
+// This index is in decimal ASCII.
+
+// The "/SYMDEF SORTED/" record contains the following:
+// 1. The size of the symbol list = 8 * n, where n = number of exported symbols
+//    in the library.
+// 2. For each symbol: the name as an index into the string table (relative to 
+//    the start of the sting table), followed by:
+//    an offset to the module containing this symbol relative to file begin.
+// 3. The length of the string table.
+// 4. The string table as a sequence of zero-terminated strings.
+// 5. Zero-padding to a size divisible by 4.
+
+// All numbers in "/SYMDEF SORTED/" are 32-bit unsigned integers (little endian).
+
+// The longnames record has the name "//". It contains member names as zero-terminated strings.
+
+// All archive members are aligned by 8
 
 #endif // ELF_FORW_H
