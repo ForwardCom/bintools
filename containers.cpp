@@ -530,6 +530,6 @@ void CTextFileBuffer::putFloat(float x) {
 void CTextFileBuffer::putFloat(double x) {
     // Write floating point number to buffer
     char text[64];
-    sprintf(text, "%.16G", x);
+    sprintf(text, "%.12G", x);
     put(text);
 }

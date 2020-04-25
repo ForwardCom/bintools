@@ -1,13 +1,13 @@
 /****************************  maindef.h   **********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2018-03-30
-* Version:       1.01
+* Last modified: 2020-04-20
+* Version:       1.09
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        maindef.h
 * Original location: https://github.com/forwardcom/binutils
 * License: GPL-3.0. https://www.gnu.org/licenses/#GPL
-* Copyright 2016-2018 by Agner Fog
+* Copyright 2016-2020 by Agner Fog
 *
 * Description:
 * Header file for type definitions and other main definitions.
@@ -16,7 +16,7 @@
 
 // Program version
 #define FORWARDCOM_VERSION         1
-#define FORWARDCOM_SUBVERSION      1
+#define FORWARDCOM_SUBVERSION      9
 
 
 // Get high part of a 64-bit integer
@@ -91,8 +91,8 @@ uint32_t bitScanForward(uint64_t x);
 const char * timestring(uint32_t t);
 
 // Convert half precision floating point number to single precision
-float half2float(uint32_t half);
+float half2float(uint32_t half, bool supportSubnormal = true);
 
 // Convert floating point number to half precision
-uint16_t float2half(float x);
-uint16_t double2half(double x);
+uint16_t float2half(float x, bool supportSubnormal = true);
+uint16_t double2half(double x, bool supportSubnormal = true);

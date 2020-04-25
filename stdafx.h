@@ -30,7 +30,7 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include <time.h>
-#include <math.h>
+#include <math.h>  // to do: replace with <cmath>
 
 #include "maindef.h"
 #include "elf_forwardcom.h"

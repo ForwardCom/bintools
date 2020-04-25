@@ -1,15 +1,15 @@
 /****************************    assem4.cpp    ********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2018-03-30
-* Version:       1.01
+* Last modified: 2020-04-14
+* Version:       1.09
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.cpp
 * Description:
 * Module for assembling ForwardCom .as files. 
 * This module contains:
 * pass3(): Interpretation of code lines.
-* Copyright 2017 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2020 GNU General Public License http://www.gnu.org/licenses
 ******************************************************************************/
 #include "stdafx.h"
 
@@ -506,16 +506,16 @@ int CAssembler::fitConstant(SCode & code) {
             int scale = code.symscale;
             if (scale < 1) scale = 1;
             valueScaled = value / scale + code.offset;
-            if (valueScaled >= (-1 << 7)  && valueScaled < (1 << 7))  fitNum |= IFIT_I8;
-            if (valueScaled >= (-1 << 15) && valueScaled < (1 << 15)) fitNum |= IFIT_I16;
-            if (valueScaled >= (-(int64_t)1 << 31) && valueScaled < ((int64_t)1 << 31)) fitNum |= IFIT_I32;
+            if (valueScaled >= -(1 << 7)  && valueScaled < (1 << 7))  fitNum |= IFIT_I8;
+            if (valueScaled >= -(1 << 15) && valueScaled < (1 << 15)) fitNum |= IFIT_I16;
+            if (valueScaled >= -((int64_t)1 << 31) && valueScaled < ((int64_t)1 << 31)) fitNum |= IFIT_I32;
             // check if value is certain. uncertainty is stored in high part of st_value
             uncertainty = (symbols[isym1].st_value >> 32) - (symbols[isym2].st_value >> 32);
             valueScaled = value / scale + code.offset + uncertainty;
             if (code.symscale > 1) valueScaled /= code.symscale;  // value is scaled
-            if ((valueScaled < (-1 << 7)  || valueScaled >= (1 << 7))  && (fitNum & IFIT_I8))  uncertain |= 1;
-            if ((valueScaled < (-1 << 15) || valueScaled >= (1 << 15)) && (fitNum & IFIT_I16)) uncertain |= 1;
-            if ((valueScaled < (-(int64_t)1 << 31) || valueScaled >= ((int64_t)1 << 31)) && (fitNum & IFIT_I32)) uncertain |= 1;
+            if ((valueScaled < -(1 << 7)  || valueScaled >= (1 << 7))  && (fitNum & IFIT_I8))  uncertain |= 1;
+            if ((valueScaled < -(1 << 15) || valueScaled >= (1 << 15)) && (fitNum & IFIT_I16)) uncertain |= 1;
+            if ((valueScaled < -((int64_t)1 << 31) || valueScaled >= ((int64_t)1 << 31)) && (fitNum & IFIT_I32)) uncertain |= 1;
             /*
             if (uncertain && (code.fitAddr & IFIT_LARGE)) {
                 // choose the larger version if optimization process has convergence problems
@@ -553,16 +553,16 @@ int CAssembler::fitConstant(SCode & code) {
             // self-relative address to local symbol
             value = int32_t((uint32_t)symbols[isym1].st_value - (code.address + code.size * 4));
             valueScaled = value + code.offset;
-            if (valueScaled >= (-1 << 7)  && valueScaled < (1 << 7))  fitNum |= IFIT_I8;
-            if (valueScaled >= (-1 << 15) && valueScaled < (1 << 15)) fitNum |= IFIT_I16;
-            if (valueScaled >= (-(int64_t)1 << 31) && valueScaled < ((int64_t)1 << 31)) fitNum |= IFIT_I32;
+            if (valueScaled >= -(1 << 7)  && valueScaled < (1 << 7))  fitNum |= IFIT_I8;
+            if (valueScaled >= -(1 << 15) && valueScaled < (1 << 15)) fitNum |= IFIT_I16;
+            if (valueScaled >= -((int64_t)1 << 31) && valueScaled < ((int64_t)1 << 31)) fitNum |= IFIT_I32;
             code.fitNum = fitNum;
             // check if value is certain. uncertainty is stored in high part of st_value and sh_link
             uncertainty = int32_t((symbols[isym1].st_value >> 32) - sectionHeaders[code.section].sh_link);
             valueScaled += uncertainty;
-            if ((valueScaled < (-1 << 7)  || valueScaled >= (1 << 7))  && (fitNum & IFIT_I8))  uncertain |= 1;
-            if ((valueScaled < (-1 << 15) || valueScaled >= (1 << 15)) && (fitNum & IFIT_I16)) uncertain |= 1;
-            if ((valueScaled < (-(int64_t)1 << 31) || valueScaled >= ((int64_t)1 << 31)) && (fitNum & IFIT_I32)) uncertain |= 1;
+            if ((valueScaled < -(1 << 7)  || valueScaled >= (1 << 7))  && (fitNum & IFIT_I8))  uncertain |= 1;
+            if ((valueScaled < -(1 << 15) || valueScaled >= (1 << 15)) && (fitNum & IFIT_I16)) uncertain |= 1;
+            if ((valueScaled < -((int64_t)1 << 31) || valueScaled >= ((int64_t)1 << 31)) && (fitNum & IFIT_I32)) uncertain |= 1;
             if (uncertain && (code.fitNum & IFIT_LARGE)) {
                 // choose the larger version if optimization process has convergence problems
                 fitNum  = (fitNum & (fitNum - 1)) | IFIT_I32;  // remove the lowest set bit
@@ -734,16 +734,16 @@ int CAssembler::fitAddress(SCode & code) {
                 int scale = code.symscale;
                 if (scale < 1) scale = 1;
                 valueScaled = value / scale + code.offset;
-                if (valueScaled >= (-1 << 7) && valueScaled < (1 << 7))  fitAddr |= IFIT_I8;
-                if (valueScaled >= (-1 << 15) && valueScaled < (1 << 15)) fitAddr |= IFIT_I16;
-                if (valueScaled >= (-(int64_t)1 << 31) && valueScaled < ((int64_t)1 << 31)) fitAddr |= IFIT_I32;
+                if (valueScaled >= -(1 << 7) && valueScaled < (1 << 7))  fitAddr |= IFIT_I8;
+                if (valueScaled >= -(1 << 15) && valueScaled < (1 << 15)) fitAddr |= IFIT_I16;
+                if (valueScaled >= -((int64_t)1 << 31) && valueScaled < ((int64_t)1 << 31)) fitAddr |= IFIT_I32;
                 // check if value is certain. uncertainty is stored in high part of st_value
                 uncertainty = (symbols[isym1].st_value >> 32) - (symbols[isym2].st_value >> 32);
                 valueScaled = value / scale + code.offset + uncertainty;
                 if (code.symscale > 1) valueScaled /= code.symscale;  // value is scaled
-                if ((valueScaled < (-1 << 7) || valueScaled >= (1 << 7)) && (fitAddr & IFIT_I8))  uncertain |= 1;
-                if ((valueScaled < (-1 << 15) || valueScaled >= (1 << 15)) && (fitAddr & IFIT_I16)) uncertain |= 1;
-                if ((valueScaled < (-(int64_t)1 << 31) || valueScaled >= ((int64_t)1 << 31)) && (fitAddr & IFIT_I32)) uncertain |= 1;
+                if ((valueScaled < -(1 << 7) || valueScaled >= (1 << 7)) && (fitAddr & IFIT_I8))  uncertain |= 1;
+                if ((valueScaled < -(1 << 15) || valueScaled >= (1 << 15)) && (fitAddr & IFIT_I16)) uncertain |= 1;
+                if ((valueScaled < -((int64_t)1 << 31) || valueScaled >= ((int64_t)1 << 31)) && (fitAddr & IFIT_I32)) uncertain |= 1;
                 if (uncertain && (code.fitAddr & IFIT_LARGE)) {
                     // choose the larger version if optimization process has convergence problems
                     fitAddr = (fitAddr & (fitAddr - 1)) | IFIT_I32;  // remove the lowest set bit
@@ -779,18 +779,18 @@ int CAssembler::fitAddress(SCode & code) {
                 if (code.etype & XPR_JUMPOS) valueScaled >>= 2;  // jump address is scaled
                 valueScaled += code.offset;
                 // cannot use IFIT_I8 with IP pointer in data address
-                if (valueScaled >= (-1 << 7) && valueScaled < (1 << 7) && (code.etype & XPR_JUMPOS)) fitAddr |= IFIT_I8;
-                if (valueScaled >= (-1 << 15) && valueScaled < (1 << 15)) fitAddr |= IFIT_I16;
-                if (valueScaled >= (-1 << 23) && valueScaled < (1 << 23)) fitAddr |= IFIT_I24;
-                if (valueScaled >= (-(int64_t)1 << 31) && valueScaled < ((int64_t)1 << 31)) fitAddr |= IFIT_I32;
+                if (valueScaled >= -(1 << 7) && valueScaled < (1 << 7) && (code.etype & XPR_JUMPOS)) fitAddr |= IFIT_I8;
+                if (valueScaled >= -(1 << 15) && valueScaled < (1 << 15)) fitAddr |= IFIT_I16;
+                if (valueScaled >= -(1 << 23) && valueScaled < (1 << 23)) fitAddr |= IFIT_I24;
+                if (valueScaled >= -((int64_t)1 << 31) && valueScaled < ((int64_t)1 << 31)) fitAddr |= IFIT_I32;
                 code.fitAddr = fitAddr;
                 // check if value is certain. uncertainty is stored in high part of st_value and sh_link
                 uncertainty = int32_t((symbols[isym1].st_value >> 32) - sectionHeaders[code.section].sh_link);
                 valueScaled += uncertainty;
-                if ((valueScaled < (-1 << 7) || valueScaled >= (1 << 7)) && (fitAddr & IFIT_I8))  uncertain |= 1;
-                if ((valueScaled < (-1 << 15) || valueScaled >= (1 << 15)) && (fitAddr & IFIT_I16)) uncertain |= 1;
-                if ((valueScaled < (-1 << 23) || valueScaled >= (1 << 23)) && (fitAddr & IFIT_I24)) uncertain |= 1;
-                if ((valueScaled < (-(int64_t)1 << 31) || valueScaled >= ((int64_t)1 << 31)) && (fitAddr & IFIT_I32)) uncertain |= 1;
+                if ((valueScaled < -(1 << 7) || valueScaled >= (1 << 7)) && (fitAddr & IFIT_I8))  uncertain |= 1;
+                if ((valueScaled < -(1 << 15) || valueScaled >= (1 << 15)) && (fitAddr & IFIT_I16)) uncertain |= 1;
+                if ((valueScaled < -(1 << 23) || valueScaled >= (1 << 23)) && (fitAddr & IFIT_I24)) uncertain |= 1;
+                if ((valueScaled < -((int64_t)1 << 31) || valueScaled >= ((int64_t)1 << 31)) && (fitAddr & IFIT_I32)) uncertain |= 1;
                 if (uncertain && (code.fitAddr & IFIT_LARGE)) {
                     // choose the larger version if optimization process has convergence problems
                     fitAddr = (fitAddr & (fitAddr - 1)) | IFIT_I32;  // remove the lowest set bit
@@ -1006,7 +1006,11 @@ bool CAssembler::instructionFits(SCode const & code, SCode & codeTemp, uint32_t 
     codeTemp.instr1 = ii;
 
     // check vector use
-    bool useVectors = (code.dtype & TYP_FLOAT) || ((code.dest | code.reg1 | code.reg2) & REG_V);
+    bool useVectors = (code.dtype & TYP_FLOAT) 
+        || (code.dest & 0xE0) == REG_V
+        || (code.reg1 & 0xE0) == REG_V
+        || (code.reg2 & 0xE0) == REG_V;
+
     if (useVectors) {
         if (!(code.formatp->vect)) return false;  // vectors not supported
     }

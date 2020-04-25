@@ -1,8 +1,8 @@
 /****************************  cmdline.cpp  **********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2018-03-30
-* Version:       1.01
+* Last modified: 2020-04-24
+* Version:       1.09
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
 * This module is for interpretation of command line options
@@ -367,8 +367,9 @@ void CCommandLineInterpreter::interpretDisassembleOption(char * string) {
 
 void CCommandLineInterpreter::interpretDumpOption(char * string) {
     // Interpret dump option from command line
-    if (outputType && outputType != outputType) err.submit(ERR_MULTIPLE_COMMANDS, string);   // Both dump and convert specified
-
+    if (outputType /*&& outputType != outputType*/) {
+        err.submit(ERR_MULTIPLE_COMMANDS, string);   // Both dump and convert specified
+    }
     char * s1 = string;
     while (*s1) {
         switch (*(s1++)) {
@@ -829,7 +830,7 @@ const char * CCommandLineInterpreter::getFilename(uint32_t n) {
 void CCommandLineInterpreter::help() {
     // Print help message
     printf("\nBinary tools version %i.%02i beta for ForwardCom instruction set.", FORWARDCOM_VERSION, FORWARDCOM_SUBVERSION);
-    printf("\nCopyright (c) 2018 by Agner Fog. Gnu General Public License.");
+    printf("\nCopyright (c) 2020 by Agner Fog. Gnu General Public License.");
     printf("\n\nUsage: forw command [options] inputfile [outputfile] [options]");
     printf("\n\nCommand:");
     printf("\n-ass       Assemble\n");

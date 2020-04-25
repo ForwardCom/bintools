@@ -1723,14 +1723,14 @@ void CDisassembler::finalErrorCheck() {
 }
 
 void CDisassembler::writeAddress() {
-    // write code address
-    if (sectionEnd + sectionAddress > 0xFFFF) {
+    // write code address >> 2
+    if (sectionEnd + sectionAddress > 0xFFFF * 4) {
         // Write 32 bit address
-        outFile.putHex(iInstr + sectionAddress, 2);
+        outFile.putHex((iInstr + sectionAddress) >> 2, 2);
     }
     else {
         // Write 16 bit address
-        outFile.putHex((uint16_t)(iInstr + sectionAddress), 2);
+        outFile.putHex((uint16_t)((iInstr + sectionAddress) >> 2), 2);
     }
     if (debugMode) outFile.put(" ");
     else outFile.put(" _ ");    // Space after address

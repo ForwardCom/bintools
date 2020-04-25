@@ -1,16 +1,105 @@
 /****************************  emulator4.cpp  ********************************
 * Author:        Agner Fog
 * date created:  2018-02-18
-* Last modified: 2018-03-30
-* Version:       1.01
+* Last modified: 2020-04-17
+* Version:       1.09
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
 * Emulator: Execution functions for tiny instructions and multiformat instructions
 *
-* Copyright 2018 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2018-2020 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 #include "stdafx.h"
+
+// get intrinsic functions for _mm_getcsr and _mm_setcsr to control floating point rounding and exceptions
+#if defined(_M_X64) || defined(__x86_64__) || defined(__amd64) || defined(__SSE2__)
+#if defined(__FMA__) || defined(__AVX2__)
+#define FMA_AVAILABLE 1
+#else 
+#define FMA_AVAILABLE 0
+#endif
+#if defined(_MSC_VER) && !FMA_AVAILABLE
+#include <xmmintrin.h>
+#else
+#include <immintrin.h>
+#endif
+#define MCSCR_AVAILABLE 1
+#else
+#define MCSCR_AVAILABLE 0
+#endif
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+// functions for detecting exceptions and controlling rounding mode on the CPU that runs the emulator
+// Note: these functions are only available in x86 systems with SSE2 or x64 enabled
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// Error message if MXCSR not available
+void errorFpControlMissing() {
+    static int repeated = 0;
+    if (!repeated) {
+        fprintf(stderr, "Error: Cannot control floating point exceptions and rounding mode on this platform");
+        repeated = 1;
+    }
+}
+
+void setRoundingMode(uint8_t r) {
+    // change rounding mode
+#if MCSCR_AVAILABLE
+    uint32_t e = _mm_getcsr();
+    e = (e & 0x9FFF) | (r & 3) << 13;
+    _mm_setcsr(e);
+#else
+    errorFpControlMissing();
+#endif
+}
+
+void clearExceptionFlags() {
+    // clear exception flags before detecting exceptions
+#if MCSCR_AVAILABLE
+    uint32_t e = _mm_getcsr();
+    _mm_setcsr(e & 0xFFC0);
+#else
+    errorFpControlMissing();
+#endif
+}
+
+uint32_t getExceptionFlags() {
+    // read exception flags after instructions that may cause exceptions
+    // 1: invalid operation
+    // 2: denormal
+    // 4: divide by zero
+    // 8: overflow
+    // 0x10: underflow
+    // 0x20: precision
+#if MCSCR_AVAILABLE
+    return _mm_getcsr() & 0x3F;
+#else
+    errorFpControlMissing();
+    return 0;
+#endif
+}
+
+void enableSubnormals(uint32_t e) {
+    // enable or disable subnormal numbers
+#if MCSCR_AVAILABLE
+    uint32_t x = _mm_getcsr();
+    if (e != 0) {    
+        _mm_setcsr(x & ~0x8040);
+    }
+    else {
+        _mm_setcsr(x | 0x8040);
+    }
+#else
+    errorFpControlMissing();
+#endif
+}
+
+
+//////////////////////
+// Tiny instructions
+//////////////////////
 
 static uint64_t t_nop(CThread * t) {
     // No operation
@@ -31,10 +120,11 @@ static uint64_t t_add(CThread * t) {
     uint64_t a = t->registers[t->operands[4]];
     uint64_t b = t->parm[2].q;
     uint64_t result = a + b;
+    /*
     if (t->numContr & MSK_OVERFL_I) {  // check for overflow
         if ((t->numContr & MSK_OVERFL_UNSIGN) && result < a) t->interrupt(INT_OVERFL_UNSIGN);  // unsigned overflow
         if ((t->numContr & MSK_OVERFL_SIGN) && (result & ~a) >> 63) t->interrupt(INT_OVERFL_SIGN);  // signed overflow
-    }
+    } */
     t->returnType = 0x13;                        // debug return output
     return result;
 }
@@ -44,10 +134,11 @@ static uint64_t t_sub(CThread * t) {
     uint64_t a = t->registers[t->operands[4]];
     uint64_t b = t->parm[2].q;
     uint64_t result = a - b;
+    /*
     if (t->numContr & MSK_OVERFL_I) {  // check for overflow
         if ((t->numContr & MSK_OVERFL_UNSIGN) && result > a) t->interrupt(INT_OVERFL_UNSIGN);  // unsigned overflow
         if ((t->numContr & MSK_OVERFL_SIGN) && (a & ~result) >> 63) t->interrupt(INT_OVERFL_SIGN);  // signed overflow
-    }
+    } */
     t->returnType = 0x13;                        // debug return output
     return result;
 }
@@ -79,11 +170,12 @@ static uint64_t t_add_r(CThread * t) {
     uint64_t a = t->registers[t->operands[4]];
     uint64_t b = t->registers[t->operands[5]];
     uint64_t result = a + b;
+    /*
     if (t->numContr & MSK_OVERFL_I) {  // check for overflow
         if ((t->numContr & MSK_OVERFL_UNSIGN) && result < a) t->interrupt(INT_OVERFL_UNSIGN);  // unsigned overflow
         if ((t->numContr & MSK_OVERFL_SIGN) && 
             int64_t(~(a ^ b) & (a ^ result)) < 0) t->interrupt(INT_OVERFL_SIGN);  // signed overflow
-    }
+    } */
     t->returnType = 0x13;                        // debug return output
     return result;
 }
@@ -93,11 +185,12 @@ static uint64_t t_sub_r(CThread * t) {
     uint64_t a = t->registers[t->operands[4]];
     uint64_t b = t->registers[t->operands[5]];
     uint64_t result = a - b;
+    /*
     if (t->numContr & MSK_OVERFL_I) {  // check for overflow
         if ((t->numContr & MSK_OVERFL_UNSIGN) && result < a) t->interrupt(INT_OVERFL_UNSIGN);  // unsigned overflow
         if ((t->numContr & MSK_OVERFL_SIGN) && 
             int64_t((a ^ b) & (a ^ result)) < 0) t->interrupt(INT_OVERFL_SIGN);  // signed overflow
-    }
+    } */
     t->returnType = 0x13;                        // debug return output
     return result;
 }
@@ -344,7 +437,10 @@ static uint64_t t_save_cp(CThread * t) {
 } 
 
 
+/////////////////////////////
 // Multi-format instructions
+/////////////////////////////
+
 uint64_t f_nop(CThread * t) {
     // No operation
     t->running = 2;                                        // don't save RD
@@ -528,7 +624,7 @@ static uint64_t f_compare(CThread * t) {
     // check for NAN
     if (isnan) {
         result = (cond >> 3) & 1;                          // bit 3 tells what to get if unordered
-        if (t->parm[3].i & MSK_FLOAT_NAN_LOSS) t->interrupt(INT_FLOAT_NAN_LOSS); // mask bit 29: trap if NAN loss
+        //if (t->parm[3].i & MSK_FLOAT_NAN_LOSS) t->interrupt(INT_FLOAT_NAN_LOSS); // mask bit 29: trap if NAN loss
     }
 
     // mask and fallback
@@ -557,58 +653,73 @@ uint64_t f_add(CThread * t) {
     // add two numbers
     SNum a = t->parm[1];
     SNum b = t->parm[2];
-    SNum mask = t->parm[3];
+    uint32_t mask = t->parm[3].i;
     SNum result;
-    if (t->operandType < 4) {
-        uint64_t sizeMask = dataSizeMask[t->operandType]; // mask for data size
+    bool roundingMode = (mask & (3 << MSKI_ROUNDING)) != 0;  // non-standard rounding mode
+    bool detectExceptions = (mask & (0xF << MSKI_EXCEPTIONS)) != 0;  // make NAN if exceptions
+    uint8_t operandType = t->operandType;
 
-        // integer
+    if (((mask ^ t->lastMask) & MSK_SUBNORMAL) != 0) {
+        // subnormal status changed
+        enableSubnormals (mask & MSK_SUBNORMAL);
+        t->lastMask = mask;
+    }
+    // operand type
+    if (operandType < 4) {  // integer
+        // uint64_t sizeMask = dataSizeMask[t->operandType]; // mask for data size        
         result.q = a.q + b.q;
-        if (mask.b & MSK_OVERFL_I) {
-            // check for overflow
-            if (mask.b & MSK_OVERFL_UNSIGN) {  // check for unsigned overflow
-                bool unsignedOverflow = false;
-                unsignedOverflow = (result.q & sizeMask) < (a.q & sizeMask);
-                if (unsignedOverflow) t->interrupt(INT_OVERFL_UNSIGN);
-            }
-            if (mask.b & MSK_OVERFL_SIGN) {  // check for signed overflow
-                bool signedOverflow = false;
-                SNum ofl;
-                // overflow if a and b have same sign and result has opposite sign
-                ofl.q = ~(a.q ^ b.q) & (a.q ^ result.q);
-                uint64_t signBit = (sizeMask >> 1) + 1;      // sign bit
-                signedOverflow = (ofl.q & signBit) != 0;
-                if (signedOverflow) t->interrupt(INT_OVERFL_SIGN);
-            }
-        }
     }
-    else if (t->operandType == 5) {
-        // float
-        result.f = a.f + b.f;
-        if (isnan_f(a.i) && isnan_f(b.i)) {    // both are NAN
-            result.i = (a.i << 1) > (b.i << 1) ? a.i : b.i; // return the biggest payload. (current systems don't do this)
+    else if (operandType == 5) {                           // float
+        bool nana = isnan_f(a.i);                          // check for NAN input
+        bool nanb = isnan_f(b.i);   
+        if (nana && nanb) {                                // both are NAN
+            return (a.i << 1) > (b.i << 1) ? a.i : b.i;    // return the biggest payload
         }
-        if (mask.i & MSK_OVERFL_FLOAT) {  // trap if overflow
-            if (isinf_f(result.i) && !isinf_f(a.i) && !isinf_f(b.i)) {
-                t->interrupt(INT_OVERFL_FLOAT);
-            }
+        else if (nana) return a.q;
+        else if (nanb) return b.q;
+        if (roundingMode) setRoundingMode(mask >> MSKI_ROUNDING);
+        if (detectExceptions) clearExceptionFlags();       // clear previous exceptions
+        result.f = a.f + b.f;                              // this is the actual addition
+        if (isnan_f(result.i)) {
+            // the result is NAN but neither input is NAN. This must be INF-INF
+            result.q = t->makeNan(nan_invalid_sub, operandType);
         }
+        if (detectExceptions) {
+            uint32_t x = getExceptionFlags();              // read exceptions
+            if ((mask & MSK_OVERFLOW) && (x & 8)) result.q = t->makeNan(nan_overflow_add, operandType);
+            else if ((mask & MSK_UNDERFLOW) && (x & 0x10)) result.q = t->makeNan(nan_underflow, operandType);
+            else if ((mask & MSK_INEXACT) && (x & 0x20)) result.q = t->makeNan(nan_inexact, operandType);
+        }
+        if (roundingMode) setRoundingMode(0);              // reset rounding mode
     }
-    else if (t->operandType == 6) {
-        // double
-        result.d = a.d + b.d;
-        if (isnan_d(a.q) && isnan_d(b.q)) {    // both are NAN
-            result.q = (a.q << 1) > (b.q << 1) ? a.q : b.q; // return the biggest payload. (current systems don't do this)
+
+    else if (operandType == 6) {                           // double
+        bool nana = isnan_d(a.q);                          // check for NAN input
+        bool nanb = isnan_d(b.q);   
+        if (nana && nanb) {                                // both are NAN
+            return (a.q << 1) > (b.q << 1) ? a.q : b.q;    // return the biggest payload
         }
-        if (mask.i & MSK_OVERFL_FLOAT) {  // trap if overflow
-            if (isinf_d(result.q) && !isinf_d(a.q) && !isinf_d(b.q)) {
-                t->interrupt(INT_OVERFL_FLOAT);
-            }
+        else if (nana) return a.q;
+        else if (nanb) return b.q;
+        if (roundingMode) setRoundingMode(mask >> MSKI_ROUNDING);
+        if (detectExceptions) clearExceptionFlags();       // clear previous exceptions
+        result.d = a.d + b.d;                              // this is the actual addition
+        if (isnan_d(result.q)) {
+            // the result is NAN but neither input is NAN. This must be INF-INF
+            result.q = t->makeNan(nan_invalid_sub, operandType);
         }
+        if (detectExceptions) {
+            uint32_t x = getExceptionFlags();              // read exceptions
+            if ((mask & MSK_OVERFLOW) && (x & 8)) result.q = t->makeNan(nan_overflow_add, operandType);
+            else if ((mask & MSK_UNDERFLOW) && (x & 0x10)) result.q = t->makeNan(nan_underflow, operandType);
+            else if ((mask & MSK_INEXACT) && (x & 0x20)) result.q = t->makeNan(nan_inexact, operandType);
+        }
+        if (roundingMode) setRoundingMode(0);              // reset rounding mode
     }
     else {
         // unsupported operand type
         t->interrupt(INT_INST_ILLEGAL);
+        result.i = 0;
     }
     return result.q;
 }
@@ -617,135 +728,147 @@ uint64_t f_sub(CThread * t) {
     // subtract two numbers
     SNum a = t->parm[1];
     SNum b = t->parm[2];
-    SNum mask = t->parm[3];
+    uint32_t mask = t->parm[3].i;
     SNum result;
-    uint64_t sizeMask = dataSizeMask[t->operandType]; // mask for data size
-
-    if (t->operandType < 4) {
-        // integer
+    bool roundingMode = (mask & (3 << MSKI_ROUNDING)) != 0;  // non-standard rounding mode
+    bool detectExceptions = (mask & (0xF << MSKI_EXCEPTIONS)) != 0;  // make NAN if exceptions
+    uint8_t operandType = t->operandType;
+    if (((mask ^ t->lastMask) & MSK_SUBNORMAL) != 0) {
+        // subnormal status changed
+        enableSubnormals (mask & MSK_SUBNORMAL);
+        t->lastMask = mask;
+    }
+    if (operandType < 4) {      // integer
         result.q = a.q - b.q;   // subtract
-        if (mask.b & MSK_OVERFL_I) {
-            // check for overflow
-            if (mask.b & MSK_OVERFL_UNSIGN) {  // check for unsigned overflow
-                bool unsignedOverflow = (result.q & sizeMask) > (a.q & sizeMask);
-                if (unsignedOverflow) t->interrupt(INT_OVERFL_UNSIGN);
-            }
-            if (mask.b & MSK_OVERFL_SIGN) {  // check for signed overflow
-                SNum ofl;
-                // overflow if a and b have opposite sign and result has opposite sign of a
-                ofl.q = (a.q ^ b.q) & (a.q ^ result.q);
-                uint64_t signBit = (sizeMask >> 1) + 1;      // sign bit
-                bool signedOverflow = (ofl.qs & signBit) != 0;
-                if (signedOverflow) t->interrupt(INT_OVERFL_SIGN);
-            }
-        }
     }
-    else if (t->operandType == 5) {
-        // float
-        result.f = a.f - b.f;
-        if (isnan_f(a.i) && isnan_f(b.i)) {    // both are NAN
-            result.i = (a.i << 1) > (b.i << 1) ? a.i : b.i; // return the biggest payload. (current systems don't do this)
+    else if (operandType == 5) { // float
+        bool nana = isnan_f(a.i);                          // check for NAN input
+        bool nanb = isnan_f(b.i);   
+        if (nana && nanb) {                                // both are NAN
+            return (a.i << 1) > (b.i << 1) ? a.i : b.i;    // return the biggest payload
         }
-        if (mask.i & MSK_OVERFL_FLOAT) {  // trap if overflow
-            if (isinf_f(result.i) && !isinf_f(a.i) && !isinf_f(b.i)) {
-                t->interrupt(INT_OVERFL_FLOAT);
-            }
+        else if (nana) return a.q;
+        else if (nanb) return b.q;
+        if (roundingMode) setRoundingMode(mask >> MSKI_ROUNDING);
+        if (detectExceptions) clearExceptionFlags();       // clear previous exceptions
+        result.f = a.f - b.f;                              // this is the actual subtraction
+        if (isnan_f(result.i)) {
+            // the result is NAN but neither input is NAN. This must be INF-INF
+            result.q = t->makeNan(nan_invalid_sub, operandType);
         }
+        if (detectExceptions) {
+            uint32_t x = getExceptionFlags();              // read exceptions
+            if ((mask & MSK_OVERFLOW) && (x & 8)) result.q = t->makeNan(nan_overflow_add, operandType);
+            else if ((mask & MSK_UNDERFLOW) && (x & 0x10)) result.q = t->makeNan(nan_underflow, operandType);
+            else if ((mask & MSK_INEXACT) && (x & 0x20)) result.q = t->makeNan(nan_inexact, operandType);
+        }
+        if (roundingMode) setRoundingMode(0);              // reset rounding mode
     }
-    else if (t->operandType == 6) {
-        // double
-        result.d = a.d - b.d;
-        if (isnan_d(a.q) && isnan_d(b.q)) {    // both are NAN
-            result.q = (a.q << 1) > (b.q << 1) ? a.q : b.q; // return the biggest payload. (current systems don't do this)
+    else if (operandType == 6) {// double
+        bool nana = isnan_d(a.q);                          // check for NAN input
+        bool nanb = isnan_d(b.q);   
+        if (nana && nanb) {                                // both are NAN
+            return (a.q << 1) > (b.q << 1) ? a.q : b.q;    // return the biggest payload
         }
-        if (mask.i & MSK_OVERFL_FLOAT) {  // trap if overflow
-            if (isinf_d(result.q) && !isinf_d(a.q) && !isinf_d(b.q)) {
-                t->interrupt(INT_OVERFL_FLOAT);
-            }
+        else if (nana) return a.q;
+        else if (nanb) return b.q;
+        if (roundingMode) setRoundingMode(mask >> MSKI_ROUNDING);
+        if (detectExceptions) clearExceptionFlags();       // clear previous exceptions
+        result.d = a.d - b.d;                              // this is the actual subtraction
+        if (isnan_d(result.q)) {
+            // the result is NAN but neither input is NAN. This must be INF-INF
+            result.q = t->makeNan(nan_invalid_sub, operandType);
         }
+        if (detectExceptions) {
+            uint32_t x = getExceptionFlags();              // read exceptions
+            if ((mask & MSK_OVERFLOW) && (x & 8)) result.q = t->makeNan(nan_overflow_add, operandType);
+            else if ((mask & MSK_UNDERFLOW) && (x & 0x10)) result.q = t->makeNan(nan_underflow, operandType);
+            else if ((mask & MSK_INEXACT) && (x & 0x20)) result.q = t->makeNan(nan_inexact, operandType);
+        }
+        if (roundingMode) setRoundingMode(0);              // reset rounding mode
     }
     else {
         // unsupported operand type
         t->interrupt(INT_INST_ILLEGAL);
+        result.i = 0;
     }
     return result.q;
 }
 
 extern uint64_t f_sub_rev(CThread * t) {
     // subtract two numbers, b-a
-    uint64_t temp = t->parm[1].q;  // swap operands
-    t->parm[1].q = t->parm[2].q;
-    t->parm[2].q = temp;
-    return f_sub(t);
+    uint64_t temp = t->parm[2].q;  // swap operands
+    t->parm[2].q = t->parm[1].q;
+    t->parm[1].q = temp;
+    uint64_t retval = f_sub(t);
+    t->parm[2].q = temp;           // restore parm[2] in case it is a constant
+    return retval;
 }
 
 uint64_t f_mul(CThread * t) {
     // multiply two numbers
     SNum a = t->parm[1];
     SNum b = t->parm[2];
-    SNum mask = t->parm[3];
+    uint32_t mask = t->parm[3].i;
     SNum result;
-    bool signedOverflow = false;
-    bool unsignedOverflow = false;
-    if (t->operandType < 4) {
+    bool roundingMode = (mask & (3 << MSKI_ROUNDING)) != 0;  // non-standard rounding mode
+    bool detectExceptions = (mask & (0xF << MSKI_EXCEPTIONS)) != 0;  // make NAN if exceptions
+    uint8_t operandType = t->operandType;
+    if (((mask ^ t->lastMask) & MSK_SUBNORMAL) != 0) {
+        // subnormal status changed
+        enableSubnormals (mask & MSK_SUBNORMAL);
+        t->lastMask = mask;
+    }
+    if (operandType < 4) {
         // integer
         result.q = a.q * b.q;
-        if (mask.b & MSK_OVERFL_I) {
-            // check for signed overflow
-            if (mask.b & MSK_OVERFL_SIGN) {
-                switch (t->operandType) {
-                case 0:
-                    signedOverflow = result.bs != result.is;  break;
-                case 1:
-                    signedOverflow = result.ss != result.is;  break;
-                case 2:
-                    signedOverflow = result.is != result.qs;  break;
-                case 3:
-                    signedOverflow = fabs((double)a.qs * (double)b.qs - (double)result.qs) > 1.E8; 
-                    break;
-                }
-                if (signedOverflow) t->interrupt(INT_OVERFL_SIGN);
-            }
-            // check for unsigned overflow (signed overflow takes precedence if both occur)
-            if ((mask.b & MSK_OVERFL_UNSIGN) && !signedOverflow) {
-                switch (t->operandType) {
-                case 0:
-                    unsignedOverflow = result.b != result.i;  break;
-                case 1:
-                    unsignedOverflow = result.s != result.i;  break;
-                case 2:
-                    unsignedOverflow = result.i != result.q;  break;
-                case 3:
-                    unsignedOverflow = fabs((double)a.q * (double)b.q - (double)result.q) > 1.E8; 
-                    break;
-                }
-                if (unsignedOverflow) t->interrupt(INT_OVERFL_UNSIGN);
-            }
-        }
     }
-    else if (t->operandType == 5) {
-        // float
-        result.f = a.f * b.f;
-        if (isnan_f(a.i) && isnan_f(b.i)) {    // both are NAN
-            result.i = (a.i << 1) > (b.i << 1) ? a.i : b.i; // return the biggest payload. (current systems don't do this)
+    else if (operandType == 5) {                           // float
+        bool nana = isnan_f(a.i);                          // check for NAN input
+        bool nanb = isnan_f(b.i);   
+        if (nana && nanb) {                                // both are NAN
+            return (a.i << 1) > (b.i << 1) ? a.i : b.i;    // return the biggest payload
         }
-        if (mask.i & MSK_OVERFL_FLOAT) {  // trap if overflow
-            if (isinf_f(result.i) && !isinf_f(a.i) && !isinf_f(b.i)) {
-                t->interrupt(INT_OVERFL_FLOAT);
-            }
+        else if (nana) return a.q;
+        else if (nanb) return b.q;
+        if (roundingMode) setRoundingMode(mask >> MSKI_ROUNDING);
+        if (detectExceptions) clearExceptionFlags();       // clear previous exceptions
+        result.f = a.f * b.f;                              // this is the actual multiplication
+        if (isnan_f(result.i)) {
+            // the result is NAN but neither input is NAN. This must be 0*INF
+            result.q = t->makeNan(nan_invalid_0mulinf, operandType);
         }
+        if (detectExceptions) {
+            uint32_t x = getExceptionFlags();              // read exceptions
+            if ((mask & MSK_OVERFLOW) && (x & 8)) result.q = t->makeNan(nan_overflow_mul, operandType);
+            else if ((mask & MSK_UNDERFLOW) && (x & 0x10)) result.q = t->makeNan(nan_underflow, operandType);
+            else if ((mask & MSK_INEXACT) && (x & 0x20)) result.q = t->makeNan(nan_inexact, operandType);
+        }
+        if (roundingMode) setRoundingMode(0);              // reset rounding mode
     }
-    else if (t->operandType == 6) {
-        // double
-        result.d = a.d * b.d;
-        if (isnan_d(a.q) && isnan_d(b.q)) {    // both are NAN
-            result.q = (a.q << 1) > (b.q << 1) ? a.q : b.q; // return the biggest payload. (current systems don't do this)
+
+    else if (operandType == 6) { // double
+        bool nana = isnan_d(a.q);                          // check for NAN input
+        bool nanb = isnan_d(b.q);   
+        if (nana && nanb) {                                // both are NAN
+            return (a.q << 1) > (b.q << 1) ? a.q : b.q;    // return the biggest payload
         }
-        if (mask.i & MSK_OVERFL_FLOAT) {  // trap if overflow
-            if (isinf_d(result.q) && !isinf_d(a.q) && !isinf_d(b.q)) {
-                t->interrupt(INT_OVERFL_FLOAT);
-            }
+        else if (nana) return a.q;
+        else if (nanb) return b.q;
+        if (roundingMode) setRoundingMode(mask >> MSKI_ROUNDING);
+        if (detectExceptions) clearExceptionFlags();       // clear previous exceptions
+        result.d = a.d * b.d;                              // this is the actual multiplication
+        if (isnan_d(result.q)) {
+            // the result is NAN but neither input is NAN. This must be 0*INF
+            result.q = t->makeNan(nan_invalid_0mulinf, operandType);
         }
+        if (detectExceptions) {
+            uint32_t x = getExceptionFlags();              // read exceptions
+            if ((mask & MSK_OVERFLOW) && (x & 8)) result.q = t->makeNan(nan_overflow_mul, operandType);
+            else if ((mask & MSK_UNDERFLOW) && (x & 0x10)) result.q = t->makeNan(nan_underflow, operandType);
+            else if ((mask & MSK_INEXACT) && (x & 0x20)) result.q = t->makeNan(nan_inexact, operandType);
+        }
+        if (roundingMode) setRoundingMode(0);              // reset rounding mode
     }
     else {
         // unsupported operand type
@@ -754,89 +877,210 @@ uint64_t f_mul(CThread * t) {
     return result.q;
 }
 
+
 uint64_t f_div(CThread * t) {
-    // divide two signed numbers
+    // divide two floating point numbers or signed integers
     SNum a = t->parm[1];
     SNum b = t->parm[2];
-    SNum mask = t->parm[3];
+    uint32_t mask = t->parm[3].i;
     SNum result;
     bool overflow = false;
-
-    // to do: rounding mode!!
-
-    switch (t->operandType) {
+    bool roundingMode = (mask & (3 << MSKI_ROUNDING))!=0;  // non-standard floating point rounding mode
+    bool detectExceptions = (mask & (0xF << MSKI_EXCEPTIONS)) != 0;  // make NAN if exceptions
+    bool nana, nanb;                                       // inputs are NAN
+    uint8_t operandType = t->operandType;
+    uint32_t intRounding = 0;                              // integer rounding mode
+    if (t->fInstr->tmpl == 0xE) {
+        intRounding = t->pInstr->a.im3;                    // E template. get integer rounding mode from IM3
+    }
+    if (((mask ^ t->lastMask) & MSK_SUBNORMAL) != 0) {
+        // subnormal status changed
+        enableSubnormals (mask & MSK_SUBNORMAL);
+        t->lastMask = mask;
+    }
+    switch (operandType) {
     case 0:  // int8
         if (b.b == 0 || (a.b == 0x80 && b.bs == -1)) {
             result.i = 0x80; overflow = true;
         }
-        else result.i = a.bs / b.bs;
+        else {
+            result.i = a.bs / b.bs;
+            if (intRounding != 0 && intRounding != 7 && abs(b.bs) != 1) {
+                int rem = a.bs % b.bs;
+                switch (intRounding) {
+                case 4: { // nearest or even
+                    uint32_t r2 = 2*abs(rem);
+                    uint32_t b2 = abs(b.bs);
+                    int s = int8_t(a.i ^ b.i) < 0 ? -1 : 1;  // one with sign of result
+                    if (r2 > b2 || (r2 == b2 && (result.b & 1))) result.i += s;
+                    break;}
+                case 5:  // down
+                    if (rem != 0 && int8_t(a.i ^ b.i) < 0 && result.b != 0x80u) result.i--;
+                    break;
+                case 6:  // up
+                    if (rem != 0 && int8_t(a.i ^ b.i) >= 0) result.i++;
+                    break;
+                }
+            }
+        }
         break;
     case 1:  // int16
-        if (b.s == 0 || (a.s == 0x8000 && b.s == -1)) {
+        if (b.s == 0 || (a.s == 0x8000u && b.ss == -1)) {
             result.i = 0x8000; overflow = true;
         }
-        else result.i = a.ss / b.ss;
+        else {
+            result.i = a.ss / b.ss;
+            if (intRounding != 0 && intRounding != 7 && abs(b.ss) != 1) {
+                int16_t rem = a.ss % b.ss;
+                switch (intRounding) {
+                case 4: { // nearest or even
+                    uint16_t r2 = 2*abs(rem);
+                    uint16_t b2 = abs(b.is);
+                    int16_t  s = int16_t(a.s ^ b.s) < 0 ? -1 : 1;  // one with sign of result
+                    if (r2 > b2 || (r2 == b2 && (result.s & 1))) result.s += s;
+                    break;}
+                case 5:  // down
+                    if (rem != 0 && int16_t(a.s ^ b.s) < 0 && result.s != 0x8000u) result.s--;
+                    break;
+                case 6:  // up
+                    if (rem != 0 && int16_t(a.s ^ b.s) >= 0) result.s++;
+                    break;
+                }
+            }
+        }
         break;
     case 2:  // int32
         if (b.i == 0 || (a.i == sign_f && b.is == -1)) {
             result.i = sign_f; overflow = true;
         }
-        else result.i = a.is / b.is;
+        else {
+            result.i = a.is / b.is;
+            if (intRounding != 0 && intRounding != 7 && abs(b.is) != 1) {
+                int rem = a.is % b.is;
+                switch (intRounding) {
+                case 4: { // nearest or even
+                    uint32_t r2 = 2*abs(rem);
+                    uint32_t b2 = abs(b.is);
+                    int s = int32_t(a.i ^ b.i) < 0 ? -1 : 1;  // one with sign of result
+                    if (r2 > b2 || (r2 == b2 && (result.i & 1))) result.i += s;
+                    break;}
+                case 5:  // down
+                    if (rem != 0 && int32_t(a.i ^ b.i) < 0 && result.i != 0x80000000u) result.i--;
+                    break;
+                case 6:  // up
+                    if (rem != 0 && int32_t(a.i ^ b.i) >= 0) result.i++;
+                    break;
+                }
+            }
+        }
         break;
     case 3:  // int64
         if (b.q == 0 || (a.q == sign_d && b.qs == int64_t(-1))) {
             result.q = sign_d; overflow = true;
         }
-        else result.qs = a.qs / b.qs;
+        else {
+            result.qs = a.qs / b.qs;
+            if (intRounding != 0 && intRounding != 7 && abs(b.qs) != 1) {
+                int64_t rem = a.qs % b.qs;
+                switch (intRounding) {
+                case 4: { // nearest or even
+                    uint64_t r2 = 2*abs(rem);
+                    uint64_t b2 = abs(b.qs);
+                    int64_t s = int64_t(a.q ^ b.q) < 0 ? -1 : 1;  // one with sign of result
+                    if (r2 > b2 || (r2 == b2 && (result.i & 1))) result.q += s;
+                    break;}
+                case 5:  // down
+                    if (rem != 0 && int64_t(a.q ^ b.q) < 0 && result.q != 0x8000000000000000u) result.q--;
+                    break;
+                case 6:  // up
+                    if (rem != 0 && int64_t(a.q ^ b.q) >= 0) result.q++;
+                    break;
+                }
+            }
+        }
         break;
     case 5:  // float
-        if (b.i << 1 == 0) { // division by zero
+        nana = isnan_f(a.i);                          // check for NAN input
+        nanb = isnan_f(b.i);   
+        if (nana && nanb) {                                // both are NAN
+            result.i = (a.i << 1) > (b.i << 1) ? a.i : b.i;    // return the biggest payload
+        }
+        else if (nana) result.i = a.i;
+        else if (nanb) result.i = b.i;
+        else if (b.i << 1 == 0) { // division by zero
             if (a.i << 1 == 0) { // 0./0. = nan
-                result.i = nan_f;
+                result.q = t->makeNan(nan_invalid_0div0, operandType);
             }
             else {
-                result.i = inf_f; // a / 0. = infinity
-                overflow = true;
+                // a / 0. = infinity
+                if (mask & MSK_DIVZERO) result.q = t->makeNan(nan_div0, operandType);
+                else result.i = inf_f;
             }
             result.i |= (a.i ^ b.i) & sign_f; // sign bit
         }
-        else {
-            result.f = a.f / b.f;           // normal division
+        else if (isinf_f(a.i) && isinf_f(b.i)) {
+            result.i = (uint32_t)t->makeNan(nan_invalid_divinf, operandType); // INF/INF
+            result.i |= (a.i ^ b.i) & sign_f; // sign bit
         }
-        if (isnan_f(a.i) && isnan_f(b.i)) {    // both are NAN
-            result.i = (a.i << 1) > (b.i << 1) ? a.i : b.i; // return the biggest payload. (current systems don't do this)
+        else {
+            if (roundingMode) setRoundingMode(mask >> MSKI_ROUNDING);
+            if (detectExceptions) clearExceptionFlags();       // clear previous exceptions
+            result.f = a.f / b.f;                              // normal division
+            if (detectExceptions) {
+                uint32_t x = getExceptionFlags();              // read exceptions
+                if ((mask & MSK_OVERFLOW) && (x & 8)) result.q = t->makeNan(nan_overflow_div, operandType);
+                else if ((mask & MSK_UNDERFLOW) && (x & 0x10)) result.q = t->makeNan(nan_underflow, operandType);
+                else if ((mask & MSK_INEXACT) && (x & 0x20)) result.q = t->makeNan(nan_inexact, operandType);
+            }
+            if (roundingMode) setRoundingMode(0);              // reset rounding mode
         }
         break;
     case 6:  // double
-        if (b.q << 1 == 0) { // division by zero
+        nana = isnan_d(a.q);                          // check for NAN input
+        nanb = isnan_d(b.q);   
+        if (nana && nanb) {                                // both are NAN
+            result.q = (a.q << 1) > (b.q << 1) ? a.q : b.q;    // return the biggest payload
+        }
+        else if (nana) result.q = a.q;
+        else if (nanb) result.q = b.q;
+        else if (b.q << 1 == 0) { // division by zero
             if (a.q << 1 == 0) { // 0./0. = nan
-                result.q = nan_d;
+                result.q = t->makeNan(nan_invalid_0div0, operandType);
             }
             else {
-                result.q = inf_d; // a / 0. = infinity
-                overflow = true;
+                // a / 0. = infinity
+                if (mask & MSK_DIVZERO) result.q = t->makeNan(nan_div0, operandType);
+                else result.q = inf_d;
             }
             result.q |= (a.q ^ b.q) & sign_d; // sign bit
         }
-        else {
-            result.d = a.d / b.d;           // normal division
+        else if (isinf_d(a.q) && isinf_d(b.q)) {
+            result.q = t->makeNan(nan_invalid_divinf, operandType); // INF/INF
+            result.q |= (a.q ^ b.q) & sign_d; // sign bit
         }
-        if (isnan_d(a.q) && isnan_d(b.q)) {    // both are NAN
-            result.q = (a.q << 1) > (b.q << 1) ? a.q : b.q; // return the biggest payload. (current systems don't do this)
+        else {
+            if (roundingMode) setRoundingMode(mask >> MSKI_ROUNDING);
+            if (detectExceptions) clearExceptionFlags();       // clear previous exceptions
+            result.d = a.d / b.d;                              // normal division
+            if (detectExceptions) {
+                uint32_t x = getExceptionFlags();              // read exceptions
+                if ((mask & MSK_OVERFLOW) && (x & 8)) result.q = t->makeNan(nan_overflow_div, operandType);
+                else if ((mask & MSK_UNDERFLOW) && (x & 0x10)) result.q = t->makeNan(nan_underflow, operandType);
+                else if ((mask & MSK_INEXACT) && (x & 0x20)) result.q = t->makeNan(nan_inexact, operandType);
+            }
+            if (roundingMode) setRoundingMode(0);              // reset rounding mode
         }
         break;
     default:
         t->interrupt(INT_INST_ILLEGAL);
-    }
-    if (overflow) {     // catch overflow
-        if ((mask.i & MSK_OVERFL_FLOAT) && t->operandType >= 5) t->interrupt(INT_OVERFL_FLOAT); // floating point overflow
-        if ((mask.i & MSK_OVERFL_SIGN) && t->operandType < 5) t->interrupt(INT_OVERFL_SIGN);    // signed integer overflow
+        result.i = 0;
     }
     return result.q;
 }
 
 uint64_t f_div_u(CThread * t) {
     // divide two unsigned numbers
+
     if (t->operandType > 4) {
         return f_div(t);                         // floating point: same as f_div
     }
@@ -845,45 +1089,103 @@ uint64_t f_div_u(CThread * t) {
     SNum mask = t->parm[3];
     SNum result;
     bool overflow = false;
+    uint32_t intRounding = 0;                              // integer rounding mode
+    if (t->fInstr->tmpl == 0xE) {
+        intRounding = t->pInstr->a.im3;                    // E template. get integer rounding mode from IM3
+    }
 
     switch (t->operandType) {
     case 0:  // int8
         if (b.b == 0) {
             result.i = 0xFF; overflow = true;
         }
-        else result.i = a.b / b.b;
+        else {
+            result.i = a.b / b.b;
+            if (intRounding == 4 || intRounding == 6) {
+                uint32_t rem = a.b % b.b;
+                switch (intRounding) {
+                case 4:  // nearest or even
+                    if (rem*2 > b.b || (rem*2 == b.b && (result.i & 1))) result.i++;
+                    break;
+                case 6:  // up
+                    if (rem != 0) result.i++;
+                    break;
+                }
+            }
+        }
         break;
     case 1:  // int16
         if (b.s == 0) {
             result.i = 0xFFFF; overflow = true;
         }
-        else result.i = a.s / b.s;
+        else {
+            result.i = a.s / b.s;
+            if (intRounding == 4 || intRounding == 6) {
+                uint32_t rem = a.s % b.s;
+                switch (intRounding) {
+                case 4:  // nearest or even
+                    if (rem*2 > b.s || (rem*2 == b.s && (result.i & 1))) result.i++;
+                    break;
+                case 6:  // up
+                    if (rem != 0) result.i++;
+                    break;
+                }
+            }
+        }
         break;
     case 2:  // int32
         if (b.i == 0) {
-            result.i = -1; overflow = true;
+            result.is = -1; overflow = true;
         }
-        else result.i = a.i / b.i;
+        else {
+            result.i = a.i / b.i;
+            if (intRounding == 4 || intRounding == 6) {
+                uint32_t rem = a.i % b.i;
+                switch (intRounding) {
+                case 4:  // nearest or even
+                    if (rem*2 > b.i || (rem*2 == b.i && (result.i & 1))) result.i++;
+                    break;
+                case 6:  // up
+                    if (rem != 0) result.i++;
+                    break;
+                }
+            }
+        }
         break;
     case 3:  // int64
         if (b.q == 0) {
-            result.q = -(int64_t)1; overflow = true;
+            result.qs = -(int64_t)1; overflow = true;
         }
-        else result.qs = a.q / b.q;
+        else {
+            result.q = a.q / b.q;
+            if (intRounding == 4 || intRounding == 6) {
+                uint64_t rem = a.q % b.q;
+                switch (intRounding) {
+                case 4:  // nearest or even
+                    if (rem*2 > b.q || (rem*2 == b.q && (result.q & 1))) result.q++;
+                    break;
+                case 6:  // up
+                    if (rem != 0) result.q++;
+                    break;
+                }
+            }
+        }
         break;
     default:
         t->interrupt(INT_INST_ILLEGAL);
     }
-    if (overflow && (mask.i & MSK_OVERFL_UNSIGN)) t->interrupt(INT_OVERFL_UNSIGN);    // unsigned integer overflow
+    //if (overflow && (mask.i & MSK_OVERFL_UNSIGN)) t->interrupt(INT_OVERFL_UNSIGN);    // unsigned integer overflow
     return result.q;
 }
 
 static uint64_t f_div_rev(CThread * t) {
     // divide two numbers, b/a
-    uint64_t temp = t->parm[1].q;  // swap operands
-    t->parm[1].q = t->parm[2].q;
-    t->parm[2].q = temp;
-    return f_div(t);
+    uint64_t temp = t->parm[2].q;  // swap operands
+    t->parm[2].q = t->parm[1].q;
+    t->parm[1].q = temp;
+    uint64_t retval = f_div(t);
+    t->parm[2].q = temp;           // restore parm[2] in case it is a constant
+    return retval;
 }
 
 uint64_t mul64_128u(uint64_t * low, uint64_t a, uint64_t b) {
@@ -1065,7 +1367,7 @@ static uint64_t f_rem(CThread * t) {
         else result.is = a.bs % b.bs;
         break;
     case 1:  // int16
-        if (b.s == 0 || (a.s == 0x8000 && b.s == -1)) {
+        if (b.s == 0 || (a.s == 0x8000 && b.ss == -1)) {
             result.i = 0x8000; overflow = true;
         }
         else result.is = a.ss % b.ss;
@@ -1083,31 +1385,32 @@ static uint64_t f_rem(CThread * t) {
         else result.qs = a.qs % b.qs;
         break;
     case 5:  // float
-        if (b.i << 1 == 0) { // division by zero
-            result.i = nan_f;
+        if (isnan_f(a.i) && isnan_f(b.i)) {    // both are NAN
+            result.i = (a.i << 1) > (b.i << 1) ? a.i : b.i; // return the biggest payload
+        }
+        else if (b.i << 1 == 0 || isinf_f(a.i)) { // rem(1,0) or rem(inf,1)
+            result.q = t->makeNan(nan_invalid_rem, 5);
         }
         else {
             result.f = fmodf(a.f, b.f);           // normal modulo
         }
-        if (isnan_f(a.i) && isnan_f(b.i)) {    // both are NAN
-            result.i = (a.i << 1) > (b.i << 1) ? a.i : b.i; // return the biggest payload. (current systems don't do this)
-        }
         break;
     case 6:  // double
-        if (b.q << 1 == 0) { // division by zero
-            result.q = nan_d;
+        if (isnan_d(a.q) && isnan_d(b.q)) {    // both are NAN
+            result.q = (a.q << 1) > (b.q << 1) ? a.q : b.q; // return the biggest payload
+        }
+        else if (b.q << 1 == 0 || isinf_d(a.q)) { // rem(1,0) or rem(inf,1)
+            result.q = t->makeNan(nan_invalid_rem, 5);
         }
         else {
             result.d = fmod(a.d, b.d);           // normal modulo
         }
-        if (isnan_d(a.q) && isnan_d(b.q)) {    // both are NAN
-            result.q = (a.q << 1) > (b.q << 1) ? a.q : b.q; // return the biggest payload. (current systems don't do this)
-        }
         break;
     default:
         t->interrupt(INT_INST_ILLEGAL);
+        result.i = 0;
     }
-    if (overflow&& (mask.i & MSK_OVERFL_SIGN)) t->interrupt(INT_OVERFL_SIGN);    // signed integer overflow
+    //if (overflow&& (mask.i & MSK_OVERFL_SIGN)) t->interrupt(INT_OVERFL_SIGN);    // signed integer overflow
     return result.q;
 }
 
@@ -1148,7 +1451,7 @@ static uint64_t f_rem_u(CThread * t) {
     default:
         t->interrupt(INT_INST_ILLEGAL);
     }
-    if (overflow&& (mask.i & MSK_OVERFL_SIGN)) t->interrupt(INT_OVERFL_SIGN);    // signed integer overflow
+    //if (overflow&& (mask.i & MSK_OVERFL_SIGN)) t->interrupt(INT_OVERFL_SIGN);    // signed integer overflow
     return result.q;
 }
 
@@ -1176,16 +1479,10 @@ static uint64_t f_min(CThread * t) {
         // check NANs
         isnan  = isnan_f(a.i);           // a is nan
         isnan |= isnan_f(b.i) << 1;      // b is nan
-        if (isnan) {
-            if (true) {  // improved NAN propagation according to the forthcoming IEEE 754 standard revision
-                if (isnan == 1) result.i = a.i;
-                else if (isnan == 2) result.i = b.i;
-                else result.i = (a.i << 1) > (b.i << 1) ? a.i : b.i; // return the biggest payload
-            }
-            else { // The unfortunate IEEE 754-2008 standard says return the non-nan operand!
-                if (isnan == 1) result.i = b.i;
-                else result.i = a.i;
-            }
+        if (isnan) { // propagate NAN according to the 2019 revision of the IEEE-754 standard
+            if (isnan == 1) result.i = a.i;
+            else if (isnan == 2) result.i = b.i;
+            else result.i = (a.i << 1) > (b.i << 1) ? a.i : b.i; // return the biggest payload
         }
         break;
     case 6:   // double
@@ -1193,20 +1490,15 @@ static uint64_t f_min(CThread * t) {
         // check NANs
         isnan  = isnan_d(a.q);           // a is nan
         isnan |= isnan_d(b.q) << 1;      // b is nan
-        if (isnan) {
-            if (true) {  // improved NAN propagation according to the forthcoming IEEE 754 standard revision
-                if (isnan == 1) result.q = a.q;
-                else if (isnan == 2) result.q = b.q;
-                else result.q = (a.q << 1) > (b.q << 1) ? a.q : b.q; // return the biggest payload
-            }
-            else { // The unfortunate IEEE 754-2008 standard says return the non-nan operand!
-                if (isnan == 1) result.q = b.q;
-                else result.q = a.q;
-            }
+        if (isnan) { // propagate NAN according to the 2019 revision of the IEEE-754 standard
+            if (isnan == 1) result.q = a.q;
+            else if (isnan == 2) result.q = b.q;
+            else result.q = (a.q << 1) > (b.q << 1) ? a.q : b.q; // return the biggest payload
         }
         break;
     default:
         t->interrupt(INT_INST_ILLEGAL);
+        result.i = 0;
     }
     return result.q;
 }
@@ -1263,15 +1555,10 @@ static uint64_t f_max(CThread * t) {
         isnan  = isnan_f(a.i);           // a is nan
         isnan |= isnan_f(b.i) << 1;      // b is nan
         if (isnan) {
-            if (true) {  // improved NAN propagation according to the forthcoming IEEE 754 standard revision
-                if (isnan == 1) result.i = a.i;
-                else if (isnan == 2) result.i = b.i;
-                else result.i = (a.i << 1) > (b.i << 1) ? a.i : b.i; // return the biggest payload
-            }
-            else { // The unfortunate IEEE 754-2008 standard says return the non-nan operand!
-                if (isnan == 1) result.i = b.i;
-                else result.i = a.i;
-            }
+            // propagate NAN according to the 2019 revision of the IEEE-754 standard
+            if (isnan == 1) result.i = a.i;
+            else if (isnan == 2) result.i = b.i;
+            else result.i = (a.i << 1) > (b.i << 1) ? a.i : b.i; // return the biggest payload
         }
         break;
     case 6:   // double
@@ -1280,19 +1567,15 @@ static uint64_t f_max(CThread * t) {
         isnan  = isnan_d(a.q);           // a is nan
         isnan |= isnan_d(b.q) << 1;      // b is nan
         if (isnan) {
-            if (true) {  // improved NAN propagation according to the forthcoming IEEE 754 standard revision
-                if (isnan == 1) result.q = a.q;
-                else if (isnan == 2) result.q = b.q;
-                else result.q = (a.q << 1) > (b.q << 1) ? a.q : b.q; // return the biggest payload
-            }
-            else { // The unfortunate IEEE 754-2008 standard says return the non-nan operand!
-                if (isnan == 1) result.q = b.q;
-                else result.q = a.q;
-            }
+            // propagate NAN according to the 2019 revision of the IEEE-754 standard
+            if (isnan == 1) result.q = a.q;
+            else if (isnan == 2) result.q = b.q;
+            else result.q = (a.q << 1) > (b.q << 1) ? a.q : b.q; // return the biggest payload
         }
         break;
     default:
         t->interrupt(INT_INST_ILLEGAL);
+        result.i = 0;
     }
     return result.q;
 }
@@ -1348,7 +1631,7 @@ static uint64_t f_shift_left(CThread * t) {
     // integer: a << b, float a * 2^b where b is interpreted as integer
     SNum a = t->parm[1];
     SNum b = t->parm[2];
-    if (t->fInstr->immSize) b = t->parm[4]; // avoid conversion of b to float
+    if (t->fInstr->immSize && t->operandType >= 5) b = t->parm[4]; // avoid conversion of b to float
     SNum mask = t->parm[3];
     SNum result;
     uint64_t exponent;
@@ -1376,11 +1659,14 @@ static uint64_t f_shift_left(CThread * t) {
         exponent += b.i;                  // add integer to exponent
         if ((int32_t)exponent >= 0xFF) { // overflow
             result.i = inf_f;
-            if (mask.i & MSK_OVERFL_FLOAT) t->interrupt(INT_OVERFL_FLOAT);
         }
         else if ((int32_t)exponent <= 0) { // underflow
-            result.i = 0;
-            if (mask.i & MSK_FLOAT_UNDERFL) t->interrupt(INT_FLOAT_UNDERFL);
+            if ((mask.i & MSK_UNDERFLOW) != 0) {  // make NAN if exception
+                result.q = t->makeNan(nan_underflow, 5);
+            }
+            else {
+                result.q = 0;
+            }
         }
         else {
             result.i = (a.i & 0x807FFFFF) | uint32_t(exponent) << 23; // insert new exponent
@@ -1393,11 +1679,15 @@ static uint64_t f_shift_left(CThread * t) {
         exponent += b.q;                  // add integer to exponent
         if ((int64_t)exponent >= 0x7FF) { // overflow
             result.q = inf_d;
-            if (mask.i & MSK_OVERFL_FLOAT) t->interrupt(INT_OVERFL_FLOAT);
+            //if (mask.i & MSK_OVERFL_FLOAT) t->interrupt(INT_OVERFL_FLOAT);
         }
         else if ((int64_t)exponent <= 0) { // underflow
-            result.q = 0;
-            if (mask.i & MSK_FLOAT_UNDERFL) t->interrupt(INT_FLOAT_UNDERFL);
+            if ((mask.i & MSK_UNDERFLOW) != 0) {  // make NAN if exception
+                result.q = t->makeNan(nan_underflow, 6);
+            }
+            else {
+                result.q = 0;
+            }
         }
         else {
             result.q = (a.q & 0x800FFFFFFFFFFFFF) | (exponent << 52); // insert new exponent
@@ -1405,6 +1695,7 @@ static uint64_t f_shift_left(CThread * t) {
         break;
     default:
         t->interrupt(INT_INST_ILLEGAL);
+        result.i = 0;
     }
     return result.q;
 }
@@ -1413,7 +1704,7 @@ static uint64_t f_rotate(CThread * t) {
     // rotate bits left
     SNum a = t->parm[1];
     SNum b = t->parm[2];
-    if (t->fInstr->immSize) b = t->parm[4]; // avoid conversion of b to float
+    if (t->fInstr->immSize && t->operandType >= 5) b = t->parm[4]; // avoid conversion of b to float
     SNum result;
     switch (t->operandType) {
     case 0:   // int8
@@ -1432,6 +1723,7 @@ static uint64_t f_rotate(CThread * t) {
         break;
     default:
         t->interrupt(INT_INST_ILLEGAL);
+        result.i = 0;
     }
     return result.q;
 }
@@ -1440,7 +1732,7 @@ static uint64_t f_shift_right_s(CThread * t) {
     // integer only: a >> b, with sign extension
     SNum a = t->parm[1];
     SNum b = t->parm[2];
-    if (t->fInstr->immSize) b = t->parm[4]; // avoid conversion of b to float
+    if (t->fInstr->immSize && t->operandType >= 5) b = t->parm[4]; // avoid conversion of b to float
     SNum result;
     switch (t->operandType) {
     case 0:   // int8
@@ -1461,6 +1753,7 @@ static uint64_t f_shift_right_s(CThread * t) {
         break;
     default:
         t->interrupt(INT_INST_ILLEGAL);
+        result.i = 0;
     }
     return result.q;
 }
@@ -1469,7 +1762,7 @@ static uint64_t f_shift_right_u(CThread * t) {
     // integer only: a >> b, with zero extension
     SNum a = t->parm[1];
     SNum b = t->parm[2];
-    if (t->fInstr->immSize) b = t->parm[4]; // avoid conversion of b to float
+    if (t->fInstr->immSize && t->operandType >= 5) b = t->parm[4]; // avoid conversion of b to float
     SNum result;
     switch (t->operandType) {
     case 0:   // int8
@@ -1490,6 +1783,7 @@ static uint64_t f_shift_right_u(CThread * t) {
         break;
     default:
         t->interrupt(INT_INST_ILLEGAL);
+        result.i = 0;
     }
     return result.q;
 }
@@ -1498,7 +1792,7 @@ static uint64_t f_set_bit(CThread * t) {
     // a | 1 << b
     SNum a = t->parm[1];
     SNum b = t->parm[2];
-    if (t->fInstr->immSize) b = t->parm[4]; // avoid conversion of b to float
+    if (t->fInstr->immSize && t->operandType >= 5) b = t->parm[4]; // avoid conversion of b to float
     SNum result;
     switch (t->operandType) {
     case 0:   // int8
@@ -1521,6 +1815,7 @@ static uint64_t f_set_bit(CThread * t) {
         break;
     default:
         t->interrupt(INT_INST_ILLEGAL);
+        result.i = 0;
     }
     return result.q;
 }
@@ -1529,7 +1824,7 @@ static uint64_t f_clear_bit(CThread * t) {
     // a & ~ (1 << b)
     SNum a = t->parm[1];
     SNum b = t->parm[2];
-    if (t->fInstr->immSize) b = t->parm[4]; // avoid conversion of b to float
+    if (t->fInstr->immSize && t->operandType >= 5) b = t->parm[4]; // avoid conversion of b to float
     SNum result;
     switch (t->operandType) {
     case 0:   // int8
@@ -1553,6 +1848,7 @@ static uint64_t f_clear_bit(CThread * t) {
     default:
         t->interrupt(INT_INST_ILLEGAL);
     }
+    result.i = 0;
     return result.q;
 }
 
@@ -1560,7 +1856,7 @@ static uint64_t f_toggle_bit(CThread * t) {
     // a ^ (1 << b)
     SNum a = t->parm[1];
     SNum b = t->parm[2];
-    if (t->fInstr->immSize) b = t->parm[4]; // avoid conversion of b to float
+    if (t->fInstr->immSize && t->operandType >= 5) b = t->parm[4]; // avoid conversion of b to float
     SNum result;
     switch (t->operandType) {
     case 0:   // int8
@@ -1583,6 +1879,7 @@ static uint64_t f_toggle_bit(CThread * t) {
         break;
     default:
         t->interrupt(INT_INST_ILLEGAL);
+        result.i = 0;
     }
     return result.q;
 }
@@ -1592,7 +1889,7 @@ static uint64_t f_and_bit(CThread * t) {
     // a & (1 << b)
     SNum a = t->parm[1];
     SNum b = t->parm[2];
-    if (t->fInstr->immSize) b = t->parm[4]; // avoid conversion of b to float
+    if (t->fInstr->immSize && t->operandType >= 5) b = t->parm[4]; // avoid conversion of b to float
     SNum result;
     switch (t->operandType) {
     case 0:   // int8
@@ -1615,6 +1912,7 @@ static uint64_t f_and_bit(CThread * t) {
         break;
     default:
         t->interrupt(INT_INST_ILLEGAL);
+        result.i = 0;
     }
     return result.q;
 }
@@ -1623,7 +1921,7 @@ static uint64_t f_test_bit(CThread * t) {
     // test a single bit: a >> b & 1
     SNum a = t->parm[1];
     SNum b = t->parm[2];
-    if (t->fInstr->immSize) b = t->parm[4]; // avoid conversion of b to float
+    if (t->fInstr->immSize && t->operandType >= 5) b = t->parm[4]; // avoid conversion of b to float
     if (t->fInstr->imm2 & 4) {
         b.q = t->pInstr->a.im2;                  // avoid immediate operand shifted by imm3
     }
@@ -1650,6 +1948,7 @@ static uint64_t f_test_bit(CThread * t) {
         break;
     default:
         t->interrupt(INT_INST_ILLEGAL);
+        result.i = 0;
     }
     // get additional options
     uint8_t options = 0;
@@ -1680,7 +1979,7 @@ static uint64_t f_test_bits(CThread * t) {
     // result = (a & b) != 0
     SNum a = t->parm[1];
     SNum b = t->parm[2];
-    if (t->fInstr->immSize) b = t->parm[4]; // avoid conversion of b to float
+    if (t->fInstr->immSize && t->operandType >= 5) b = t->parm[4]; // avoid conversion of b to float
     if (t->fInstr->imm2 & 4) {
         b.q = t->pInstr->a.im2;                  // avoid immediate operand shifted by imm3
     }
@@ -1706,6 +2005,7 @@ static uint64_t f_test_bits(CThread * t) {
         break;
     default:
         t->interrupt(INT_INST_ILLEGAL);
+        result.i = 0;
     }
     // get additional options
     uint8_t options = 0;
@@ -1736,7 +2036,7 @@ static uint64_t f_test_bits_all1(CThread * t) {
     // result = (a & b) == b
     SNum a = t->parm[1];
     SNum b = t->parm[2];
-    if (t->fInstr->immSize) b = t->parm[4];      // avoid conversion of b to float
+    if (t->fInstr->immSize && t->operandType >= 5) b = t->parm[4]; // avoid conversion of b to float
     if (t->fInstr->imm2 & 4) {
         b.q = t->pInstr->a.im2;                  // avoid immediate operand shifted by imm3
     }
@@ -1762,6 +2062,7 @@ static uint64_t f_test_bits_all1(CThread * t) {
         break;
     default:
         t->interrupt(INT_INST_ILLEGAL);
+        result.i = 0;
     }
     // get additional options
     uint8_t options = 0;
@@ -1789,15 +2090,21 @@ static uint64_t f_test_bits_all1(CThread * t) {
 
 float mul_add_f(float a, float b, float c) {
     // calculate a * b + c with extra precision on the intermediate product.
-    // Note: you may replace this by inline assembly or intrinsic functions on
-    // platforms that have FMA instructions
+#if FMA_AVAILABLE
+    // use FMA instruction for correct precision if available
+    return _mm_cvtss_f32(_mm_fmadd_ss(_mm_load_ss(&a), _mm_load_ss(&b), _mm_load_ss(&c)));
+#else
     return float((double)a * (double)b + (double)c);
+#endif
 }
 
 double mul_add_d(double a, double b, double c) {
     // calculate a * b + c with extra precision on the intermediate product.
-    // Note: you may replace this by inline assembly or intrinsic functions on
-    // platforms that have FMA instructions
+#if FMA_AVAILABLE
+    // use FMA instruction for correct precision if available
+    return _mm_cvtsd_f64(_mm_fmadd_sd(_mm_load_sd(&a), _mm_load_sd(&b), _mm_load_sd(&c)));
+#else
+    // calculate a*b-c with extended precision. This code is not as good as the real FMA instruction
     SNum aa, bb, ahi, bhi, alo, blo;
     uint64_t upper_mask = 0xFFFFFFFFF8000000;
     aa.d = a;  bb.d = b;
@@ -1806,9 +2113,11 @@ double mul_add_d(double a, double b, double c) {
     bhi.q = bb.q & upper_mask;
     blo.d = b - bhi.d;
     double r1 = ahi.d * bhi.d;                   // this product is exact
+    // perhaps a different order of addition is better here in some cases?
     double r2 = r1 + c;                          // add c to high product
     double r3 = r2 + (ahi.d * blo.d + bhi.d * alo.d) + alo.d * blo.d; // add rest of product
     return r3;
+#endif
 }
 
 uint64_t f_mul_add(CThread * t) {
@@ -1816,22 +2125,25 @@ uint64_t f_mul_add(CThread * t) {
     SNum a = t->parm[0];
     SNum b = t->parm[1];
     SNum c = t->parm[2];
-    SNum mask = t->parm[3];
-    SNum result;
     if ((t->fInstr->imm2 & 4) && t->operandType < 5) {
         c.q = t->pInstr->a.im2;                  // avoid immediate operand shifted by imm3
     }
+    uint32_t mask = t->parm[3].i;
+    SNum result;
+    bool roundingMode = (mask & (3 << MSKI_ROUNDING)) != 0;  // non-standard rounding mode
+    bool detectExceptions = (mask & (0xF << MSKI_EXCEPTIONS)) != 0;  // make NAN if exceptions
+
     // get sign options
     uint8_t options = 0;
     if (t->fInstr->tmpl == 0xE) options = t->pInstr->a.im3;
-    else if (t->fInstr->tmpl == 0xA) options = (mask.i >> 10) & 0xF;
+    else if (t->fInstr->tmpl == 0xA) options = (mask >> MSKI_OPTIONS) & 0xF;
     if (t->vect == 2) { // odd vector element
         options >>= 1;
     }
     bool unsignedOverflow = false;
     bool signedOverflow = false;
-
-    switch (t->operandType) {
+    uint8_t operandType = t->operandType;
+    switch (operandType) {
     case 0:   // int8
         a.is = a.bs; b.is = b.bs;    // sign extend to avoid overflow during sign change
         if (options & 1) a.is = -a.is;
@@ -1866,48 +2178,80 @@ uint64_t f_mul_add(CThread * t) {
             b.qs = -b.qs;
         }
         result.qs = a.qs + b.qs * c.qs;
+        /*
         if (mask.b & MSK_OVERFL_UNSIGN) {                  // check for unsigned overflow
             if (fabs((double)a.q + (double)b.q * (double)c.q - (double)result.q) > 1.E8) unsignedOverflow = true;
         }
         if (mask.b & MSK_OVERFL_SIGN) {                    // check for signed overflow
             if (fabs((double)a.qs + (double)b.qs * (double)c.qs - (double)result.qs) > 1.E8) signedOverflow = true;
-        }
+        } */
         break;
     case 5:   // float
         if (options & 1) a.f = -a.f;
         if (options & 4) b.f = -b.f;
-        result.f = mul_add_f(c.f, b.f, a.f);
-        if (result.i << 1 >= inf2f) {                      // check for overflow and nan
-            uint32_t nans = 0;  bool parmInf = false;
+        if (roundingMode) setRoundingMode(mask >> MSKI_ROUNDING);
+        if (detectExceptions) clearExceptionFlags();       // clear previous exceptions
+
+        result.f = mul_add_f(c.f, b.f, a.f);               // do the calculation
+        if (isnan_or_inf_f(result.i)) {                    // check for overflow and nan
+            uint32_t nans = 0;                             // biggest NAN
+            uint32_t infs = 0;                             // count INF inputs
             for (int i = 0; i < 3; i++) {                  // loop through input operands
                 uint32_t tmp = t->parm[i].i & nsign_f;     // ignore sign bit
-                if (tmp > nans) nans = tmp;                // get the biggest if there are multiple NANs
-                if (tmp == inf_f) parmInf = true;          // OR of all INFs
+                if (tmp == inf_f) infs++;                  // is INF
+                else if (tmp > nans) nans = tmp;           // get the biggest if there are multiple NANs
             }
-            if (nans > inf_f) return nans;                 // there is at least one NAN. return the biggest (sign bit is lost)
-            else if ((mask.i & MSK_OVERFL_FLOAT) && !parmInf) t->interrupt(INT_OVERFL_FLOAT);
+            if (nans) result.i = nans;                     // there is at least one NAN. return the biggest (sign bit is lost)
+            else if (isnan_f(result.i)) {
+                // result is NAN, but no input is NAN. This can be 0*INF or INF-INF
+                if ((a.i << 1 == 0 || b.i << 1 == 0) && infs) result.q = t->makeNan(nan_invalid_0mulinf, operandType);
+                else result.q = t->makeNan(nan_invalid_sub, operandType);
+            }
         }
+        else if (detectExceptions) {
+            uint32_t x = getExceptionFlags();              // read exceptions
+            if ((mask & MSK_OVERFLOW) && (x & 8)) result.q = t->makeNan(nan_overflow_mul, operandType);
+            else if ((mask & MSK_UNDERFLOW) && (x & 0x10)) result.q = t->makeNan(nan_underflow, operandType);
+            else if ((mask & MSK_INEXACT) && (x & 0x20)) result.q = t->makeNan(nan_inexact, operandType);
+        }
+        if (roundingMode) setRoundingMode(0);              // reset rounding mode
         break;
+
     case 6:   // double
         if (options & 1) a.d = -a.d;
         if (options & 4) b.d = -b.d;
-        result.d = mul_add_d(c.d, b.d, a.d);
-        if ((result.q & nsign_d) >= inf_d) {               // check for overflow and nan
-            uint64_t nans = 0;  bool parmInf = false;
+        if (roundingMode) setRoundingMode(mask >> MSKI_ROUNDING);
+        if (detectExceptions) clearExceptionFlags();       // clear previous exceptions
+
+        result.d = mul_add_d(c.d, b.d, a.d);               // do the calculation
+        if (isnan_or_inf_d(result.q)) {                    // check for overflow and nan
+            uint64_t nans = 0;                             // biggest NAN
+            uint32_t infs = 0;                             // count INF inputs
             for (int i = 0; i < 3; i++) {                  // loop through input operands
                 uint64_t tmp = t->parm[i].q & nsign_d;     // ignore sign bit
-                if (tmp > nans) nans = tmp;                // get the biggest if there are multiple NANs
-                if (tmp == inf_d) parmInf = true;          // OR of all INFs
+                if (tmp == inf_d) infs++;                  // is INF
+                else if (tmp > nans) nans = tmp;           // get the biggest if there are multiple NANs
             }
-            if (nans > inf_d) return nans;                 // there is at least one NAN. return the biggest (sign bit is lost)
-            else if ((mask.i & MSK_OVERFL_FLOAT) && !parmInf) t->interrupt(INT_OVERFL_FLOAT);
+            if (nans) result.q = nans;                     // there is at least one NAN. return the biggest (sign bit is lost)
+            else if (isnan_d(result.q)) {
+                // result is NAN, but no input is NAN. This can be 0*INF or INF-INF
+                if ((a.q << 1 == 0 || b.q << 1 == 0) && infs) result.q = t->makeNan(nan_invalid_0mulinf, operandType);
+                else result.q = t->makeNan(nan_invalid_sub, operandType);
+            }
         }
+        else if (detectExceptions) {
+            uint32_t x = getExceptionFlags();              // read exceptions
+            if ((mask & MSK_OVERFLOW) && (x & 8)) result.q = t->makeNan(nan_overflow_mul, operandType);
+            else if ((mask & MSK_UNDERFLOW) && (x & 0x10)) result.q = t->makeNan(nan_underflow, operandType);
+            else if ((mask & MSK_INEXACT) && (x & 0x20)) result.q = t->makeNan(nan_inexact, operandType);
+        }
+        if (roundingMode) setRoundingMode(0);              // reset rounding mode
         break;
+
     default:
         t->interrupt(INT_INST_ILLEGAL);
+        result.i = 0;
     }
-    if ((mask.b & MSK_OVERFL_SIGN) && signedOverflow) t->interrupt(INT_OVERFL_SIGN);
-    else if ((mask.b & MSK_OVERFL_UNSIGN) && unsignedOverflow) t->interrupt(INT_OVERFL_UNSIGN);
     return result.q;
 }
 
@@ -1931,12 +2275,15 @@ static uint64_t f_add_add(CThread * t) {
         parm[2].q = t->pInstr->a.im2;            // avoid immediate operand shifted by imm3
     }
     uint32_t mask = t->parm[3].i;
+    bool roundingMode = (mask & (3 << MSKI_ROUNDING)) != 0;  // non-standard rounding mode
+    bool detectExceptions = (mask & (0xF << MSKI_EXCEPTIONS)) != 0;  // make NAN if exceptions
+    uint8_t operandType = t->operandType;
     SNum sumS, sumU;                             // signed and unsigned sums
     SNum nanS;                                   // combined nan's
     // get sign options
     uint8_t options = 0;
     if (t->fInstr->tmpl == 0xE) options = t->pInstr->a.im3;
-    else if (t->fInstr->tmpl == 0xA) options = uint8_t(mask >> 10);
+    else if (t->fInstr->tmpl == 0xA) options = uint8_t(mask >> MSKI_OPTIONS);
     
     uint8_t signedOverflow = 0;
     uint8_t unsignedOverflow = 0;
@@ -1945,7 +2292,7 @@ static uint64_t f_add_add(CThread * t) {
     uint32_t temp1;
     uint64_t temp2;
 
-    switch (t->operandType) {
+    switch (operandType) {
     case 0:   // int8
         for (i = 0; i < 3; i++) {                // loop through operands
             if (options & 1) {                   // change sign
@@ -2022,11 +2369,26 @@ static uint64_t f_add_add(CThread * t) {
         temp1 = parm[j].i;
         parm[j].i = parm[2].i;
         parm[2].i = temp1;
+
+        if (roundingMode) setRoundingMode(mask >> MSKI_ROUNDING);
+        if (detectExceptions) clearExceptionFlags();       // clear previous exceptions
+
         // calculate sum
         sumU.f = (parm[0].f + parm[1].f) + parm[2].f;
-        // check for overflow
-        if (isinf_f(sumU.i) && !parmInf) t->interrupt(INT_OVERFL_FLOAT);
+
+        if (isnan_f(sumU.i)) {
+            // the result is NAN but neither input is NAN. This must be INF-INF
+            sumU.q = t->makeNan(nan_invalid_sub, operandType);
+        }
+        if (detectExceptions) {
+            uint32_t x = getExceptionFlags();              // read exceptions
+            if ((mask & MSK_OVERFLOW) && (x & 8)) sumU.q = t->makeNan(nan_overflow_add, operandType);
+            else if ((mask & MSK_UNDERFLOW) && (x & 0x10)) sumU.q = t->makeNan(nan_underflow, operandType);
+            else if ((mask & MSK_INEXACT) && (x & 0x20)) sumU.q = t->makeNan(nan_inexact, operandType);
+        }
+        if (roundingMode) setRoundingMode(0);              // reset rounding mode
         break;
+
     case 6:   // double
         sumS.qs = -1;  nanS.q = 0;
         for (i = 0; i < 3; i++) {                          // loop through operands
@@ -2048,33 +2410,88 @@ static uint64_t f_add_add(CThread * t) {
         temp2 = parm[j].q;
         parm[j].q = parm[2].q;
         parm[2].q = temp2;
+        if (roundingMode) setRoundingMode(mask >> MSKI_ROUNDING);
+        if (detectExceptions) clearExceptionFlags();       // clear previous exceptions
+
         // calculate sum
         sumU.d = (parm[0].d + parm[1].d) + parm[2].d;
-        // check for overflow
-        if (isinf_d(sumU.q) && !parmInf) t->interrupt(INT_OVERFL_FLOAT);
+
+        if (isnan_d(sumU.q)) {
+            // the result is NAN but neither input is NAN. This must be INF-INF
+            sumU.q = t->makeNan(nan_invalid_sub, operandType);
+        }
+        if (detectExceptions) {
+            uint32_t x = getExceptionFlags();              // read exceptions
+            if ((mask & MSK_OVERFLOW) && (x & 8)) sumU.q = t->makeNan(nan_overflow_add, operandType);
+            else if ((mask & MSK_UNDERFLOW) && (x & 0x10)) sumU.q = t->makeNan(nan_underflow, operandType);
+            else if ((mask & MSK_INEXACT) && (x & 0x20)) sumU.q = t->makeNan(nan_inexact, operandType);
+        }
+        if (roundingMode) setRoundingMode(0);              // reset rounding mode
         break;
+
     default:
         t->interrupt(INT_INST_ILLEGAL);
+        sumU.i = 0;
     }
     return sumU.q;
 }
 
 uint64_t f_add_h(CThread * t) {
     // add two numbers, float16
+    // (rounding mode not supported)
     SNum a = t->parm[1];
     SNum b = t->parm[2];
-    SNum mask = t->parm[3];
+    uint32_t mask = t->parm[3].i;
     uint16_t result;
+
     if (t->fInstr->immSize == 1) b.s = float2half(b.bs);  // convert 8-bit integer to float16
     if (t->operandType != 1) t->interrupt(INT_INST_ILLEGAL);
-    result = float2half(half2float(a.s) + half2float(b.s));
     if (isnan_h(a.s) && isnan_h(b.s)) {    // both are NAN
-        result = (a.s << 1) > (b.s << 1) ? a.s : b.s; // return the biggest payload. (current systems don't do this)
+        result = (a.s << 1) > (b.s << 1) ? a.s : b.s; // return the biggest payload
     }
-    if (mask.i & MSK_OVERFL_FLOAT) {  // trap if overflow
-        if (isinf_h(result) && !isinf_h(a.s) && !isinf_h(b.s)) {
-            t->interrupt(INT_OVERFL_FLOAT);
-        }
+    if (mask & MSK_INEXACT) clearExceptionFlags();       // clear previous exceptions
+
+    // the exact result is obtained with double precision. This makes sure we don't get double rounding errors
+    double resultd = (double)half2float(a.s) + (double)half2float(b.s);  // calculate with single precision
+    result = double2half(resultd);
+
+    // check for exceptions
+    if ((mask & MSK_OVERFLOW) && isinf_h(result) && !isinf_h(a.s) && !isinf_h(b.s)) {
+        // overflow
+        result = (uint16_t)t->makeNan(nan_overflow_add, 1);
+        result |= (a.s ^ b.s) & 0x8000;  // get the sign
+    }
+    else if ((mask & MSK_UNDERFLOW) && is_zero_or_subnormal_h(result) && resultd != 0.0) {
+        // underflow
+        result = (uint16_t)t->makeNan(nan_underflow, 1) | (result & 0x8000); // signed NAN
+    }
+    else if ((mask & MSK_INEXACT) && (half2float(result) != resultd || (getExceptionFlags() & 0x20)) != 0) {
+        // inexact
+        result = (uint16_t)t->makeNan(nan_inexact, 1);
+    }
+
+    uint8_t roundingMode = mask >> MSKI_ROUNDING & 3;
+    if (roundingMode != 0 && !isnan_or_inf_h(result)) {
+        double r = half2float(result);
+        // non-standard rounding mode
+        switch (roundingMode) {
+        case 1:  // down
+            if (r > resultd && result != 0xFBFF) {
+                if (result == 0) result = 0x8001;
+                else if ((int16_t)result > 0) result--;
+                else result++;
+            }
+            break;
+        case 2:  // up
+            if (r < resultd && result != 0x7BFF) {
+                if ((int16_t)result > 0) result++;
+                else result--;
+            }
+            break;
+        case 3:  // towards zero
+            if ((int16_t)result > 0 && r > resultd) result--;
+            else if ((int16_t)result < 0 && r < resultd) result--;        
+        }    
     }
     t->returnType =0x118;
     return result;
@@ -2082,74 +2499,188 @@ uint64_t f_add_h(CThread * t) {
 
 uint64_t f_sub_h(CThread * t) {
     // subtract two numbers, float16
+    // (rounding mode not supported)
     SNum a = t->parm[1];
     SNum b = t->parm[2];
-    SNum mask = t->parm[3];
-    if (t->fInstr->immSize == 1) b.s = float2half(b.bs);  // convert 8-bit integer to float16
+    uint32_t mask = t->parm[3].i;
     uint16_t result;
+
+    if (t->fInstr->immSize == 1) b.s = float2half(b.bs);  // convert 8-bit integer to float16
     if (t->operandType != 1) t->interrupt(INT_INST_ILLEGAL);
-    result = float2half(half2float(a.s) - half2float(b.s));
     if (isnan_h(a.s) && isnan_h(b.s)) {    // both are NAN
-        result = (a.s << 1) > (b.s << 1) ? a.s : b.s; // return the biggest payload. (current systems don't do this)
+        result = (a.s << 1) > (b.s << 1) ? a.s : b.s; // return the biggest payload
     }
-    if (mask.i & MSK_OVERFL_FLOAT) {  // trap if overflow
-        if (isinf_h(result) && !isinf_h(a.s) && !isinf_h(b.s)) {
-            t->interrupt(INT_OVERFL_FLOAT);
-        }
+    if (mask & MSK_INEXACT) clearExceptionFlags();       // clear previous exceptions
+
+    // the exact result is obtained with double precision. This makes sure we don't get double rounding errors
+    double resultd = (double)half2float(a.s) - (double)half2float(b.s);  // calculate with single precision
+    result = double2half(resultd);
+
+    // check for exceptions
+    if ((mask & MSK_OVERFLOW) && isinf_h(result) && !isinf_h(a.s) && !isinf_h(b.s)) {
+        // overflow
+        result = (uint16_t)t->makeNan(nan_overflow_add, 1);
+        result |= (a.s ^ b.s) & 0x8000;  // get the sign
+    }
+    else if ((mask & MSK_UNDERFLOW) && is_zero_or_subnormal_h(result) && resultd != 0.0) {
+        // underflow
+        result = (uint16_t)t->makeNan(nan_underflow, 1) | (result & 0x8000); // signed NAN
+    }
+    else if ((mask & MSK_INEXACT) && (half2float(result) != resultd || (getExceptionFlags() & 0x20)) != 0) {
+        // inexact
+        result = (uint16_t)t->makeNan(nan_inexact, 1);
+    }
+    uint8_t roundingMode = mask >> MSKI_ROUNDING & 3;
+    if (roundingMode != 0 && !isnan_or_inf_h(result)) {
+        double r = half2float(result);
+        // non-standard rounding mode
+        switch (roundingMode) {
+        case 1:  // down
+            if (r > resultd && result != 0xFBFF) {
+                if (result == 0) result = 0x8001;
+                else if ((int16_t)result > 0) result--;
+                else result++;
+            }
+            break;
+        case 2:  // up
+            if (r < resultd && result != 0x7BFF) {
+                if ((int16_t)result > 0) result++;
+                else result--;
+            }
+            break;
+        case 3:  // towards zero
+            if ((int16_t)result > 0 && r > resultd) result--;
+            else if ((int16_t)result < 0 && r < resultd) result--;        
+        }    
     }
     t->returnType =0x118;
     return result;
 }
 
 uint64_t f_mul_h(CThread * t) {
-    // mulitply two numbers, float16
+    // multiply two numbers, float16
     SNum a = t->parm[1];
     SNum b = t->parm[2];
-    SNum mask = t->parm[3];
+    uint32_t mask = t->parm[3].i;
     uint16_t result;
+
     if (t->fInstr->immSize == 1) b.s = float2half(b.bs);  // convert 8-bit integer to float16
     if (t->operandType != 1) t->interrupt(INT_INST_ILLEGAL);
-    result = float2half(half2float(a.s) * half2float(b.s));
     if (isnan_h(a.s) && isnan_h(b.s)) {    // both are NAN
-        result = (a.s << 1) > (b.s << 1) ? a.s : b.s; // return the biggest payload. (current systems don't do this)
+        result = (a.s << 1) > (b.s << 1) ? a.s : b.s; // return the biggest payload
     }
-    if (mask.i & MSK_OVERFL_FLOAT) {  // trap if overflow
-        if (isinf_h(result) && !isinf_h(a.s) && !isinf_h(b.s)) {
-            t->interrupt(INT_OVERFL_FLOAT);
-        }
+    if (mask & MSK_INEXACT) clearExceptionFlags();       // clear previous exceptions
+
+    // single precision is sufficient to get an exact multiplication result
+    float resultf = half2float(a.s) * half2float(b.s);  // calculate with single precision
+    result = float2half(resultf);
+
+    // check for exceptions
+    if ((mask & MSK_OVERFLOW) && isinf_h(result) && !isinf_h(a.s) && !isinf_h(b.s)) {
+        // overflow
+        result = (uint16_t)t->makeNan(nan_overflow_mul, 1);
+        result |= (a.s ^ b.s) & 0x8000;  // get the sign
+    }
+    else if ((mask & MSK_UNDERFLOW) && is_zero_or_subnormal_h(result) && resultf != 0.0f) {
+        // underflow
+        result = (uint16_t)t->makeNan(nan_underflow, 1) | (result & 0x8000); // signed NAN
+    }
+    else if ((mask & MSK_INEXACT) && (half2float(result) != resultf || (getExceptionFlags() & 0x20)) != 0) {
+        // inexact
+        result = (uint16_t)t->makeNan(nan_inexact, 1);
+    }
+    uint8_t roundingMode = mask >> MSKI_ROUNDING & 3;
+    if (roundingMode != 0 && !isnan_or_inf_h(result)) {
+        // non-standard rounding mode
+        float r = half2float(result);
+        switch (roundingMode) {
+        case 1:  // down
+            if (r > resultf && result != 0xFBFF) {
+                if (result == 0) result = 0x8001;
+                else if ((int16_t)result > 0) result--;
+                else result++;
+            }
+            break;
+        case 2:  // up
+            if (r < resultf && result != 0x7BFF) {
+                if ((int16_t)result > 0) result++;
+                else result--;
+            }
+            break;
+        case 3:  // towards zero
+            if ((int16_t)result > 0 && r > resultf) result--;
+            else if ((int16_t)result < 0 && r < resultf) result--;        
+        }    
     }
     t->returnType =0x118;
     return result;
 }
 
+
 uint64_t f_mul_add_h(CThread * t) {
     // a + b * c, float16
     SNum a = t->parm[0];
     SNum b = t->parm[1];
-    SNum c = t->parm[2];
-    SNum mask = t->parm[3];
-    uint16_t result;
+    SNum c = t->parm[2]; 
+    uint32_t mask = t->parm[3].i;
     if (t->fInstr->imm2 & 4) c = t->parm[4];          // avoid immediate operand shifted by imm3
     if (t->fInstr->immSize == 1) c.s = float2half(c.bs);  // convert 8-bit integer to float16                                                          // get sign options
     uint8_t options = 0;
     if (t->fInstr->tmpl == 0xE) options = t->pInstr->a.im3;
-    else if (t->fInstr->tmpl == 0xA) options = (mask.i >> 10) & 0xF;
+    else if (t->fInstr->tmpl == 0xA) options = (mask >> MSKI_OPTIONS) & 0xF;
     if (t->vect == 2) { // odd vector element
         options >>= 1;
     }
     if (t->operandType != 1) t->interrupt(INT_INST_ILLEGAL);
     if (options & 1) a.s ^= 0x8000;                           // adjust sign
     if (options & 4) b.s ^= 0x8000;
-    result = float2half(half2float(a.s) + half2float(b.s) * half2float(c.s));
+
+    if (mask & MSK_INEXACT) clearExceptionFlags();         // clear previous exceptions
+
+    double resultd = (double)half2float(a.s) + (double)half2float(b.s) * (double)half2float(c.s);
+
+    uint16_t result = double2half(resultd);
+    uint32_t nans = 0;  bool parmInf = false;
+
     if (isnan_or_inf_h(result)) {                          // check for overflow and nan
-        uint32_t nans = 0;  bool parmInf = false;
         for (int i = 0; i < 3; i++) {                      // loop through input operands
             uint32_t tmp = t->parm[i].s & 0x7FFF;          // ignore sign bit
             if (tmp > nans) nans = tmp;                    // get the biggest if there are multiple NANs
             if (tmp == inf_h) parmInf = true;              // OR of all INFs
         }
         if (nans > inf_h) return nans;                     // there is at least one NAN. return the biggest (sign bit is lost)
-        else if ((mask.i & MSK_OVERFL_FLOAT) && !parmInf) t->interrupt(INT_OVERFL_FLOAT);
+        else if (isnan_h(result)) {
+            // result is NAN, but no input is NAN. This can be 0*INF or INF-INF
+            if ((a.s << 1 == 0 || b.s << 1 == 0) && parmInf) result = (uint16_t)t->makeNan(nan_invalid_0mulinf, 1);
+            else result = (uint16_t)t->makeNan(nan_invalid_sub, 1);
+        }
+    }
+    else if ((mask & MSK_OVERFLOW) && isinf_h(result) && !parmInf) result = (uint16_t)t->makeNan(nan_overflow_mul, 1);
+    else if ((mask & MSK_UNDERFLOW) && is_zero_or_subnormal_h(result) && resultd != 0.0) result = (uint16_t)t->makeNan(nan_underflow, 1);
+    else if ((mask & MSK_INEXACT) && ((getExceptionFlags() & 0x20) != 0 || half2float(result) != resultd)) result = (uint16_t)t->makeNan(nan_inexact, 1);
+
+    uint8_t roundingMode = mask >> MSKI_ROUNDING & 3;
+    if (roundingMode != 0 && !isnan_or_inf_h(result)) {
+        float r = half2float(result);
+        // non-standard rounding mode
+        switch (roundingMode) {
+        case 1:  // down
+            if (r > resultd && result != 0xFBFF) {
+                if (result == 0) result = 0x8001;
+                else if ((int16_t)result > 0) result--;
+                else result++;
+            }
+            break;
+        case 2:  // up
+            if (r < resultd && result != 0x7BFF) {
+                if ((int16_t)result > 0) result++;
+                else result--;
+            }
+            break;
+        case 3:  // towards zero
+            if ((int16_t)result > 0 && r > resultd) result--;
+            else if ((int16_t)result < 0 && r < resultd) result--;        
+        }    
     }
     t->returnType =0x118;
     return result;

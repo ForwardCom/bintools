@@ -1,17 +1,21 @@
 /****************************  emulator1.cpp  ********************************
 * Author:        Agner Fog
 * date created:  2018-02-18
-* Last modified: 2018-03-30
-* Version:       1.01
+* Last modified: 2020-04-15
+* Version:       1.09
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
 * Basic functionality of the emulator
 *
-* Copyright 2018 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2018-2020 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 #include "stdafx.h"
 
+
+///////////////////
+// CEmulator class
+///////////////////
 
 // constructor
 CEmulator::CEmulator() {
@@ -293,14 +297,28 @@ void CEmulator::disassemble() {                  // make disassembly listing for
 }
 
 
+/////////////////
+// CThread class
+/////////////////
+
 // constructor
 CThread::CThread() {
-    numContr = 1 | 1<<21;                        // default: better NAN propagation
+    numContr = 1 | MSK_SUBNORMAL;                          // default numContr. Bit 0 must be 1;
+    enableSubnormals (numContr & MSK_SUBNORMAL);           // enable or disable subnormal numbers
+    lastMask = numContr;
     ninstructions = 0;
-    mapIndex1 = mapIndex2 = mapIndex3 = 0;       // indexes into memory map
+    mapIndex1 = mapIndex2 = mapIndex3 = 0;                 // indexes into memory map
     pendingTinyInstruction = false;
     callDept = 0;
     listLines = 0;
+    tempBuffer = 0;
+}
+
+// destructor
+CThread::~CThread() {
+    if (tempBuffer != 0) {
+        delete[] tempBuffer;                               // free temporary buffer
+    }
 }
 
 // initialize registers etc. from values in emulator
@@ -308,12 +326,13 @@ void CThread::setRegisters(CEmulator * emulator) {
     this->emulator = emulator;
     this->memory = emulator->memory;                       // program memory
     memoryMap.copy(emulator->memoryMap);                   // memory map
-//    ip_base = emulator->ip_base;                           // reference point for code and read-only data
+    // ip_base = emulator->ip_base;                        // reference point for code and read-only data
     ip0 = emulator->ip0;                                   // reference point for code and read-only data
     datap = emulator->datap0 + emulator->fileHeader.e_datap_base;  // base pointer for writeable data
     threadp = emulator->threadp0 + emulator->fileHeader.e_threadp_base; // base pointer for thread-local data
     ip = entry_point = emulator->fileHeader.e_entry + ip0; // start value of instruction pointer
     MaxVectorLength = emulator->MaxVectorLength;
+    tempBuffer = new int8_t[MaxVectorLength];              // temporary buffer for vector operands
     memset(registers, 0, sizeof(registers));               // clear all registers
     memset(vectorLength, 0, sizeof(vectorLength));
     vectors.setDataSize(32*MaxVectorLength);
@@ -337,8 +356,6 @@ void CThread::run() {
     if (listFileName) {
         listOut.write(cmd.getFilename(listFileName));
     }
-
-
 }
 
 // fetch next instruction
@@ -388,10 +405,6 @@ void CThread::decode() {
         // op code
         op   = tt.t.op1;
         rs   = tt.t.rs;
-
-        //!!
-        if (op == 31)
-            op += 0;
 
         // find format in tables
         uint32_t ff = lookupFormat(0x70000000 | op << 21);
@@ -465,6 +478,7 @@ void CThread::decode() {
     noVectorLength = (nOperands & 0x10) != 0;              // bit 4: vector length determined by execution function
     doubleStep     = (nOperands & 0x20) != 0;              // bit 5: take double steps
     dontRead       = (nOperands & 0x40) != 0;              // bit 6: don't read source operand
+    unchangedRd    = (nOperands & 0x80) != 0;              // bit 7: RD is unchanged, not destination
     nOperands &= 0x7;                                      // bit 0-2: number of operands
 
     // Get operand type
@@ -729,7 +743,7 @@ void CThread::execute() {
             vectorLengthR = elementSize;         // make sure it is called at least once
         }
         // set vector length of destination
-        if (!noVectorLength) {        
+        if (!noVectorLength && !unchangedRd) {
             vectorLength[operands[0]] = vectorLengthR;
         }
 
@@ -782,7 +796,7 @@ void CThread::execute() {
                 // write result to vector
                 writeVectorElement(operands[0], result, vectorOffset);
                 if (dataSizeTable[operandType] >= 16 || doubleStep) {  // double size
-                    writeVectorElement(operands[0], parm[5].q, vectorOffset + elementSize); // high part of double size result
+                    writeVectorElement(operands[0], parm[5].q, vectorOffset + (elementSize>>1)); // high part of double size result
                 }
             }
             vect ^= 3;                                     // toggle between 1 for even elements, 2 for odd
@@ -819,22 +833,27 @@ void CThread::execute() {
 // read vector element
 uint64_t CThread::readVectorElement(uint32_t v, uint32_t vectorOffset) {
     uint32_t size;   // element size
+    uint64_t returnval = 0;
     if (operandType == 8) size = 2;
     else size = dataSizeTableMax8[operandType];
     v &= 0x1F;  // protect against array overflow
-    if (vectorOffset + size <= vectorLength[v]) {
+    if (vectorOffset < vectorLength[v]) {
         switch (size) {  // zero-extend from element size
         case 1:
-            return *(uint8_t*)(vectors.buf() + MaxVectorLength*v + vectorOffset);
+            returnval = *(uint8_t*)(vectors.buf() + MaxVectorLength*v + vectorOffset);
         case 2:
-            return *(uint16_t*)(vectors.buf() + MaxVectorLength*v + vectorOffset);
+            returnval = *(uint16_t*)(vectors.buf() + MaxVectorLength*v + vectorOffset);
         case 4:
-            return *(uint32_t*)(vectors.buf() + MaxVectorLength*v + vectorOffset);
+            returnval = *(uint32_t*)(vectors.buf() + MaxVectorLength*v + vectorOffset);
         case 8:
-            return *(uint64_t*)(vectors.buf() + MaxVectorLength*v + vectorOffset);
+            returnval = *(uint64_t*)(vectors.buf() + MaxVectorLength*v + vectorOffset);
+        }
+        uint32_t sizemax = vectorLength[v] - vectorOffset;            
+        if (size > sizemax) {  // reading beyond end of vector. cut off element to max size
+            returnval &= (uint64_t(1) << sizemax*8) - 1;
         }
     }
-    return 0;
+    return returnval;
 }
 
 // write vector element
@@ -1163,4 +1182,24 @@ void CThread::listResult(uint64_t result) {
         listOut.put((returnType & 0x2000) ? "jump" : "no jump"); // tell if jump or not
     }
     listOut.newLine();
+}
+
+// make a NAN with exception code and address in payload
+uint64_t CThread::makeNan(uint32_t code, uint32_t operandTyp) {
+    uint64_t retval = 0;
+    uint8_t instrLength = lengthList[pInstr->a.il];  // instruction length
+    uint64_t iaddress = ((ip - ip0) >> 2) - instrLength;     // instruction address
+    iaddress = ~iaddress;                            // invert bits
+    switch (operandTyp) {
+    case 1:  // half precision
+        retval = (uint8_t)code | 0x7E00 | (iaddress & 1) << 8;
+        break;
+    case 5:  // single precision
+        retval = (uint8_t)code | 0x7FC00000 | uint32_t(iaddress & (1 << 14) - 1) << 8;
+        break;
+    case 6:  // double precision
+        retval = (uint8_t)code | 0x7FF8000000000000 | (iaddress & ((uint64_t)1 << 43) - 1) << 8;
+        break;
+    }
+    return retval;
 }

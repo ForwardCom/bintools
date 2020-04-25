@@ -1,14 +1,14 @@
 /****************************  emulator.h   **********************************
 * Author:        Agner Fog
 * date created:  2018-02-18
-* Last modified: 2018-03-30
-* Version:       1.01
+* Last modified: 2020-04-14
+* Version:       1.09
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        emulator.h
 * Description:
 * Header file for emulator
 *
-* Copyright 2018-2018 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2018-2020 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 // structure for memory map
@@ -25,7 +25,7 @@ union SNum {
     uint32_t i;                                  // 32 bit unsigned integer
     int32_t  is;                                 // 32 bit signed integer
     uint16_t s;                                  // 16 bit unsigned integer
-    int16_t ss;                                  // 16 bit signed integer
+    int16_t  ss;                                 // 16 bit signed integer
     uint8_t  b;                                  // 8 bit  unsigned integer
     int8_t   bs;                                 // 8 bit  signed integer
     double d;                                    // double precision float
@@ -38,14 +38,16 @@ class CEmulator;                                 // preliminary declaration
 class CThread {
 public:
     CThread();                                   // constructor
+    ~CThread();                                  // destructor
     void run();                                  // start running
     void setRegisters(CEmulator * emulator);     // initialize registers etc.
     uint64_t ip;                                 // instruction pointer
     uint64_t ip0;                                // address base for code and read-only data
     uint64_t datap;                              // base pointer for writeable data
     uint64_t threadp;                            // base pointer for thread-local data
-    uint64_t numContr;                           // numeric control register
     uint64_t ninstructions;                      // number of instructions executed
+    uint32_t numContr;                           // numeric control register
+    uint32_t lastMask;                           // shows last status of subnormal support
     uint32_t options;                            // option bits in instruction
     uint32_t exception;                          // exception or jump caused by current instruction
     STemplate const * pInstr;                    // current instruction code
@@ -53,7 +55,7 @@ public:
     SNum     parm[6];                            // parm[0] = value of first operand if 3 operands
                                                  // parm[1] = value of first operand if 2 operands or second operand if 3 operands
                                                  // parm[2] = value of last operand
-                                                 // parm[3] = value of mask register
+                                                 // parm[3] = value of mask register or NUMCONTR
                                                  // parm[4] = value of immediate operand without shift or conversion
                                                  // parm[5] = high part of double size return value
     uint8_t  operands[6];                        // instruction operands. 0x00-0x1F = register. 0x20 = immediate, 0x40 = memory
@@ -74,6 +76,7 @@ public:
     bool     doubleStep;                         // execution function will process two vector elements at a time
     bool     noVectorLength;                     // RS is not a vector register, or vector length is determined by execution function
     bool     dontRead;                           // don't read source operand before execution
+    bool     unchangedRd;                        // store instruction: RD is not destination
     bool     terminate;                          // stop execution
     CMemoryBuffer vectors;                       // vector register i is at offset i*MaxVectorLength
     uint64_t registers[32];                      // value of register r0 - r31
@@ -85,6 +88,7 @@ public:
     uint32_t returnType;                         // debug return output. bit 0-3: operand type (8 = half precision). bit 4: register. bit 5: memory. bit6: one extra element (save_cp)
                                                  // bit 8: vector. bit 12: jump. bit 13: jump taken
     int8_t * memory;                             // program memory
+    int8_t * tempBuffer;                         // temporary buffer for vector operand
     uint64_t memAddress;                         // address of memory operand
     int64_t  addrOperand;                        // relative address of memory operand or jump target
     uint64_t readVectorElement(uint32_t v, uint32_t vectorOffset); // read vector element
@@ -97,6 +101,7 @@ public:
     int fprintfEmulated(FILE * stream, const char * format, uint64_t * argumentList); // emulate fprintf with ForwardCom argument list
     // check if system function has access to a particular address
     void systemCall(uint32_t mod, uint32_t funcid, uint8_t rd, uint8_t rs); // entry for system calls
+    uint64_t makeNan(uint32_t code, uint32_t operandType);// make a NAN with exception code and address in payload
     CDynamicArray<uint64_t> callStack;           // stack of return addresses
     uint32_t callDept;                           // maximum number of entries observed in callStack
     uint64_t entry_point;                        // program entry point
@@ -161,6 +166,12 @@ protected:
     friend class CThread;
 };
 
+// Functions for floating point exception and rounding control
+void setRoundingMode(uint8_t r);
+void clearExceptionFlags();
+uint32_t getExceptionFlags();
+void enableSubnormals(uint32_t e);
+
 // universal function type for execution function
 // all operands and option bits are accessed via *thread
 typedef uint64_t (*PFunc)(CThread * thread);
@@ -201,6 +212,11 @@ uint64_t f_div(CThread * thread);
 uint64_t f_mul_add(CThread * thread);
 uint64_t f_add_h(CThread * thread);
 uint64_t f_mul_h(CThread * thread);
+uint64_t insert_(CThread * t);
+uint64_t extract_(CThread * t);
+uint64_t bitscan_(CThread * t);
+uint64_t popcount_(CThread * t);
+
 
 // constants and functions for detecting NAN and infinity
 const uint16_t inf_h   = 0x7C00;                 // float16 infinity
@@ -216,7 +232,6 @@ const uint64_t nan_d   = 0x7FF8000000000000;     // double nan
 const uint64_t nsign_d = 0x7FFFFFFFFFFFFFFF;     // double not sign bit
 const uint64_t sign_d  = 0x8000000000000000;     // double sign bit
 
-
 // functions applied to the bit representations of floating point numbers to detect NAN and infinity:
 static inline bool isnan_h(uint16_t x) {return uint16_t(x << 1) > inf2h;}
 static inline bool isnan_f(uint32_t x) {return (x << 1) > inf2f;}
@@ -227,3 +242,4 @@ static inline bool isinf_d(uint64_t x) {return (x << 1) == inf2d;}
 static inline bool isnan_or_inf_h(uint16_t x) {return uint16_t(x << 1) >= inf2h;}
 static inline bool isnan_or_inf_f(uint32_t x) {return (x << 1) >= inf2f;}
 static inline bool isnan_or_inf_d(uint64_t x) {return (x << 1) >= inf2d;}
+static inline bool is_zero_or_subnormal_h(uint16_t x) {return (x & 0x7C00) == 0;}

@@ -1,13 +1,13 @@
 ﻿/****************************  emulator6.cpp  ********************************
 * Author:        Agner Fog
 * date created:  2018-02-18
-* Last modified: 2018-03-30
-* Version:       1.01
+* Last modified: 2020-04-21
+* Version:       1.09
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
 * Emulator: Execution functions for single format instructions, continued
 *
-* Copyright 2018 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2018-2020 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 #include "stdafx.h"
@@ -87,69 +87,623 @@ static uint64_t make_sequence (CThread * t) {
     return 0;
 }
 
+static uint64_t compress(CThread * t) {
+    // Compress vector RT of length RS to a vector of half the length and half the element size.
+    // Double precision -> single precision, 64-bit integer -> 32-bit integer, etc.
+
+    // operands:
+    uint8_t  rd = t->operands[0];
+    uint8_t  rs = t->operands[4];
+    uint8_t IM1 = t->parm[4].b;
+    if (IM1 & 0xC0) t->interrupt(INT_INST_ILLEGAL);
+    //uint32_t initLength = t->vectorLength[rt];
+    uint32_t oldLength = t->vectorLength[rs]; // (uint32_t)t->registers[rs];
+    uint32_t newLength = oldLength / 2;
+    uint32_t pos;  // position in destination vector
+    uint8_t overflowU  = 0;                      // unsigned overflow in current element
+    uint8_t overflowS  = 0;                      // signed overflow in current element
+    uint8_t overflowU2 = 0;                      // unsigned overflow in any element
+    uint8_t overflowS2 = 0;                      // signed overflow in any element
+    uint8_t overflowF2 = 0;                      // floating point overflow in any element
+    SNum mask = t->parm[3];                      // options mask
+    int8_t * source = t->vectors.buf() + (uint64_t)rs * t->MaxVectorLength;      // address of RS data
+    int8_t * destination = t->vectors.buf() + (uint64_t)rd * t->MaxVectorLength; // address of RD data
+
+    uint8_t roundingMode = (IM1 >> 3) & 7;       // floating point rounding mode
+    if (roundingMode == 0) roundingMode = ((t->parm[3].i >> MSKI_ROUNDING) & 7) | 4;
+    uint8_t exceptionControl = IM1 & 7;          // floating point exception enable bits:
+                                                 // 1: overflow, 2: underflow, 4: inexact
+    if (exceptionControl == 0) {                 // floating point exception control
+        exceptionControl = mask.i >> (MSKI_EXCEPTIONS + 1) & 7; // exceptions from NUMCONTR
+    }
+    else if (exceptionControl == 7) {
+        exceptionControl = 0;                    // 7 means none (5 means all)
+    }
+
+    switch (t->operandType) {                    //  source operand type
+    case 0:   // int8 -> int4
+        for (pos = 0; pos < newLength; pos += 1) {
+            union {
+                uint16_t s;
+                uint8_t b[2];
+            } u;
+            u.s = *(uint16_t*)(source + 2*pos);  // two values to convert to one byte
+            for (int i = 0; i < 2; i++) {        // loop for two bytes to convert
+                uint8_t val = u.b[i];
+                overflowU = val > 0x0F;          // unsigned overflow
+                overflowS = val - 0xF8 > 0x0F;   // signed overflow
+                overflowU2 |= overflowU;  overflowS2 |= overflowS;
+                switch (IM1 & 7) {
+                case 0: default:                 // wrap around
+                    break;
+                case 4:                          // signed integer overflow gives zero
+                    if (overflowS) val = 0;
+                    break;
+                case 5:                          // signed integer overflow gives signed saturation
+                    if (overflowS) val = 0x7 + (val >> 7);
+                    break;
+                case 6:                          // unsigned integer overflow gives zero
+                    if (overflowU) val = 0;
+                    break;
+                case 7:                          // unsigned integer overflow gives unsigned saturation
+                    if (overflowU) val = 0xF;
+                    break;
+                }
+                u.b[i] = val;           
+            }
+            uint8_t val2 = (u.b[0] & 0xF) | u.b[1] << 4;
+            *(uint8_t*)(destination + pos) = val2;         // store two values
+        }
+        t->returnType = 0x110;            
+        break;
+    case 1:   // int16 -> int8
+        for (pos = 0; pos < newLength; pos += 1) {
+            uint16_t val = *(uint16_t*)(source + 2*pos);   // value to convert
+            overflowU = val > 0xFF;                        // unsigned overflow
+            overflowS = val - 0xFF80 > 0xFF;               // signed overflow
+            overflowU2 |= overflowU;  overflowS2 |= overflowS;
+            switch (IM1 & 7) {
+            case 0: default: // wrap around
+                break;
+            case 4:          // signed integer overflow gives zero
+                if (overflowS) val = 0;
+                break;
+            case 5:          // signed integer overflow gives signed saturation
+                if (overflowS) val = 0x7F + (val >> 15);
+                break;
+            case 6:          // unsigned integer overflow gives zero
+                if (overflowU) val = 0;
+                break;
+            case 7:          // unsigned integer overflow gives unsigned saturation
+                if (overflowU) val = 0xFF;
+                break;
+            }
+            *(uint8_t*)(destination + pos) = (uint8_t)val; // store value
+        }
+        t->returnType = 0x110;            
+        break;
+    case 2:   // int32 -> int16
+        for (pos = 0; pos < newLength; pos += 2) {
+            uint32_t val = *(uint32_t*)(source + 2*pos);   // value to convert
+            overflowU = val > 0xFFFF;                      // unsigned overflow
+            overflowS = val - 0xFFFF8000 > 0xFFFF;         // signed overflow
+            switch (IM1 & 7) {
+            case 0: default: // wrap around
+                break;
+            case 4:          // signed integer overflow gives zero
+                if (overflowS) val = 0;
+                break;
+            case 5:          // signed integer overflow gives signed saturation
+                if (overflowS) val = 0x7FFF + (val >> 31);
+                break;
+            case 6:          // unsigned integer overflow gives zero
+                if (overflowU) val = 0;
+                break;
+            case 7:          // unsigned integer overflow gives unsigned saturation
+                if (overflowU) val = 0xFFFF;
+                break;
+            }
+            *(uint16_t*)(destination + pos) = (uint16_t)val; // store value
+        }
+        t->returnType = 0x111;            
+        break;
+    case 3:   // int64 -> int32
+        for (pos = 0; pos < newLength; pos += 4) {
+            uint64_t val = *(uint64_t*)(source + 2*pos);  // value to convert
+            overflowU = val > 0xFFFFFFFFU;                // unsigned overflow
+            overflowS = val - 0xFFFFFFFF80000000 > 0xFFFFFFFFU; // signed overflow
+            switch (IM1 & 7) {
+            case 0: default: // wrap around
+                break;
+            case 4:          // signed integer overflow gives zero
+                if (overflowS) val = 0;
+                break;
+            case 5:          // signed integer overflow gives signed saturation
+                if (overflowS) val = 0x7FFFFFFF + (val >> 63);
+                break;
+            case 6:          // unsigned integer overflow gives zero
+                if (overflowU) val = 0;
+                break;
+            case 7:          // unsigned integer overflow gives unsigned saturation
+                if (overflowU) val = 0xFFFFFFFF;
+                break;
+            }
+            *(uint32_t*)(destination + pos) = (uint32_t)val; // store value
+        }
+        t->returnType = 0x112;            
+        break;
+    case 4:   // int128 -> int64
+        for (pos = 0; pos < newLength; pos += 8) {
+            uint64_t valLo = *(uint64_t*)(source + 2*pos);      // value to convert, low part
+            uint64_t valHi = *(uint64_t*)(source + 2*pos + 8);  // value to convert, high part
+            overflowU = valHi != 0;                             // unsigned overflow
+            if ((int64_t)valLo < 0) overflowS = valHi+1 != 0;   // signed overflow
+            else overflowS = valHi != 0;
+            overflowU2 |= overflowU;  overflowS2 |= overflowS;
+            switch (IM1 & 7) {
+            case 0: default: // wrap around
+                break;
+            case 4:          // signed integer overflow gives zero
+                if (overflowS) valLo = 0;
+                break;
+            case 5:          // signed integer overflow gives signed saturation
+                if (overflowS) valLo = nsign_d + (valHi >> 63);
+                break;
+            case 6:          // unsigned integer overflow gives zero
+                if (overflowU) valHi = valLo = 0;
+                break;
+            case 7:          // unsigned integer overflow gives unsigned saturation
+                if (overflowU) valLo = 0xFFFFFFFFFFFFFFFF;
+                break;
+            }
+        }
+        t->returnType = 0x113;            
+        break;
+    case 5:   // float -> float16
+        for (pos = 0; pos < newLength; pos += 2) {
+            SNum val;
+            val.i = *(uint32_t*)(source + 2 * pos);        // value to convert
+            uint16_t val2 = float2half(val.f);             // convert to half precision
+            if (!isnan_or_inf_f(val.i)) {
+                // check rounding mode
+                switch (roundingMode) {
+                case 1:          // odd if not exact
+                    if (half2float(val2) != val.f) val2 |= 1;
+                    break;
+                case 4: default: // nearest or even
+                    break;
+                case 5:          // down
+                    if (half2float(val2) > val.f) {
+                        if (val2 << 1 == 0) val2 = 0x8001; // 0 -> subnormal negative
+                        else if (int16_t(val2) > 0) val2--;
+                        else val2++;
+                    }
+                    break;
+                case 6:          // up
+                    if (half2float(val2) < val.f) {
+                        if (val2 << 1 == 0) val2 = 0x0001; // 0 -> subnormal positive
+                        else if (int16_t(val2) > 0) val2++;
+                        else val2--;
+                    }
+                    break;
+                case 7:          // towards zero
+                    if (half2float(val2) != val.f && (val2 << 1 != 0)) {
+                        val2--;
+                    }
+                    break;
+                }
+                // check overflow
+                overflowS = (val2 & 0x7FFF) == 0x7C00 && !isinf_f(val.i);// detect overflow
+                overflowF2 |= overflowS;
+                if (overflowS) {                               // check for overflow
+                    if (exceptionControl & 1) {                // overflow exception -> NAN
+                        val2 = (uint16_t)t->makeNan(nan_overflow_conv, 1);  // overflow
+                    }
+                }
+                else if ((exceptionControl & 6) && val2 << 1 == 0 && val.f != 0.f) {
+                    val2 = (uint16_t)t->makeNan(nan_underflow, 1); // underflow exception (inexact implies underflow)
+                }
+                else if ((exceptionControl & 4) && half2float(val2) != val.f) {
+                    val2 = (uint16_t)t->makeNan(nan_inexact, 1);   // inexact exception
+                }
+            }
+            *(uint16_t*)(destination + pos) = val2;        // store value
+        } 
+        t->returnType = 0x118;
+        break;
+    case 6:   // double -> float
+        for (pos = 0; pos < newLength; pos += 4) {
+            SNum val1, val2;
+            val1.q = *(uint64_t*)(source + 2 * pos);       // value to convert
+            // check NAN and INF
+            if (isnan_or_inf_d(val1.q)) {
+                union {                                    // single precision float
+                    float f;
+                    struct {                               // structure of a NAN
+                        uint32_t payload : 22;
+                        uint32_t quiet : 1;
+                        uint32_t expo : 8;
+                        uint32_t sign : 1;
+                    };
+                } u;
+                u.payload = val1.i & (1 << 22) - 1;        // ForwardCom has right-justified NAN payload, unlike other binary systems
+                u.quiet = val1.q >> 51 & 1;
+                u.expo = 0xFF;
+                u.sign = val1.q >> 63 & 1;
+                val2.f = u.f;
+            }
+            else {
+                val2.f = float(val1.d);                    // convert to single precision
+                // check rounding mode
+                uint8_t roundingMode = (IM1 >> 3) & 7;
+                if (roundingMode == 0) roundingMode = ((t->parm[3].i >> MSKI_ROUNDING) & 7) | 4;
+                switch (roundingMode) {
+                case 1:          // odd if not exact
+                    if (val2.f != val1.d) {
+                        val2.i |= 1;
+                    }
+                    break;
+                case 4: default: // nearest or even
+                    break;
+                case 5:          // down
+                    if (val2.f > val1.d) {
+                        if (val2.f == 0.f) val2.i = 0x80000001; // 0 -> subnormal negative
+                        else if (val2.i > 0) val2.i--;
+                        else val2.i++;
+                    }
+                    break;
+                case 6:          // up
+                    if (val2.f < val1.d) {
+                        if (val2.f == 0.f) val2.i = 0x00000001; // 0 -> subnormal positive
+                        else if (val2.i > 0) val2.i++;
+                        else val2.i--;
+                    }
+                    break;
+                case 7:         // towards zero
+                    if (val2.f != val1.d && val2.f != 0.f) {
+                        val2.i--;
+                    }
+                    break;
+                }
+                // check overflow
+                overflowS = isinf_f(val2.i) && !isinf_d(val1.q); // detect overflow
+                overflowF2 |= overflowS;
+                if (overflowS) {                               // check for overflow
+                    if (exceptionControl & 1) {                // overflow exception -> NAN
+                        val2.q = t->makeNan(nan_overflow_conv, 5);  // overflow
+                    }
+                }
+                else if ((exceptionControl & 6) && val2.f == 0.f && val1.d != 0.) {
+                    val2.q = t->makeNan(nan_underflow, 5);     // underflow exception
+                }
+                else if ((exceptionControl & 4) && val2.f != val1.d) {
+                    val2.q = t->makeNan(nan_inexact, 5);       // inexact exception
+                }
+            }
+            *(uint32_t*)(destination + pos) = val2.i;          // store value
+        }
+        t->returnType = 0x115;
+        break;
+    default:
+        t->interrupt(INT_INST_ILLEGAL);
+    }
+    // check overflow traps
+    /*
+    if (mask.i & MSK_OVERFL_ALL) {
+        if      ((mask.i & MSK_OVERFL_SIGN)   && overflowS2) t->interrupt(INT_OVERFL_SIGN);   // signed overflow
+        else if ((mask.i & MSK_OVERFL_UNSIGN) && overflowU2) t->interrupt(INT_OVERFL_UNSIGN); // unsigned overflow
+        else if ((mask.i & MSK_OVERFL_FLOAT)  && overflowF2) t->interrupt(INT_OVERFL_FLOAT);  // float overflow
+    } */
+    t->vectorLength[rd] = newLength;             // save new vector length
+    t->vect = 4;                                 // stop vector loop
+    t->running = 2;                              // don't save. result has already been saved
+    return 0;
+}
+
+static uint64_t expand(CThread * t) {
+    // Expand vector RS to a vector of the double length and the double element size.
+    // OT specifies the element size or precision of the destination.
+    // Half precision -> single precision, 32-bit integer -> 64-bit integer, etc.
+    
+    // Operands:
+    uint8_t  rd = t->operands[0];
+    uint8_t  rs = t->operands[4];
+    uint8_t IM1 = t->parm[4].b;
+    if (IM1 & 0xFC) t->interrupt(INT_INST_ILLEGAL);
+    bool signExtend = (IM1 & 2) == 0;
+
+    uint32_t initLength = t->vectorLength[rs];
+    uint32_t newLength = 2 * initLength;
+    if (newLength > t->MaxVectorLength) newLength = t->MaxVectorLength;
+    // uint32_t oldLength = newLength / 2;
+    uint32_t pos;                                // position in source vector
+    int8_t * source = t->vectors.buf() + (uint32_t)rs * t->MaxVectorLength;      // address of RT data
+    int8_t * destination = t->vectors.buf() + (uint32_t)rd * t->MaxVectorLength; // address of RD data
+    if (rd == rs) {
+        // source and destination are the same. Make a temporary copy of source to avoid overwriting
+        memcpy(t->tempBuffer, source, initLength);
+        source = t->tempBuffer;    
+    }
+    switch (t->operandType) {
+    case 0:   // int4 -> int8
+        for (pos = 0; pos < newLength; pos += 1) {
+            uint8_t val1 = *(uint8_t*)(source + pos);  // values to convert
+            union {
+                uint16_t s;
+                uint8_t b[2];
+                int8_t bs[2];
+            } val2;
+            if (signExtend) {
+                val2.bs[0] = (int8_t)val1 << 4 >> 4;   // sign extend
+                val2.bs[1] = (int8_t)val1 >> 4;        // sign extend
+            }
+            else {
+                val2.b[0] = val1 & 0xF;                // zero extend
+                val2.b[1] = val1 >> 4;                 // zero extend
+            }
+            *(uint16_t*)(destination + pos*2) = val2.s;         // store value
+        }
+        break;
+    case 1:   // int8 -> int16
+        for (pos = 0; pos < newLength; pos += 1) {
+            uint16_t val = *(uint8_t*)(source + pos);  // value to convert
+            if (signExtend) val = uint16_t((int16_t)(val << 8) >> 8);   // sign extend
+            *(uint16_t*)(destination + pos*2) = val; // store value
+        }
+        break;
+    case 2:   // int16 -> int32
+        for (pos = 0; pos < newLength; pos += 2) {
+            uint32_t val = *(uint16_t*)(source + pos);  // value to convert
+            if (signExtend) val = uint32_t((int32_t)(val << 16) >> 16);   // sign extend
+            *(uint32_t*)(destination + pos*2) = val; // store value
+        }
+        break;
+    case 3:   // int32 -> int64
+        for (pos = 0; pos < newLength; pos += 4) {
+            uint64_t val = *(uint32_t*)(source + pos);  // value to convert
+            if (signExtend) val = uint64_t((int64_t)(val << 32) >> 32);   // sign extend
+            *(uint64_t*)(destination + pos*2) = val; // store value
+        }
+        break;
+    case 4:   // int64 -> int128
+        for (pos = 0; pos < newLength; pos += 8) {
+            uint64_t valLo = *(uint64_t*)(source + pos);   // value to convert
+            uint64_t valHi = 0;
+            if (signExtend) valHi = uint64_t((int64_t)valLo >> 63);   // sign extend
+            *(uint64_t*)(destination + pos*2) = valLo;     // store low part
+            *(uint64_t*)(destination + pos*2 + 8) = valHi; // store high part
+        }
+        break;
+    case 5:   // float16 -> float
+        for (pos = 0; pos < newLength; pos += 2) {
+            uint16_t val1 = *(uint16_t*)(source + pos);    // value to convert
+            float val2 = half2float(val1);                 // convert half precision to float
+            *(float*)(destination + pos*2) = val2;         // store value
+        }
+        break;
+    case 6:   // float -> double
+        for (pos = 0; pos < newLength; pos += 4) {
+            SNum val1;
+            val1.i = *(uint32_t*)(source + pos);           // value to convert
+            double val2 = val1.f;                          // convert to double precision
+            // check NAN
+            // ForwardCom has right-justified NAN payload, unlike other binary systems
+            if (isnan_f(val1.i)) {
+                union {                                    // single precision float
+                    double d;
+                    struct {                               // structure of a NAN
+                        uint64_t payload : 51;
+                        uint64_t quiet   : 1;
+                        uint64_t expo    : 11;
+                        uint64_t sign    : 1;
+                    };
+                } u;
+                u.payload = val1.q & (1 << 22) - 1;
+                u.quiet = val1.i >> 22 & 1;
+                u.expo = 0x7FF;
+                u.sign = val1.q >> 63 & 1;
+                val2 = u.d;
+            }
+            *(double*)(destination + pos*2) = val2;        // store value
+        }
+        break;
+    default:
+        t->interrupt(INT_INST_ILLEGAL);
+    }
+    t->vectorLength[rd] = newLength;                       // save new vector length
+    t->vect = 4;                                           // stop vector loop
+    t->running = 2;                                        // don't save. result has already been saved
+    return 0;
+}
+
 static uint64_t float2int (CThread * t) {
-    // Conversion of floating point to signed integer with the same operand size. 
-    // The rounding mode is specified in IM1.
+    // Conversion of floating point to signed or unsigned integer with the same operand size. 
+    // The rounding mode and overflow control is specified in IM1.
     SNum a = t->parm[1];
     SNum b = t->parm[4];
-    SNum mask = t->parm[3];
     int64_t result = 0;
     uint32_t dataSize = dataSizeTable[t->operandType];
+    uint8_t roundingMode = b.b >> 3 & 3;
+    uint8_t signMode = roundingMode | (b.b & 2) << 1; // bit 0-1: rounding mode, bit 2: usigned
     bool overflow = false;
-    bool invalid = false;
-    if (dataSize == 4) {  // float -> int32
+    bool invalid = false; 
+
+    if (dataSize == 2) {  // float16 -> int16
+        const float max = (float)(int32_t)0x7FFF;
+        const float min = -max - 1.0f;
+        const float umax = (float)(uint32_t)0xFFFFu;
+        if (isnan_h(a.s)) {
+            invalid = true;
+        }
+        else {
+            float f = half2float(a.s);
+            switch (signMode) { // rounding mode:
+            case 0: // nearest or even
+                if (f >= max + 0.5f || f < min - 0.5f) overflow = true;
+                result = (int)(nearbyint(f));
+                break;
+            case 1: // down 
+                if (f >= max + 1.0f || f <= min) overflow = true;
+                result = (int)(floor(f));
+                break;
+            case 2: // up
+                if (f > max || f <= min - 1.0f) overflow = true;
+                result = (int)(ceil(f));
+                break;
+            case 3: // towards zero
+                if (f >= max + 1.0f || f <= min - 1.0f) overflow = true;
+                result = (int)(f);
+                break;
+            case 4: // unsigned nearest or even
+                if (f >= umax + 0.5f || f < - 0.5f) overflow = true;
+                result = (int)(nearbyint(f));
+                break;
+            case 5: case 7: // unsigned down
+                if (f >= umax + 1.0f || f < 0.0f) overflow = true;
+                result = (int)(floor(f));
+                break;
+            case 6: // unsigned up
+                if (f > umax || f <= -1.0f) overflow = true;
+                else result = (int)(ceil(f));
+            }
+            if (overflow) {
+                switch (b.b & 7) { // overflow options
+                case 0: default: // wrap around
+                    result &= 0xFFFFu;
+                    break;
+                case 4: case 6:
+                    result = 0;
+                    break;
+                case 5: // signed saturation
+                    result = 0x7FFF + int(f < 0);
+                    break;
+                case 7: // unsigned saturation
+                    result = 0xFFFFu;
+                    break;
+                }
+            }
+            if (invalid) {
+                result = (b.b & 0x20) ? 0x8000u : 0;
+            }
+        }
+    }
+    else if (dataSize == 4) {  // float -> int32
         const float max = (float)(int32_t)nsign_f;
         const float min = -max - 1.0f;
-        if (isnan_f(a.i)) invalid = true;
+        const float umax = (float)(uint32_t)0xFFFFFFFFu;
+        if (isnan_f(a.i)) {
+            invalid = true;
+        }
         else {
-            switch (b.b) { // rounding mode:
+            switch (signMode) { // rounding mode:
             case 0: // nearest or even
                 if (a.f >= max + 0.5f || a.f < min - 0.5f) overflow = true;
-                else result = (int32_t)(nearbyintf(a.f));
+                result = (int64_t)(nearbyint(a.f));
                 break;
             case 1: // down 
                 if (a.f >= max + 1.0f || a.f <= min) overflow = true;
-                else result = (int32_t)(floorf(a.f));
+                result = (int64_t)(floor(a.f));
                 break;
             case 2: // up
                 if (a.f > max || a.f <= min - 1.0f) overflow = true;
-                else result = (int32_t)(ceilf(a.f));
+                result = (int64_t)(ceil(a.f));
                 break;
             case 3: // towards zero
                 if (a.f >= max + 1.0f || a.f <= min - 1.0f) overflow = true;
-                else result = (int32_t)(a.f);
+                result = (int64_t)(a.f);
                 break;
-            default: t->interrupt(INT_INST_ILLEGAL);
+            case 4: // unsigned nearest or even
+                if (a.f >= umax + 0.5f || a.f < - 0.5f) overflow = true;
+                result = (int64_t)(nearbyint(a.f));
+                break;
+            case 5: case 7: // unsigned down
+                if (a.f >= umax + 1.0f || a.f < 0.0f) overflow = true;
+                result = (int64_t)(floor(a.f));
+                break;
+            case 6: // unsigned up
+                if (a.f > umax || a.f <= -1.0f) overflow = true;
+                else result = (int64_t)(ceil(a.f));
+            }
+            if (overflow) {
+                switch (b.b & 7) { // overflow options
+                case 0:  // wrap around
+                    result &= 0xFFFFFFFFu;
+                    break;
+                case 4: case 6:
+                    result = 0;
+                    break;
+                case 5: // signed saturation
+                    result = 0x7FFFFFFF + int(a.f < 0);
+                    break;
+                case 7: // unsigned saturation
+                    result = 0xFFFFFFFFu;
+                    break;
+                }
+            }
+            if (invalid) {
+                result = (b.b & 0x20) ? sign_f : 0;
             }
         }
     }
     else if (dataSize == 8) {   // double -> int64
         const double max = (double)(int64_t)nsign_d;
         const double min = -max - 1.0f;
-        if (isnan_d(a.q)) invalid = true;
+        const double umax = (double)0xFFFFFFFFFFFFFFFFu;
+        if (isnan_d(a.q)) {
+            invalid = true;
+        }
         else {
-            switch (b.b) { // rounding mode:
+            switch (signMode) { // rounding mode:
             case 0: // nearest or even
                 if (a.d >= max + 0.5 || a.d < min - 0.5) overflow = true;
-                else result = (int64_t)(nearbyint(a.d));
+                result = (int64_t)(nearbyint(a.d));
                 break;
             case 1: // down 
                 if (a.d >= max + 1.0 || a.d <= min) overflow = true;
-                else result = (int64_t)(floor(a.d));
+                result = (int64_t)(floor(a.d));
                 break;
             case 2: // up
                 if (a.d > max || a.d <= min - 1.0) overflow = true;
-                else result = (int64_t)(ceil(a.d));
+                result = (int64_t)(ceil(a.d));
                 break;
             case 3: // towards zero
                 if (a.d >= max + 1.0 || a.d <= min - 1.0) overflow = true;
-                else result = (int64_t)(a.d);
+                result = (int64_t)(a.d);
+                break; 
+            case 4: // unsigned nearest or even
+                if (a.d >= umax + 0.5 || a.d < - 0.5) overflow = true;
+                result = (uint64_t)(nearbyint(a.d));
                 break;
-            default: t->interrupt(INT_INST_ILLEGAL);
+            case 5: case 7: // unsigned down
+                if (a.d >= umax + 1.0 || a.d < 0.0) overflow = true;
+                result = (uint64_t)(floor(a.d));
+                break;
+            case 6: // unsigned up
+                if (a.d > umax || a.d <= -1.0) overflow = true;
+                result = (uint64_t)(ceil(a.d));
             }
+        }
+        if (overflow) {
+            switch (b.b & 7) { // overflow options
+            case 0:  // wrap around
+                break;
+            case 4: case 6:
+                result = 0;
+                break;
+            case 5: // signed saturation
+                result = nsign_d + int(a.d < 0);
+                break;
+            case 7: // unsigned saturation
+                result = 0xFFFFFFFFFFFFFFFFu;
+                break;
+            }
+        }
+        if (invalid) {
+            result = (b.b & 0x20) ? sign_d : 0;
         }
     }
     else t->interrupt(INT_INST_ILLEGAL);
+    /* Traps not supported
     if (overflow && (mask.i & MSK_OVERFL_SIGN)) {
         t->interrupt(INT_OVERFL_SIGN);  // signed overflow
         result = dataSizeMask[t->operandType] >> 1; // INT_MAX
@@ -157,24 +711,73 @@ static uint64_t float2int (CThread * t) {
     if (invalid && (mask.i & MSK_FLOAT_NAN_LOSS)) {
         t->interrupt(INT_FLOAT_NAN_LOSS);  // nan converted to integer
         result = dataSizeMask[t->operandType] >> 1; // INT_MAX
-    }
+    } */
     if ((t->operandType & 7) >= 5) t->operandType -= 3;    // debug return type is integer
     return result;
 }
 
 static uint64_t int2float (CThread * t) {
-    //  Conversion of signed integer to floating point with same operand size.
+    //  Conversion of signed or unsigned integer to floating point with same operand size.
     SNum a = t->parm[1];
+    SNum IM1 = t->parm[4];
+    bool isSigned = (IM1.b & 1) == 0;  // signed integer
+    bool inexactX = (IM1.b & 4) != 0;  // make NAN exception if inexact
+
     SNum result;
     uint32_t dataSize = dataSizeTable[t->operandType];
-    if (dataSize == 4) {        // int32 -> float
-        result.f = (float)a.is;
+    switch (dataSize) {
+    case 2:  // int16 -> float16
+        if (isSigned) {
+            result.s = float2half(float(a.ss));
+            if (inexactX && int32_t(half2float(result.s)) != a.ss) {
+                result.q = t->makeNan(nan_inexact, 1);
+            } 
+        }
+        else { // unsigned
+            result.s = float2half(float(a.s));
+            if (inexactX && uint32_t(half2float(result.s)) != a.s) {
+                result.q = t->makeNan(nan_inexact, 1);
+            } 
+        }
+        t->returnType = 0x118;         // debug return type is float16
+        break;
+
+    case 4: // int32 -> float
+        if (isSigned) {
+            result.f = (float)a.is;
+            if (inexactX && int32_t(result.f) != a.is) {
+                result.q = t->makeNan(nan_inexact, 5);
+            } 
+        }
+        else {
+            result.f = (float)a.i;
+            if (inexactX && uint32_t(result.f) != a.i) {
+                result.q = t->makeNan(nan_inexact, 5);
+            } 
+        }
+        t->returnType = 0x115;        // debug return type is float
+        break;
+
+    case 8:  // int64 -> double
+        if (isSigned) {
+            result.d = (double)a.qs;
+            if (inexactX && int64_t(result.d) != a.qs) {
+                result.q = t->makeNan(nan_inexact, 6);
+            }
+        }
+        else {
+            result.d = (double)a.q;
+            if (inexactX && uint64_t(result.d) != a.q) {
+                result.q = t->makeNan(nan_inexact, 6);
+            }
+        }
+        t->returnType = 0x116;        // debug return type is double
+        break;
+
+    default: 
+        t->interrupt(INT_INST_ILLEGAL);
+        result.q = 0;
     }
-    else if (dataSize == 8) {   // int64 -> double
-        result.d = (float)a.qs;
-    }
-    else t->interrupt(INT_INST_ILLEGAL);
-    if ((t->operandType & 7) < 5) t->operandType += 3;     // debug return type is float
     return result.q;
 }
 
@@ -251,11 +854,11 @@ static uint64_t round2n (CThread * t) {
         }
         exponent1 -= b.i;                  // subtract b from exponent
         if ((int32_t)exponent1 <= 0) { // underflow
-            if (mask.i & MSK_FLOAT_UNDERFL) t->interrupt(INT_FLOAT_UNDERFL);
+            //if (mask.i & MSK_FLOAT_UNDERFL) t->interrupt(INT_FLOAT_UNDERFL);
             return 0;
         }
         else if ((int32_t)exponent1 >= 0xFF) { // overflow
-            if (mask.i & MSK_OVERFL_FLOAT) t->interrupt(INT_OVERFL_FLOAT);
+            //if (mask.i & MSK_OVERFL_FLOAT) t->interrupt(INT_OVERFL_FLOAT);
             return inf_f;
         }
         u.exponent = exponent1;
@@ -282,11 +885,11 @@ static uint64_t round2n (CThread * t) {
         }
         exponent1 -= b.i;                  // subtract b from exponent
         if ((int32_t)exponent1 <= 0) { // underflow
-            if (mask.i & MSK_FLOAT_UNDERFL) t->interrupt(INT_FLOAT_UNDERFL);
+            //if (mask.i & MSK_FLOAT_UNDERFL) t->interrupt(INT_FLOAT_UNDERFL);
             return 0;
         }
         else if ((int32_t)exponent1 >= 0x7FF) { // overflow
-            if (mask.i & MSK_OVERFL_FLOAT) t->interrupt(INT_OVERFL_FLOAT);
+            //if (mask.i & MSK_OVERFL_FLOAT) t->interrupt(INT_OVERFL_FLOAT);
             return inf_d;
         }
         u.exponent = exponent1;
@@ -409,7 +1012,7 @@ static uint64_t broad_ (CThread * t) {
     return 0;
 }
 
-static uint32_t byteSwap(uint32_t x) {  // swap bytes, used by byte_reverse function
+static uint32_t byteSwap(uint32_t x) {      // swap bytes, used by byte_reverse function
     union {
         uint32_t i;
         uint8_t b[4];
@@ -419,30 +1022,6 @@ static uint32_t byteSwap(uint32_t x) {  // swap bytes, used by byte_reverse func
     return b.i;
 }
 
-static uint64_t byte_reverse (CThread * t) {
-    // Reverse the order of bytes in each element of vector
-    SNum a = t->parm[1];                         // value
-    uint8_t  rs = t->operands[4];
-    uint32_t tmp;
-    switch (dataSizeTableLog[t->operandType]) {
-    case 0:  // 8 bit
-        break;
-    case 1:  // 16 bit
-        a.s = a.s >> 8 | a.b << 8;  break;  // swap bytes
-    case 2:  // 32 bit
-        a.i = byteSwap(a.i); break;
-    case 3:  // 64 bit
-        tmp = byteSwap(a.i); a.q = byteSwap(a.q >> 32) | (uint64_t)tmp << 32;
-         break;
-    case 4:  // 128 bit
-        tmp = byteSwap(a.i); t->parm[5].q = byteSwap(a.q >> 32) | (uint64_t)tmp << 32;
-        a.q = t->readVectorElement(rs, t->vectorOffset + 8); // high part of input
-        tmp = byteSwap(a.i); a.q = byteSwap(a.q >> 32) | (uint64_t)tmp << 32;
-        break;
-    }
-    return a.q;
-}
-
 static uint8_t bitSwap(uint8_t x) {         // swap bits, used by bit_reverse function
     x = x >> 4 | x << 4;                    // swap 4-bit nipples
     x = (x >> 2 & 0x33) | (x << 2 & 0xCC);  // swap 2-bit groups
@@ -450,67 +1029,61 @@ static uint8_t bitSwap(uint8_t x) {         // swap bits, used by bit_reverse fu
     return x;
 }
 
-static uint64_t bit_reverse (CThread * t) {
-    // Reverse the order of bits in each element of vector
-    union {
-        uint64_t q;
-        uint32_t i[2];
-        uint8_t b[8];
-    } u;
-    u.q = t->parm[1].q;
-    uint8_t t1;  uint32_t t2;
-    switch (dataSizeTableLog[t->operandType]) {
-    case 0:  // 8 bit
-        u.b[0] = bitSwap(u.b[0]); break;
-    case 1:  // 16 bit
-        t1 = bitSwap(u.b[0]); u.b[0] = bitSwap(u.b[1]); u.b[1] = t1; break;
-    case 2:  // 32 bit
-        u.i[0] = byteSwap(u.i[0]);
-        for (t1 = 0; t1 < 4; t1++) u.b[t1] = bitSwap(u.b[t1]);
-        break;
-    case 3:  // 64 bit
-        t2 = byteSwap(u.i[0]); u.i[0] = byteSwap(u.i[1]); u.i[1] = t2;
-        for (t1 = 0; t1 < 8; t1++) u.b[t1] = bitSwap(u.b[t1]);
-        break;
-    case 4:  // 128 bit
-        t->interrupt(INT_INST_ILLEGAL);
+static uint64_t byte_reverse (CThread * t) {
+    // Reverse the order of bits or bytes in each element of vector
+    SNum a = t->parm[1];                         // value
+    uint8_t IM1 = t->parm[2].b;                  // immediate operand
+    if (IM1 & 1) {
+        // bit reverse: Reverse the order of bits in each element of vector
+        union {
+            uint64_t q;
+            uint32_t i[2];
+            uint8_t  b[8];
+        } u;
+        u.q = a.q;
+        uint8_t t1;  uint32_t t2;
+        switch (dataSizeTableLog[t->operandType]) {
+        case 0:  // 8 bit
+            u.b[0] = bitSwap(u.b[0]); break;
+        case 1:  // 16 bit
+            t1 = bitSwap(u.b[0]); u.b[0] = bitSwap(u.b[1]); u.b[1] = t1; break;
+        case 2:  // 32 bit
+            u.i[0] = byteSwap(u.i[0]);
+            for (t1 = 0; t1 < 4; t1++) u.b[t1] = bitSwap(u.b[t1]);
+            break;
+        case 3:  // 64 bit
+            t2 = byteSwap(u.i[0]); u.i[0] = byteSwap(u.i[1]); u.i[1] = t2;
+            for (t1 = 0; t1 < 8; t1++) u.b[t1] = bitSwap(u.b[t1]);
+            break;
+        case 4:  // 128 bit
+            t->interrupt(INT_INST_ILLEGAL);
+        }
+        return u.q;
     }
-    return u.q;
+    else {
+        // byte reverse: Reverse the order of bytes in each element of a vector
+        uint8_t  rs = t->operands[4];
+        uint32_t tmp;
+        switch (dataSizeTableLog[t->operandType]) {
+        case 0:  // 8 bit
+            break;
+        case 1:  // 16 bit
+            a.s = a.s >> 8 | a.b << 8;  break;  // swap bytes
+        case 2:  // 32 bit
+            a.i = byteSwap(a.i); break;
+        case 3:  // 64 bit
+            tmp = byteSwap(a.i); a.q = byteSwap(a.q >> 32) | (uint64_t)tmp << 32;
+            break;
+        case 4:  // 128 bit
+            tmp = byteSwap(a.i); t->parm[5].q = byteSwap(a.q >> 32) | (uint64_t)tmp << 32;
+            a.q = t->readVectorElement(rs, t->vectorOffset + 8); // high part of input
+            tmp = byteSwap(a.i); a.q = byteSwap(a.q >> 32) | (uint64_t)tmp << 32;
+            break;
+        }
+        return a.q;
+    }
 }
 
-static uint64_t bitscan_f (CThread * t) {
-    // Bit scan forward. Find index to lowest set bit in RS
-    SNum a = t->parm[1];                         // value
-    a.q &= dataSizeMask[t->operandType];         // mask for operand size
-    if (a.q == 0) a.qs = -1;                     // return -1 if zerp
-    else a.q = bitScanForward(a.q);
-    return a.q;
-}
-
-static uint64_t bitscan_r (CThread * t) {
-    // Bit scan reverse. Find index to highest set bit in RS
-    SNum a = t->parm[1];                         // value
-    a.q &= dataSizeMask[t->operandType];         // mask for operand size
-    if (a.q == 0) a.qs = -1;                     // return -1 if zerp
-    else a.q = bitScanReverse(a.q);
-    return a.q;
-}
-
-static uint32_t popcount32(uint32_t x) { // count bits in 32 bit integer. used by popcount_ function
-    x = x - ((x >> 1) & 0x55555555);
-    x = (x >> 2 & 0x33333333) + (x & 0x33333333);
-    x = (x + (x >> 4)) & 0x0F0F0F0F;
-    x = (x + (x >> 8)) & 0x00FF00FF;
-    x = uint16_t(x + (x >> 16));
-    return x;
-}
-
-static uint64_t popcount_ (CThread * t) {
-    // Count the number of bits in RS that are 1
-    SNum a = t->parm[1];                         // value
-    a.q &= dataSizeMask[t->operandType];         // mask for operand size
-    return popcount32(a.i) + popcount32(a.q >> 32);
-}
 
 static uint64_t truth_tab2 (CThread * t) {
     // Boolean function of two inputs, given by a truth table
@@ -568,7 +1141,7 @@ static uint64_t move_8shift8 (CThread * t) {
         
 static uint64_t add_8shift8 (CThread * t) {
     // RD += IM2 << IM1. Sign-extend IM2 and shift left by the unsigned value IM1, add to 32/64 bit vector
-    // 40: 42 bit, 43: 64 bit
+    // 42: 32 bit, 43: 64 bit
     int64_t save2 = t->parm[2].qs;
     t->parm[2].qs = int64_t(t->parm[2].ss) >> 8 << t->parm[2].bs;  // shift and sign extend
     int64_t result = f_add(t);                             // use f_add for getting overflow traps
@@ -689,7 +1262,7 @@ static uint64_t replace_odd (CThread * t) {
 }
 
 static uint64_t broadcast_32 (CThread * t) {
-    // Broadcast 32-bit constant into all elements of RD with length RS (31 in RS field gives scalar output).
+    // Broadcast 32-bit or 64 -bit constant into all elements of RD with length RS (31 in RS field gives scalar output).
     uint8_t  rd = t->operands[0];
     uint8_t  rs = t->operands[4];
     uint8_t  rm = t->operands[1];                // mask register
@@ -735,8 +1308,15 @@ static uint64_t permute (CThread * t) {
         constPat = true;
     }
     uint8_t  dsizelog = dataSizeTableLog[t->operandType];  // log2(elementsize)
-    uint32_t length = t->vectorLength[vin];
+    uint32_t elementSize = 1 << dsizelog;
+    uint32_t length = t->vectorLength[vin];                // vector length
     t->vectorLength[rd] = length;                          // set length of destination
+    int8_t * source = t->vectors.buf() + (uint32_t)(vin & 0x1F) * t->MaxVectorLength; // address of source data vector
+    if (vin == rd) {
+        // source and destination are the same. Make a temporary copy of source to avoid overwriting
+        memcpy(t->tempBuffer, source, length);
+        source = t->tempBuffer;    
+    }
     uint64_t blocksize = t->registers[rs];                 // bytes per block
     uint64_t value;                                        // value of element
     uint64_t index;                                        // index to source element
@@ -754,7 +1334,7 @@ static uint64_t permute (CThread * t) {
                     index = t->readVectorElement(vpat, block + (element << dsizelog));
                 }
                 if (index < num && (rm == 7 || t->readVectorElement(rm, block + (element << dsizelog)) & 1)) { // check mask
-                    value = t->readVectorElement(vin, block + ((uint32_t)index << dsizelog));  // pick indexed element from source vector
+                    value = *(uint64_t*)(source + block + ((uint32_t)index << dsizelog));        // pick indexed element from source vector
                 }
                 else value = 0; // index out of range or mask = 0
                 t->writeVectorElement(rd, value, block + (element << dsizelog));  // write destination
@@ -1051,13 +1631,13 @@ static uint64_t repeat_within_blocks (CThread * t) {
 // Format 1.3 B. Two vector registers and a broadcast 8-bit immediate operand.
 // Format 1.3 C. One vector register and a broadcast 16-bit immediate operand.
 PFunc funcTab8[64] = {
-    gp2vec, vec2gp, read_spev, 0, make_sequence, 0, 0, 0,      // 0  - 7
-    0, 0, 0, 0, float2int, int2float, round_, round2n,         // 8 - 15
-    abs_, fp_category, broad_, broad_, byte_reverse, bit_reverse, bitscan_f, bitscan_r, // 16 - 23
-    popcount_, truth_tab2, 0, 0, 0, 0, 0, 0,                   // 24 - 31
-    move_i16, f_add, and_i16, or_i16, xor_i16, add_h16, mul_h16, 0, // 32 - 39
+    gp2vec, vec2gp, read_spev, make_sequence, insert_, extract_, compress, expand,  // 0  - 7
+    0, 0, 0, 0, float2int, int2float, round_, round2n,                              // 8 - 15
+    abs_, fp_category, broad_, broad_, byte_reverse, bitscan_, popcount_, 0,        // 16 - 23
+    truth_tab2, 0, 0, 0, 0, 0, 0, 0,                                                // 24 - 31
+    move_i16, f_add, and_i16, or_i16, xor_i16, add_h16, mul_h16, 0,                 // 32 - 39
     move_8shift8, move_8shift8, add_8shift8, add_8shift8, and_8shift8, and_8shift8, or_8shift8, or_8shift8, // 40 - 47
-    xor_8shift8, xor_8shift8, 0, 0, 0, 0, 0, 0,                // 48 - 55
+    xor_8shift8, xor_8shift8, 0, 0, 0, 0, 0, 0,                                     // 48 - 55
     move_half2float, move_half2double, add_half2float, add_half2double, mul_half2float, mul_half2double, 0, 0
 };
 
@@ -1080,7 +1660,7 @@ PFunc funcTab11[64] = {
 // Format 3.1 A. Three vector registers and a 64-bit immediate operand.
 PFunc funcTab13[64] = {           
     0, 0, 0, 0, 0, 0, 0, 0,                                                    // 0 - 7
-    replace_, 0, 0, 0, 0, 0, 0, 0,                                             // 8 - 15
+    replace_, broadcast_32, 0, 0, 0, 0, 0, 0,                                             // 8 - 15
 };
 
 

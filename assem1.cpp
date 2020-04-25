@@ -1,8 +1,8 @@
 /****************************    assem1.cpp    ********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2018-03-30
-* Version:       1.01
+* Last modified: 2020-04-15
+* Version:       1.09
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.cpp
 * Description:
@@ -111,6 +111,7 @@ SKeyword keywordsList[] = {
     {"uint64",         TYP_INT64+TYP_UNS},
     {"int128",         TYP_INT128},
     {"uint128",        TYP_INT128+TYP_UNS},
+    {"int",            TYP_INT32},
     {"float",          TYP_FLOAT32},
     {"double",         TYP_FLOAT64},
     {"float16",        TYP_FLOAT16},

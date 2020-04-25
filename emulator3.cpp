@@ -1,8 +1,8 @@
 /****************************  emulator6.cpp  ********************************
 * Author:        Agner Fog
 * date created:  2018-02-18
-* Last modified: 2018-03-30
-* Version:       1.01
+* Last modified: 2020-04-15
+* Version:       1.09
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
 * Emulator: Execution functions for jump instructions
@@ -135,7 +135,7 @@ static uint64_t sub_jump_generic(CThread * t) {
     uint64_t sizeMask = dataSizeMask[t->operandType]; // mask for data size
     uint64_t signBit = (sizeMask >> 1) + 1;      // sign bit
     result.q = a.q - b.q;                        // subtract integers
-
+    /*
     if ((t->numContr & MSK_OVERFL_SIGN) || op1 == 3) {
         // detection of signed overflow required
         SNum overfl;  // overflow if a and b have opposite sign and result has opposite sign of a
@@ -145,7 +145,7 @@ static uint64_t sub_jump_generic(CThread * t) {
     if ((t->numContr & MSK_OVERFL_UNSIGN) || op1 == 4) {
         // detection of borrow / unsigned overflow required
         unsignedOverflow = (result.q & sizeMask) > (a.q & sizeMask);
-    }
+    } */
 
     // detect branch condition
     switch (op1) {
@@ -203,7 +203,7 @@ static uint64_t add_jump_generic(CThread * t) {
 
     // add integers
     result.q = a.q + b.q;
-
+    /*
     if ((t->numContr & MSK_OVERFL_SIGN) || op1 == 11) {
         // detection of signed overflow required
         SNum overfl;  // overflow if a and b have same sign and result has opposite sign of a
@@ -213,7 +213,7 @@ static uint64_t add_jump_generic(CThread * t) {
     if ((t->numContr & MSK_OVERFL_UNSIGN) || op1 == 12) {
         // detection of carry / unsigned overflow required
         unsignedOverflow = (result.q & sizeMask) < (a.q & sizeMask);
-    }
+    } */
 
     // detect branch condition
     switch (op1) {
@@ -648,7 +648,7 @@ static uint64_t sub_jump(CThread * t) {
     int8_t unsignedOverflow = 0;                 // unsigned overflow detected
     int8_t signedOverflow = 0;                   // signed overflow detected
     result.q = a.q - b.q;                        // subtract integers
-
+    /*
     if (t->numContr & MSK_OVERFL_SIGN) {
         // detection of signed overflow required
         SNum overfl;  // overflow if a and b have opposite sign and result has opposite sign of a
@@ -676,7 +676,7 @@ static uint64_t sub_jump(CThread * t) {
         case 3:
             unsignedOverflow = result.q > a.q;  break;
         }
-    }
+    } */
     // only integer types in g.p. registers allowed
     if (t->operandType > 3) t->interrupt(INT_INST_ILLEGAL);
     // overflow interrupts
@@ -697,7 +697,7 @@ static uint64_t add_jump(CThread * t) {
     int8_t unsignedOverflow = 0;                 // unsigned overflow detected
     int8_t signedOverflow = 0;                   // signed overflow detected
     result.q = a.q + b.q;                        // add integers
-
+    /*
     if (t->numContr & MSK_OVERFL_SIGN) {
         // detection of signed overflow required
         SNum overfl;  // overflow if a and b have same sign and result has opposite sign of a
@@ -725,7 +725,7 @@ static uint64_t add_jump(CThread * t) {
         case 3:
             unsignedOverflow = result.q < a.q;  break;
         }
-    }
+    }*/
     // only integer types in g.p. registers allowed
     if (t->operandType > 3) t->interrupt(INT_INST_ILLEGAL);
     // overflow interrupts

@@ -1,8 +1,8 @@
 /****************************  main.cpp   *******************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2018-03-30
-* Version:       1.01
+* Last modified: 2020-04-15
+* Version:       1.09
 * Project:       Binary tools for ForwardCom instruction set
 * Description:   This includes assembler, disassembler, linker, library
 *                manager, and emulator in one program
@@ -12,7 +12,7 @@
 *
 * For detailed instructions, see forwardcom.pdf
 *
-* (c) Copyright 2017-2018 GNU General Public License version 3
+* (c) Copyright 2017-2020 GNU General Public License version 3
 * http://www.gnu.org/licenses
 *****************************************************************************/
 
@@ -27,7 +27,8 @@ static void CheckEndianness();
 // bool operator < (SSymbolEntry const & a, SSymbolEntry const & b)
 CTextFileBuffer symbolNameBuffer;      // Buffer for symbol names during assembly, linking, and library operations
 
-// Main. Program starts here
+
+                                       // Main. Program starts here
 int main(int argc, char * argv[]) {
     CheckEndianness();                  // Check that machine is little-endian
 
@@ -178,8 +179,10 @@ void CConverter::emulate() {
     emulator.go();                   // Do the job
 }
 
-// Convert half precision floating point number
-float half2float(uint32_t half) {
+// Convert half precision floating point number to single precision
+// Optional support for subnormals
+// NAN payload is right-justified for ForwardCom
+float half2float(uint32_t half, bool supportSubnormal) {
     union {
         uint32_t hhh;
         float fff;
@@ -192,21 +195,31 @@ float half2float(uint32_t half) {
 
     u.hhh  = (half & 0x7fff) << 13;              // Exponent and mantissa
     u.hhh += 0x38000000;                         // Adjust exponent bias
-    if ((half & 0x7C00) == 0) {
-        // Denormal. Make zero
-        u.hhh = 0;
+    if ((half & 0x7C00) == 0) {// Subnormal
+        if (supportSubnormal) {
+            u.hhh = 0x3F800000 - (24 << 23);     // 2^-24
+            u.fff *= int(half & 0x3FF);          // subnormal value = mantissa * 2^-24
+        }
+        else {        
+            u.hhh = 0;                           // make zero
+        }
     }
     if ((half & 0x7C00) == 0x7C00) {             // infinity or nan
         u.expo = 0xFF;
-        if (u.mant == 0 && half & 0x3FF) u.mant = 1 << 22; // nan
+        if (half & 0x3FF) {  // nan
+            u.mant = 1 << 22 | (half & 0x1FF);   // NAN payload is right-justified only in ForwardCom
+        }
     }
     u.hhh |= (half & 0x8000) << 16;              // sign bit
     return u.fff;
 }
 
-// Convert floating point number to half precision. subnormals give zero
-uint16_t float2half(float x) {
-    union {
+// Convert floating point number to half precision.
+// Round to nearest or even. 
+// Optional support for subnormals
+// NAN payload is right-justified
+uint16_t float2half(float x, bool supportSubnormal) {
+    union {                                      // single precision float
         float f;
         struct {
             uint32_t mant: 23;
@@ -214,7 +227,7 @@ uint16_t float2half(float x) {
             uint32_t sign:  1;
         };
     } u;
-    union {
+    union {                                      // half precision float
         uint16_t h;
         struct {
             uint16_t mant: 10;
@@ -223,29 +236,41 @@ uint16_t float2half(float x) {
         };
     } v;
     u.f = x;
-    v.mant = u.mant >> 13;         // get upper part of mantissa
-    if (u.mant & (1 << 12)) {      // round to nearest or even
+    v.sign = u.sign;
+    v.mant = u.mant >> 13;                       // get upper part of mantissa
+    if (u.mant & (1 << 12)) {                    // round to nearest or even
         if ((u.mant & ((1 << 12) - 1)) || (v.mant & 1)) { // round up if odd or remaining bits are nonzero
-            v.h++;                       // overflow here will give infinity
+            v.h++;                               // overflow here will give infinity
         }
     }
     v.expo = u.expo - 0x70;
-    v.sign = u.sign;
-    if (u.expo == 0xFF) {
-        v.expo = 0x1F;  // infinity or nan
-        if (u.mant != 0 && v.mant == 0) v.mant = 0x200;  // make sure output is a nan if input is nan
+    if (u.expo == 0xFF) {                        // infinity or nan
+        v.expo = 0x1F;
+        if (u.mant != 0) {                       // Nan
+            v.mant = (u.mant & 0x1FF) | 0x200;   // NAN payload is right-justified only in ForwardCom        
+        }
     }
     else if (u.expo > 0x8E) {
-        v.expo = 0x1F;  v.mant = 0;  // overflow -> inf
+        v.expo = 0x1F;  v.mant = 0;              // overflow -> inf
     }
     else if (u.expo < 0x71) {
-        v.expo = 0;  v.mant = 0;     // underflow -> 0
+        v.expo = 0;
+        if (supportSubnormal) {
+            u.expo += 24;
+            u.sign = 0;
+            v.mant = int(u.f) & 0x3FF;
+        }
+        else {        
+            v.mant = 0;                          // underflow -> 0
+        }
     }
     return v.h;   
 }
 
-// Convert double precision floating point number to half precision. subnormals give zero
-uint16_t double2half(double x) {
+// Convert double precision floating point number to half precision. 
+// subnormals optionally supported
+// Nan payloads not preserved
+uint16_t double2half(double x, bool supportSubnormal) {
     union {
         double d;
         struct {
@@ -263,23 +288,31 @@ uint16_t double2half(double x) {
         };
     } v;
     u.d = x;
-    v.mant = u.mant >> 42;         // get upper part of mantissa
-    if (u.mant & ((uint64_t)1 << 41)) {  // round to nearest or even
+    v.mant = u.mant >> 42;                       // get upper part of mantissa
+    if (u.mant & ((uint64_t)1 << 41)) {          // round to nearest or even
         if ((u.mant & (((uint64_t)1 << 41) - 1)) || (v.mant & 1)) { // round up if odd or remaining bits are nonzero
-            v.h++;                       // overflow here will give infinity
+            v.h++;                               // overflow here will give infinity
         }
     }
     v.expo = u.expo - 0x3F0;
     v.sign = u.sign;
     if (u.expo == 0x7FF) {
-        v.expo = 0x1F;  // infinity or nan
+        v.expo = 0x1F;                           // infinity or nan
         if (u.mant != 0 && v.mant == 0) v.mant = 0x200;  // make sure output is a nan if input is nan
     }
     else if (u.expo > 0x40E) {
-        v.expo = 0x1F;  v.mant = 0;  // overflow -> inf
+        v.expo = 0x1F;  v.mant = 0;              // overflow -> inf
     }
-    else if (u.expo < 0x3F1) {
-        v.expo = 0;  v.mant = 0;     // underflow -> 0
+    else if (u.expo < 0x3F1) {                   // underflow
+        v.expo = 0;
+        if (supportSubnormal) {
+            u.expo += 24;
+            u.sign = 0;
+            v.mant = int(u.d) & 0x3FF;
+        }
+        else {        
+            v.mant = 0;                          // underflow -> 0
+        }
     }
     return v.h;   
 }
@@ -298,7 +331,7 @@ static void CheckEndianness() {
     }
     *(float*)bb = 1.0f;
     if (*(uint32_t*)bb != 0x3F800000) {
-        err.submit(ERR_BIG_ENDIAN);        // Not IEEE format
+        err.submit(ERR_BIG_ENDIAN);        // Not IEEE floating point format
     }
 }
 

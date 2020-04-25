@@ -151,7 +151,7 @@ int CThread::fprintfEmulated(FILE * stream, const char * format, uint64_t * argu
     }
     // loop for substrings of format string containing only one format specifier each
     do {
-        char c;                                      // format character
+        char c = 0;                                      // format character
         int asterisks = 0;
         bool isString = false;
         if (percentp1) {
