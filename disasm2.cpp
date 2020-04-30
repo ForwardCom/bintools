@@ -86,14 +86,22 @@ void CDisassembler::writeLabels() {
     // Write all symbols at current position
     while (nextSymbol < symbols.numEntries() && symbols[nextSymbol] == currentPosition) {
         if (symbols[nextSymbol].st_type != STT_CONSTANT) {
-            if (numSymbols++) {
-                outFile.put(':'); outFile.newLine();           // Multiple symbols at same position, put on separate lines
+            if (numSymbols++) {           // Multiple symbols at same position
+                if (debugMode) {
+                    outFile.put(";  ");  // cannot show multiple lines at same address in debug mode
+                }
+                else {
+                    outFile.put("\n");   // put on separate lines
+                }
             }
             writeSymbolName(nextSymbol);
+
             if (symbols[nextSymbol].st_type == STT_FUNC && symbols[nextSymbol].st_bind != STB_LOCAL) {
                 // This is a function            
-                if (debugMode) outFile.put(": ");
-                else outFile.put(" function");
+                if (debugMode) {
+                    outFile.put(": ");
+                }
+                else outFile.put(": function");
                 isFunction = true;
                 currentFunction = nextSymbol;                  // Remember which function we are in
                 if (symbols[nextSymbol].st_unitsize) {         // Calculate end of current function
@@ -877,7 +885,6 @@ void CDisassembler::writeNormalInstruction() {
     else if (opAvail & 0x20) fallback = 6;                 // RS
     else if (operands[0] > 2) fallback = operands[0];      // first source register operand
     else fallback = 0x1F;                                  // zero
-
 
     // Write source operands
     if (nOp) {                                             // Skip if no source operands

@@ -279,7 +279,7 @@ void CEmulator::relocate() {
     }
 }
 
-void CEmulator::disassemble() {                  // make disassembly listing for debug output
+void CEmulator::disassemble() {              // make disassembly listing for debug output
     disassembler.copy(*this);                // copy ELF file
     disassembler.getComponents1();           // set up instruction list, etc.
     if (err.number()) return;
@@ -403,8 +403,8 @@ void CThread::decode() {
             listInstruction(ip - ip0);            // make debug listing
         }
         // op code
-        op   = tt.t.op1;
-        rs   = tt.t.rs;
+        op  = tt.t.op1;
+        rs  = tt.t.rs;
 
         // find format in tables
         uint32_t ff = lookupFormat(0x70000000 | op << 21);

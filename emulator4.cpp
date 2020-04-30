@@ -498,6 +498,7 @@ static uint64_t f_sign_extend(CThread * t) {
         break;
     default:
         t->interrupt(INT_INST_ILLEGAL);
+        value = 0;
     }
     t->operandType = 3;  // change operand size of result    
     if (t->vect) {    
@@ -525,6 +526,7 @@ static uint64_t f_sign_extend_add(CThread * t) {
         break;
     default:
         t->interrupt(INT_INST_ILLEGAL);
+        value = 0;
     }
     uint8_t r1 = t->operands[4];                           // first operand. g.p. register
     value += t->registers[r1];                             // read register with full size
@@ -873,6 +875,7 @@ uint64_t f_mul(CThread * t) {
     else {
         // unsupported operand type
         t->interrupt(INT_INST_ILLEGAL);
+        result.i = 0;
     }
     return result.q;
 }
@@ -1288,8 +1291,8 @@ static uint64_t f_mul_hi_u(CThread * t) {
         result.q = mul64_128u(0, t->parm[1].q, t->parm[2].q);
         break;
     default:
-        result.q = 0;
         t->interrupt(INT_INST_ILLEGAL);
+        result.q = 0;
     }
     return result.q;
 }
@@ -1318,6 +1321,7 @@ static uint64_t f_mul_ex(CThread * t) {
         break;
     default:
         t->interrupt(INT_INST_ILLEGAL);
+        result.i = 0;
     }
     return result.q;
 }
@@ -1346,6 +1350,7 @@ static uint64_t f_mul_ex_u(CThread * t) {
         break;
     default:
         t->interrupt(INT_INST_ILLEGAL);
+        result.i = 0;
     }
     return result.q;
 }
@@ -1450,6 +1455,7 @@ static uint64_t f_rem_u(CThread * t) {
         break;
     default:
         t->interrupt(INT_INST_ILLEGAL);
+        result.i = 0;
     }
     //if (overflow&& (mask.i & MSK_OVERFL_SIGN)) t->interrupt(INT_OVERFL_SIGN);    // signed integer overflow
     return result.q;
@@ -1526,6 +1532,7 @@ static uint64_t f_min_u(CThread * t) {
         return f_min(t);
     default:
         t->interrupt(INT_INST_ILLEGAL);
+        result.i = 0;
     }
     return result.q;
 }
@@ -1603,6 +1610,7 @@ static uint64_t f_max_u(CThread * t) {
         return f_max(t);
     default:
         t->interrupt(INT_INST_ILLEGAL);
+        result.i = 0;
     }
     return result.q;
 }
@@ -1847,8 +1855,8 @@ static uint64_t f_clear_bit(CThread * t) {
         break;
     default:
         t->interrupt(INT_INST_ILLEGAL);
+        result.i = 0;
     }
-    result.i = 0;
     return result.q;
 }
 

@@ -126,7 +126,7 @@ void CDisassembler::sortSymbolsAndRelocations() {
         if (relocations[i].r_sym < old2newSymbolIndex.numEntries()) {
             relocations[i].r_sym = old2newSymbolIndex[relocations[i].r_sym];            
         }
-        else relocations[i].r_sym = 0; // index out of range!!
+        else relocations[i].r_sym = 0; // index out of range!
         if ((relocations[i].r_type & R_FORW_RELTYPEMASK) == R_FORW_REFP) {
             // relocation record has an additional reference point
             // bit 30 indicates relocation used OK
@@ -425,7 +425,7 @@ void CDisassembler::pass1() {
     allready have a name.
 
     * Identifies and analyzes tables of jump addresses and call addresses,
-    e.g. switch/case tables and virtual function tables. (to do !!)
+    e.g. switch/case tables and virtual function tables. (to do !)
 
     * Tries to identify any data in the code section.
 
@@ -559,7 +559,7 @@ void CDisassembler::pass2() {
 
 This is a machine which can trace the contents of each register in certain
 situations. It is currently used for recognizing pointers to jump tables
-in order to identify jump tables (to do!!)
+in order to identify jump tables (to do!)
 */
 void CDisassembler::updateTracer() {
     // Trace register values. See explanation above
@@ -763,7 +763,7 @@ void CDisassembler::updateSymbols() {
 
 void CDisassembler::followJumpTable(uint32_t symi, uint32_t RelType) {
     // Check jump/call table and its targets
-    // to do !!
+    // to do !
 }
 
 
