@@ -1,14 +1,14 @@
 /****************************  cmdline.cpp  **********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2020-04-24
-* Version:       1.09
+* Last modified: 2020-05-12
+* Version:       1.10
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
 * This module is for interpretation of command line options
 * Also contains symbol change function
 *
-* Copyright 2017 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2020 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 #include "stdafx.h"
@@ -89,6 +89,7 @@ void CCommandLineInterpreter::readCommandItem(char * string) {
         else if (linkmode) interpretLinkOption(string+1);
         else if (emumode) interpretEmulateOption(string+1);
         else if (job == CMDL_JOB_DUMP) interpretDumpOption(string+1);
+        else if (job == CMDL_JOB_ASS) interpretAssembleOption(string+1);
         else interpretCommandOption(string+1);
     }
     else if (*string == responseFilePrefix) {
@@ -358,7 +359,9 @@ void CCommandLineInterpreter::interpretCommandOption(char * string) {
 }
 
 void CCommandLineInterpreter::interpretAssembleOption(char * string) {
-    outputType = FILETYPE_FWC;
+    if ((string[0] | 0x20) == 'b') dumpOptions = 2; // binary listing!
+    else if (string[0] == 0 || (string[0] | 0x20) == 'e') outputType = FILETYPE_FWC;
+    else interpretCommandOption(string);        
 }
     
 void CCommandLineInterpreter::interpretDisassembleOption(char * string) {

@@ -323,7 +323,7 @@ SExpression CAssembler::expression(uint32_t tok1, uint32_t maxtok, uint32_t opti
             case '!':
                 exp1.tokens++;
                 if (exp1.instruction == II_COMPARE
-                && (exp1.etype & XPR_REG1) && (exp1.etype & (XPR_REG2 | XPR_INT))) {
+                && (exp1.etype & XPR_REG1) && (exp1.etype & (XPR_REG2 | XPR_INT | XPR_IMMEDIATE))) {
                     // compare instruction. invert condition
                     exp1.optionbits ^= 1;
                     if ((exp1.reg1 & REG_V) && (dataType & TYP_FLOAT)) exp1.optionbits ^= 8; // floating point compare. invert gives unordered

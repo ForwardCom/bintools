@@ -1,14 +1,14 @@
 /****************************  disasm2.cpp   ********************************
 * Author:        Agner Fog
 * Date created:  2017-04-26
-* Last modified: 2018-03-30
-* Version:       1.01
+* Last modified: 2020-05-12
+* Version:       1.10
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        disassem.h
 * Description:
 * Disassembler for ForwardCom
 *
-* Copyright 2007-2017 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2007-2020 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 #include "stdafx.h"
 
@@ -1169,6 +1169,17 @@ void CDisassembler::writeCodeComment() {
     outFile.put(commentSeparator); outFile.put(' '); // Start comment
                                                   
     writeAddress();            // Write address
+
+    if (cmd.dumpOptions & 2) { // option "-b": binary listing
+        outFile.putHex(pInstr->i[0], 2);
+        if (instrLength > 1) {
+            outFile.put(" "); outFile.putHex(pInstr->i[1], 2);
+        }
+        if (instrLength > 2) {
+            outFile.put(" "); outFile.putHex(pInstr->i[2], 2);
+        }
+        outFile.put(" | ");
+    }
 
     if (fInstr->tmpl == 0xE && instrLength > 1) {                       // format E
         // Write format_template op1.op2 ot rd.rs.rt.ru mask IM2 IM3
