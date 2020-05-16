@@ -1,3 +1,5 @@
+Version 1.09 is the last version to support tiny instructions. See the manual version 1.09.
+
 This repository contains the binary tools for the ForwardCom instruction set:
 assembler, disassembler, linker, library manager, emulator
 
