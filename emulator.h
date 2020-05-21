@@ -1,8 +1,8 @@
 /****************************  emulator.h   **********************************
 * Author:        Agner Fog
 * date created:  2018-02-18
-* Last modified: 2020-04-14
-* Version:       1.09
+* Last modified: 2020-05-17
+* Version:       1.10
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        emulator.h
 * Description:
@@ -64,13 +64,12 @@ public:
                                                  // operands[2] is fallback register
                                                  // two-operand instructions use operands[4-5]
                                                  // three-operand instructions use operands[3-5]
-    uint8_t  rs;                                 // register rs (stored here because the number is lost on tiny instruction memory operands)
+    //uint8_t  rs;                                 // register rs (stored here because the number is lost on tiny instruction memory operands)
     uint8_t  op;                                 // operation code
     uint8_t  operandType;                        // operand type for current instruction
     uint8_t  nOperands;                          // number of source operands for current instruction
     uint8_t  vect;                               // instruction uses vector registers
     uint8_t  running;                            // thread is running. 0 = stop, 1 = save RD, 2 = don't save RD
-    bool     pendingTinyInstruction;             // the second of a pair of tiny instructions is pending
     bool     readonly;                           // expect memory address to be in read-only section
     bool     ignoreMask;                         // call execution function even if mask is zero
     bool     doubleStep;                         // execution function will process two vector elements at a time
@@ -85,7 +84,7 @@ public:
     uint32_t vectorLengthR;                      // vector length of result
     uint32_t vectorOffset;                       // offset to current element within vector
     uint32_t MaxVectorLength;                    // maximum vector length
-    uint32_t returnType;                         // debug return output. bit 0-3: operand type (8 = half precision). bit 4: register. bit 5: memory. bit6: one extra element (save_cp)
+    uint32_t returnType;                         // debug return output. bit 0-3: operand type (8 = half precision). bit 4: register. bit 5: memory. //(bit6: one extra element save_cp)
                                                  // bit 8: vector. bit 12: jump. bit 13: jump taken
     int8_t * memory;                             // program memory
     int8_t * tempBuffer;                         // temporary buffer for vector operand
@@ -119,8 +118,8 @@ protected:
     void execute();                              // execute current instruction
     void listStart();                            // start writing debug list
     void listInstruction(uint64_t address);      // write current instruction to debug list
-    void listResult(uint64_t result);            // write result of current instruction to debug list
 public:
+    void listResult(uint64_t result);            // write result of current instruction to debug list
     uint64_t readRegister(uint8_t reg) {         // read register value
         if (vect) {                              // this function is inlined for performance reasons
             uint64_t val = vectors.get<uint64_t>(reg*MaxVectorLength);
@@ -177,15 +176,15 @@ void enableSubnormals(uint32_t e);
 typedef uint64_t (*PFunc)(CThread * thread);
 
 // Tables of execution functions
-extern PFunc funcTab1[32];                       // tiny instructions
-extern PFunc funcTab2[64];                       // multiformat instructions
-extern PFunc funcTab3[64];                       // jump instructions
-extern PFunc funcTab4[16];                       // jump instructions with 24 bit offset
+extern PFunc funcTab1[64];                       // multiformat instructions
+extern PFunc funcTab2[64];                       // jump instructions
+extern PFunc funcTab3[16];                       // jump instructions with 24 bit offset
 // single format instructions:
-extern PFunc funcTab5[64];                       // format 1.0
-extern PFunc funcTab6[64];                       // format 1.1
-extern PFunc funcTab7[64];                       // format 1.2
-extern PFunc funcTab8[64];                       // format 1.3
+extern PFunc funcTab4[64];                       // format 1.0
+extern PFunc funcTab5[64];                       // format 1.1
+extern PFunc funcTab6[64];                       // format 1.2
+extern PFunc funcTab7[64];                       // format 1.3
+extern PFunc funcTab8[64];                       // format 1.4
 extern PFunc funcTab9[64];                       // format 1.8
 extern PFunc funcTab10[64];                      // format 2.5
 extern PFunc funcTab11[64];                      // format 2.6

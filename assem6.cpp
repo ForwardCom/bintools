@@ -1,8 +1,8 @@
 /****************************    assem6.cpp    ********************************
 * Author:        Agner Fog
 * Date created:  2017-08-07
-* Last modified: 2018-03-30
-* Version:       1.01
+* Last modified: 2020-05-19
+* Version:       1.10
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.cpp
 * Description:
@@ -10,7 +10,7 @@
 * This module contains:
 * - pass4(): Resolve internal cross references, optimize forward references
 * - pass5(): Make binary file
-* Copyright 2017 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2020 GNU General Public License http://www.gnu.org/licenses
 ******************************************************************************/
 #include "stdafx.h"
 
@@ -93,17 +93,6 @@ void CAssembler::pass4() {
                     }
                 }
             }
-            if (codeBuffer[i].category == 2) {
-                // tiny instruction. can it be paired?
-                if (i && codeBuffer[i-1].category == 2 && codeBuffer[i-1].section == codeBuffer[i].section 
-                && codeBuffer[i-1].size == 1 && codeBuffer[i].label == 0) {
-                    codeBuffer[i].size = 0;  // paired
-                }
-                else {
-                    codeBuffer[i].size = 1;  // unpaired
-                }
-            }
-
             addr += codeBuffer[i].size * 4;  // update address
             numUncertain += codeBuffer[i].sizeUnknown & 0x7F;  // update uncertainty
         }
@@ -411,218 +400,188 @@ void CAssembler::makeBinaryCode() {
             }
         }
 
-        if (codeBuffer[i].category != 2) {  // all instructions except tiny
-            // Loop through operands to assign registers
-            for (j = 3, a = 3; j >= 0; j--) {
-                // put next operand in the sequence reg3, reg2, reg1, fallback into rt, rs, ru, or rd
-                // these may be overwritten below in template B, C, and D.
-                switch (operands[j]) {
-                case 0x10:  // rt
-                    instr.a.rt = registers[a--] & 0x1F;
-                    break;
-                case 0x20:  // rs
-                    instr.a.rs = registers[a--] & 0x1F;
-                    break;
-                case 0x40:  // ru
-                    instr.a.ru = registers[a--] & 0x1F;
-                    break;
-                case 0x80:  // rd
-                    instr.a.rd = registers[a--] & 0x1F;
-                    break;
-                default:;  // memory and immediate operands or nothing
-                }
-            }
-
-            // insert other fields
-            instr.a.il = (format >> 8) & 3;  // il = instruction length
-            instr.a.mode = (format >> 4) & 7;  // mode
-            instr.a.op1 = instructionlistId[instructId].op1;  // operation
-            if (templ != 0xD) {
-                if (codeBuffer[i].dest != 2 && codeBuffer[i].dest != 0) instr.a.rd = codeBuffer[i].dest & 0x1F;  // destination register        
-                if (templ != 0xC) {
-                    instr.a.ot = codeBuffer[i].dtype & 7;  // operand type
-                    if (format & 0x80) instr.a.ot |= 4;    // M bit
-                    if (templ != 0xB) {
-                        if (codeBuffer[i].etype & XPR_MASK) {
-                            instr.a.mask = codeBuffer[i].mask;  // mask register
-                        }
-                        else {
-                            instr.a.mask = 7;        // no mask
-                        }
-                    }
-                }
-            }
-
-            uint8_t * instr_b = instr.b;  // avoid pedantic warnings from Gnu compiler
-            // memory operand
-            if (formatp->mem) {
-                if (formatp->mem & 1) instr.a.rt = codeBuffer[i].base & 0x1F;      // base in rt
-                else if (formatp->mem & 2) instr.a.rs = codeBuffer[i].base & 0x1F; // base in rs
-                if (formatp->mem & 4) instr.a.rs = codeBuffer[i].index & 0x1F;     // index in rs
-                uint8_t oldBase = codeBuffer[i].base;                  // save base pointer
-
-                // calculate offset, possibly involving symbols. make relocation if necessary
-                int64_t offset = calculateMemoryOffset(codeBuffer[i]);
-
-                if (codeBuffer[i].base != oldBase) {
-                    // base pointer changed by calculateMemoryOffset
-                    switch (codeBuffer[i].formatp->mem & 3) {
-                    case 1:  // base in RT
-                        instr.a.rt = codeBuffer[i].base;  break;
-                    case 2:  // base in RS
-                        instr.a.rs = codeBuffer[i].base;  break;
-                    }
-                }
-
-                uint32_t addrPos = formatp->addrPos;  // position of offset field
-                switch (formatp->addrSize) { // size of offset
-                case 0:    // no offset
-                    break;
-                case 1:    // 8 bits offset
-                    instr.b[addrPos] = uint8_t(offset);
-                    break;
-                case 2:    // 16 bits offset
-                    *(int16_t *)(instr_b + addrPos) = int16_t(offset);
-                    break;
-                case 3:   // 24 bits offset
-                    *(int16_t *)(instr_b + addrPos) = int16_t(offset);          // first 16 of 24 bits
-                    *(int8_t *)(instr_b + addrPos + 2) = int8_t(offset >> 16);  // last 8 bits
-                    break;
-                case 4:    // 32 bits offset
-                    *(int32_t *)(instr_b + addrPos) = int32_t(offset);
-                    break;
-                case 8:    // 64 bits offset
-                    *(int64_t *)(instr_b + addrPos) = offset;
-                }
-                // memory length or broadcast
-                if (formatp->vect & 6) instr.a.rs = codeBuffer[i].length;
-            }
-
-            // immediate operand
-            if (formatp->immSize) {
-                int64_t value = codeBuffer[i].value.i;  //value of operand
-                if (codeBuffer[i].sym1 && !(codeBuffer[i].etype & XPR_JUMPOS)) { // assume that symbol applies to jump address, not immediate constant, if instruction has both                
-                    // calculation of symbol address. add relocation if needed
-                    value = calculateConstantOperand(codeBuffer[i], codeBuffer[i].address + codeBuffer[i].formatp->immPos, codeBuffer[i].formatp->immSize);
-                    if (codeBuffer[i].etype & XPR_ERROR) {
-                        linei = codeBuffer[i].line;
-                        errors.reportLine(codeBuffer[i].value.w); // report error
-                    }
-                }
-
-                uint32_t immPos = formatp->immPos;  // position of immediate field
-                switch (formatp->immSize) { // size of immediate field
-                case 1:    // 8 bits immediate
-                    if ((codeBuffer[i].etype & XPR_IMMEDIATE) == XPR_FLT) {
-                        *(int8_t *)(instr_b + immPos) = (int8_t)(int)(codeBuffer[i].value.d);  // convert double to float16
-                    }
-                    else {
-                        instr.b[immPos] = uint8_t(value);
-                    }
-                    break;
-                case 2:    // 16 bits immediate
-                    if (instructionlistId[instructId].opimmediate == OPI_INT1632 && format > 0x200) {
-                        // 16-bit + 32 bit integer operands
-                        *(int16_t *)(instr_b + immPos) = int16_t(value >> 32);
-                        *(int32_t *)(instr_b + 4) = int32_t(value);
-                    }
-                    else if ((codeBuffer[i].etype & XPR_IMMEDIATE) == XPR_FLT) {
-                        *(int16_t *)(instr_b + immPos) = double2half(codeBuffer[i].value.d);  // convert double to float16
-                    }
-                    else {
-                        *(int16_t *)(instr_b + immPos) = int16_t(value);
-                    }
-                    break;
-                case 4:    // 32 bits immediate
-                    if (instructionlistId[instructId].opimmediate == OPI_2INT16) {
-                        // two 16-bit integer operands
-                        value = (uint32_t)value << 16 | uint32_t(value >> 32);
-                        *(int32_t *)(instr_b + immPos) = int32_t(value);
-                    }
-                    else if ((codeBuffer[i].etype & XPR_IMMEDIATE) == XPR_FLT) {   // convert double to float
-                        *(float *)(instr_b + immPos) = float(codeBuffer[i].value.d);
-                    }
-                    else {
-                        *(int32_t *)(instr_b + immPos) = int32_t(value);
-                        if (formatp->imm2 & 8) instr.a.im2 = uint16_t((uint64_t)value >> 32);
-                    }
-                    break;
-                case 8:    // 64 bits immediate
-                    if (instructionlistId[instructId].opimmediate == OPI_2INT32) {
-                        // two 32-bit integers. swap them
-                        value = value >> 32 | value << 32;
-                    }
-                    *(int64_t *)(instr_b + immPos) = value;
-                }
-            }
-            else if (opAvail & 1) {   // special case: three registers and an immediate
-                int64_t value = calculateConstantOperand(codeBuffer[i], codeBuffer[i].address + codeBuffer[i].formatp->immPos, codeBuffer[i].formatp->immSize);
-                *(int16_t *)(instr_b + 4) = int16_t(value);
-            }
-
-            if (formatp->imm2 & 0x80) {
-                if (!(formatp->imm2 & 0x40)) {
-                    instr.b[0] = instructionlistId[instructId].op1; // no OPJ
-                }
-                instr.a.op1 = format & 7;                // OPJ is in IM1
-            }
-            if (formatp->imm2 & 0x40) {
-                // insert constant
-                if (formatp->format2 == 0x155) {
-                    instr.i[0] = fillerInstruction;  // filler instruction
-                }
-            }
-
-            // additional fields for format E
-            if (templ == 0xE) {
-                instr.a.im3 = codeBuffer[i].optionbits;
-                instr.a.mode2 = format & 7;
-                instr.a.op2 = instructionlistId[instructId].op2;
-                // variant M1 has immediate operand in IM3
-                uint64_t variant = interpretTemplateVariants(instructionlistId[instructId].template_variant);  // instruction-specific variants
-                if ((variant & VARIANT_M1) && formatp->mem) instr.a.im3 = codeBuffer[i].value.w & 0x3F;
-            }
-
-            // save code
-            uint32_t ilen = instr.a.il;
-            if (ilen == 0) ilen = 1;
-            dataBuffers[section].push(&instr, ilen * 4);
-        }
-        else {
-            // tiny instruction
-            STinyTemplate instrTiny = {0};                           // template for tiny instruction
-            instrTiny.t.op1 = instructionlistId[instructId].op1;     // opcode
-            instrTiny.t.rd = codeBuffer[i].dest & 0x1F;              // destination
-            uint8_t rs = codeBuffer[i].reg1;                         // source register = reg1 or reg2
-            if (codeBuffer[i].etype & XPR_REG2) rs = codeBuffer[i].reg2;
-            instrTiny.t.rs = rs & 0xF;
-            if (formatp->mem) {
-                instrTiny.t.rs = codeBuffer[i].base & 0xF;           // memory pointer in rs
-                if (rs == 0) rs = codeBuffer[i].dest;                // source or destination in rd
-                instrTiny.t.rd = rs & 0x1F; 
-            }
-            if (formatp->immSize) {
-                instrTiny.t.rs = codeBuffer[i].value.w & 0xF; // immediate constant in rs
-                if ((codeBuffer[i].etype & XPR_IMMEDIATE) == XPR_FLT) instrTiny.t.rs = (int)codeBuffer[i].value.d & 0xF;
-            }
-            if (instructionlistId[instructId].format == 11) {        // swap source and destination
-                instrTiny.t.rs = codeBuffer[i].dest & 0xF;
-                instrTiny.t.rd = rs & 0x1F;
-            }
-            // check if there is a preceding unpaired tiny instruction
-            uint32_t n = dataBuffers[section].dataSize();
-            //if (codeBuffer[i].label == 0 && i && codeBuffer[i-1].category == 2
-            //&& codeBuffer[i-1].section == codeBuffer[i].section && (dataBuffers[sectioni].get<uint32_t>(n-4) & 0x0FFFC000) == 0) {
-            if (codeBuffer[i].size == 0 && n) {
-                // second tiny instruction in a pair. insert into preceding unpaired tiny instruction
-                dataBuffers[section].get<uint32_t>(n-4) |= (instrTiny.i & 0x3FFF) << 14;
-            }
-            else { // make new unpaired tiny instruction
-                instr.t.ilmd = 7;
-                instr.t.tiny1 = instrTiny.i & 0x3FFF;
-                dataBuffers[section].push(&instr, 4);
+        // Loop through operands to assign registers
+        for (j = 3, a = 3; j >= 0; j--) {
+            // put next operand in the sequence reg3, reg2, reg1, fallback into rt, rs, ru, or rd
+            // these may be overwritten below in template B, C, and D.
+            switch (operands[j]) {
+            case 0x10:  // rt
+                instr.a.rt = registers[a--] & 0x1F;
+                break;
+            case 0x20:  // rs
+                instr.a.rs = registers[a--] & 0x1F;
+                break;
+            case 0x40:  // ru
+                instr.a.ru = registers[a--] & 0x1F;
+                break;
+            case 0x80:  // rd
+                instr.a.rd = registers[a--] & 0x1F;
+                break;
+            default:;  // memory and immediate operands or nothing
             }
         }
+
+        // insert other fields
+        instr.a.il = (format >> 8) & 3;  // il = instruction length
+        instr.a.mode = (format >> 4) & 7;  // mode
+        instr.a.op1 = instructionlistId[instructId].op1;  // operation
+        if (templ != 0xD) {
+            if (codeBuffer[i].dest != 2 && codeBuffer[i].dest != 0) instr.a.rd = codeBuffer[i].dest & 0x1F;  // destination register        
+            if (templ != 0xC) {
+                instr.a.ot = codeBuffer[i].dtype & 7;  // operand type
+                if (format & 0x80) instr.a.ot |= 4;    // M bit
+                if (templ != 0xB) {
+                    if (codeBuffer[i].etype & XPR_MASK) {
+                        instr.a.mask = codeBuffer[i].mask;  // mask register
+                    }
+                    else {
+                        instr.a.mask = 7;        // no mask
+                    }
+                }
+            }
+        }
+
+        uint8_t * instr_b = instr.b;  // avoid pedantic warnings from Gnu compiler
+        // memory operand
+        if (formatp->mem) {
+            if (formatp->mem & 1) instr.a.rt = codeBuffer[i].base & 0x1F;      // base in rt
+            else if (formatp->mem & 2) instr.a.rs = codeBuffer[i].base & 0x1F; // base in rs
+            if (formatp->mem & 4) instr.a.rs = codeBuffer[i].index & 0x1F;     // index in rs
+            uint8_t oldBase = codeBuffer[i].base;                  // save base pointer
+
+            // calculate offset, possibly involving symbols. make relocation if necessary
+            int64_t offset = calculateMemoryOffset(codeBuffer[i]);
+
+            if (codeBuffer[i].base != oldBase) {
+                // base pointer changed by calculateMemoryOffset
+                switch (codeBuffer[i].formatp->mem & 3) {
+                case 1:  // base in RT
+                    instr.a.rt = codeBuffer[i].base;  break;
+                case 2:  // base in RS
+                    instr.a.rs = codeBuffer[i].base;  break;
+                }
+            }
+
+            uint32_t addrPos = formatp->addrPos;  // position of offset field
+            switch (formatp->addrSize) { // size of offset
+            case 0:    // no offset
+                break;
+            case 1:    // 8 bits offset
+                instr.b[addrPos] = uint8_t(offset);
+                break;
+            case 2:    // 16 bits offset
+                *(int16_t *)(instr_b + addrPos) = int16_t(offset);
+                break;
+            case 3:   // 24 bits offset
+                *(int16_t *)(instr_b + addrPos) = int16_t(offset);          // first 16 of 24 bits
+                *(int8_t *)(instr_b + addrPos + 2) = int8_t(offset >> 16);  // last 8 bits
+                break;
+            case 4:    // 32 bits offset
+                *(int32_t *)(instr_b + addrPos) = int32_t(offset);
+                break;
+            case 8:    // 64 bits offset
+                *(int64_t *)(instr_b + addrPos) = offset;
+            }
+            // memory length or broadcast
+            if (formatp->vect & 6) instr.a.rs = codeBuffer[i].length;
+        }
+
+        // immediate operand
+        if (formatp->immSize) {
+            int64_t value = codeBuffer[i].value.i;  //value of operand
+            if (codeBuffer[i].sym1 && !(codeBuffer[i].etype & XPR_JUMPOS)) { // assume that symbol applies to jump address, not immediate constant, if instruction has both                
+                // calculation of symbol address. add relocation if needed
+                value = calculateConstantOperand(codeBuffer[i], codeBuffer[i].address + codeBuffer[i].formatp->immPos, codeBuffer[i].formatp->immSize);
+                if (codeBuffer[i].etype & XPR_ERROR) {
+                    linei = codeBuffer[i].line;
+                    errors.reportLine(codeBuffer[i].value.w); // report error
+                }
+            }
+
+            uint32_t immPos = formatp->immPos;  // position of immediate field
+            switch (formatp->immSize) { // size of immediate field
+            case 1:    // 8 bits immediate
+                if ((codeBuffer[i].etype & XPR_IMMEDIATE) == XPR_FLT) {
+                    *(int8_t *)(instr_b + immPos) = (int8_t)(int)(codeBuffer[i].value.d);  // convert double to float16
+                }
+                else {
+                    instr.b[immPos] = uint8_t(value);
+                }
+                break;
+            case 2:    // 16 bits immediate
+                if (instructionlistId[instructId].opimmediate == OPI_INT1632 && format > 0x200) {
+                    // 16-bit + 32 bit integer operands
+                    *(int16_t *)(instr_b + immPos) = int16_t(value >> 32);
+                    *(int32_t *)(instr_b + 4) = int32_t(value);
+                }
+                else if ((codeBuffer[i].etype & XPR_IMMEDIATE) == XPR_FLT) {
+                    *(int16_t *)(instr_b + immPos) = double2half(codeBuffer[i].value.d);  // convert double to float16
+                }
+                else {
+                    *(int16_t *)(instr_b + immPos) = int16_t(value);
+                }
+                break;
+            case 4:    // 32 bits immediate
+                if (instructionlistId[instructId].opimmediate == OPI_2INT16) {
+                    // two 16-bit integer operands
+                    value = (uint32_t)value << 16 | uint32_t(value >> 32);
+                    *(int32_t *)(instr_b + immPos) = int32_t(value);
+                }
+                else if ((codeBuffer[i].etype & XPR_IMMEDIATE) == XPR_FLT) {   // convert double to float
+                    *(float *)(instr_b + immPos) = float(codeBuffer[i].value.d);
+                }
+                else {
+                    *(int32_t *)(instr_b + immPos) = int32_t(value);
+                    if (formatp->imm2 & 8) instr.a.im2 = uint16_t((uint64_t)value >> 32);
+                }
+                break;
+            case 8:    // 64 bits immediate
+                if (instructionlistId[instructId].opimmediate == OPI_2INT32) {
+                    // two 32-bit integers. swap them
+                    value = value >> 32 | value << 32;
+                }
+                *(int64_t *)(instr_b + immPos) = value;
+            }
+        }
+        else if (opAvail & 1) {   // special case: three registers and an immediate
+            int64_t value = calculateConstantOperand(codeBuffer[i], codeBuffer[i].address + codeBuffer[i].formatp->immPos, codeBuffer[i].formatp->immSize);
+            *(int16_t *)(instr_b + 4) = int16_t(value);
+        }
+
+        if (formatp->imm2 & 0x80) {
+            if (!(formatp->imm2 & 0x40)) {
+                instr.b[0] = instructionlistId[instructId].op1; // no OPJ
+            }
+            instr.a.op1 = format & 7;                // OPJ is in IM1
+        }
+        if (formatp->imm2 & 0x40) {
+            // insert constant
+            if (formatp->format2 == 0x155) {
+                instr.i[0] = fillerInstruction;  // filler instruction
+            }
+        }
+
+        // additional fields for format E
+        if (templ == 0xE) {
+            instr.a.im3 = codeBuffer[i].optionbits;
+            instr.a.mode2 = format & 7;
+            instr.a.op2 = instructionlistId[instructId].op2;
+            // variant M1 has immediate operand in IM3
+            uint64_t variant = interpretTemplateVariants(instructionlistId[instructId].template_variant);  // instruction-specific variants
+            if ((variant & VARIANT_M1) && formatp->mem) instr.a.im3 = codeBuffer[i].value.w & 0x3F;
+        }
+
+        if (formatp->cat == 3 && instr.a.op1 == 0) {
+            // simplify NOP instruction. Remove all unnecessary bits
+            instr.a.mask = 0;
+            instr.a.ot = 0;
+            if (instr.a.il > 1) instr.i[1] = 0;
+        }
+
+        // save code
+        uint32_t ilen = instr.a.il;
+        if (ilen == 0) ilen = 1;
+        dataBuffers[section].push(&instr, ilen * 4);
     }
 }
 

@@ -1,9 +1,9 @@
 /****************************    elf_forwardcom.h    **************************
 * Author:              Agner Fog
 * Date created:        2016-06-25
-* Last modified:       2020-04-21
-* ForwardCom version:  1.09
-* Program version:     1.09
+* Last modified:       2020-05-21
+* ForwardCom version:  1.10
+* Program version:     1.10
 * Project:             ForwardCom binary tools
 * Description:         Definition of ELF file format. See below
 *
@@ -40,7 +40,7 @@ shared objects are not used in the ForwardCom system.
 ******************************************************************************/
 
 #ifndef ELF_FORW_H
-#define ELF_FORW_H  109    // version number
+#define ELF_FORW_H  110    // version number
 
 
 //--------------------------------------------------------------------------

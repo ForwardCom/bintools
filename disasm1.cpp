@@ -1,14 +1,14 @@
 /****************************  disasm1.cpp   ********************************
 * Author:        Agner Fog
 * Date created:  2017-04-26
-* Last modified: 2018-03-30
-* Version:       1.01
+* Last modified: 2020-05-17
+* Version:       1.10
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        disassem.h
 * Description:
 * Disassembler for ForwardCom
 *
-* Copyright 2007-2017 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2007-2020 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 #include "stdafx.h"
 
@@ -45,7 +45,8 @@ uint64_t interpretTemplateVariants(const char * s) {
         case 'D': 
             if (d == '0') v |= VARIANT_D0; // D0
             if (d == '1') v |= VARIANT_D1; // D1
-            if (d == '2') v |= VARIANT_D2; // D1
+            if (d == '2') v |= VARIANT_D2; // D2
+            if (d == '3') v |= VARIANT_D3; // D3
             continue;
         case 'F': 
             if (d == '1') v |= VARIANT_F1; // F1
@@ -315,6 +316,7 @@ CDisassembler::CDisassembler() {
     currentFunctionEnd = 0;
     debugMode = 0;
     outputFile = cmd.outputFile;
+    checkFormatListIntegrity();
 };
 
 void CDisassembler::initializeInstructionList() {
@@ -804,23 +806,15 @@ void CDisassembler::parseInstruction() {
         break;
     }
 
-    // Get format details
-    if ((format & 0xFEF) == 0x160) {
-        // tiny instruction pair
-        static SFormat formT = {0x160, 2, 0, 31, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-        fInstr = &formT;
-    }
-    else {
-        // Look up format details
-        static SFormat form;
-        fInstr = &formatList[lookupFormat(pInstr->q)];     // lookupFormat is in emulator2.cpp
-        format = fInstr->format2;                          // Include subformat depending on op1
-        if (fInstr->tmpl == 0xE && pInstr->a.op2) {
-            // Single format instruction if op2 != 0
-            form = *fInstr;
-            form.cat = 1;
-            fInstr = &form;
-        }
+    // Look up format details
+    static SFormat form;
+    fInstr = &formatList[lookupFormat(pInstr->q)];     // lookupFormat is in emulator2.cpp
+    format = fInstr->format2;                          // Include subformat depending on op1
+    if (fInstr->tmpl == 0xE && pInstr->a.op2) {
+        // Single format instruction if op2 != 0
+        form = *fInstr;
+        form.cat = 1;
+        fInstr = &form;
     }
 
     // Get operand type

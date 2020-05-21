@@ -2,13 +2,13 @@
 * Author:        Agner Fog
 * Date created:  2017-11-03
 * Last modified: 2018-03-30
-* Version:       1.01
+* Version:       1.10
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        error.cpp
 * Description:
 * Standard procedure for error reporting to stderr
 *
-* Copyright 2006-2017 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2006-2020 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 #include "stdafx.h"
@@ -313,7 +313,7 @@ void CErrorReporter::submit(int ErrorNumber, int extra1, char const * extra2) {
 }
 
 // Write an error message.
-// To trace an error message: set a breakpoint here
+// To trace an error message: set a breakpoint here !½
 void CErrorReporter::handleError(SErrorText * err, char const * text) {
     // HandleError is used by submit functions
     // check severity

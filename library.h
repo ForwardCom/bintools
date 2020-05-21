@@ -2,13 +2,13 @@
 * Author:        Agner Fog
 * date created:  2017-11-08
 * Last modified: 2018-03-30
-* Version:       1.01
+* Version:       1.10
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        library.h
 * Description:
 * header file for library manager
 *
-* Copyright 2017-2017 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2020 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 // Structure for list of library members

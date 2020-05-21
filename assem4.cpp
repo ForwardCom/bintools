@@ -1,8 +1,8 @@
 /****************************    assem4.cpp    ********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2020-04-14
-* Version:       1.09
+* Last modified: 2020-05-17
+* Version:       1.10
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.cpp
 * Description:
@@ -600,7 +600,7 @@ int CAssembler::fitConstant(SCode & code) {
         high  = bitScanReverse((uint64_t)value);    // highest set bit
         //if (value < 8)       fitNum |= IFIT_I4;
         //if (value == 8)      fitNum |= IFIT_J4;
-        if (value < 0x10)    fitNum |= IFIT_U4;
+        //if (value < 0x10)    fitNum |= IFIT_U4;
         if (value < 0x80)    fitNum |= IFIT_I8 | IFIT_I8SHIFT;
         if (value == 0x80)   fitNum |= IFIT_J8;
         if (value <= 0xFF)   fitNum |= IFIT_U8;        
@@ -636,24 +636,6 @@ int CAssembler::fitConstant(SCode & code) {
         if (nbits < 32) fitNum |= IFIT_I32SHIFT;
         if (low >= 32)  fitNum |= IFIT_I32SH32;
     }
-
-    /* move this to checkCode2 because opimmediate is not known yet
-    if ((code.etype & XPR_INT) && !(code.etype & (XPR_LIMIT | XPR_INT2))) {
-        // check if value fits specified operand type
-        int ok = 1;
-        switch (code.dtype & 0x1F) {
-        case TYP_INT8 & 0x1F:
-            ok = fitNum & (IFIT_I8 | IFIT_U8);  break;
-        case TYP_INT16 & 0x1F:
-            ok = fitNum & (IFIT_I16 | IFIT_U16);  break;
-        case TYP_INT32 & 0x1F:
-            ok = fitNum & (IFIT_I32 | IFIT_U32);  break;
-        }
-        // unless higher constant specified:
-        if (!ok && (instructionlistId[code.instr1].opimmediate & ~0x10) != 4) {
-            errors.reportLine(ERR_CONSTANT_TOO_LARGE);
-        }
-    } */
     code.fitNum = fitNum;
     code.sizeUnknown = 0;
     return 0;
@@ -769,7 +751,8 @@ int CAssembler::fitAddress(SCode & code) {
                     return uncertain;
                 }
                 if (pass < 4) {
-                    code.fitAddr = IFIT_I16 | IFIT_I32;  // symbol values are not available yet
+                    // code.fitAddr = IFIT_I16 | IFIT_I32;  // symbol values are not available yet
+                    code.fitAddr = IFIT_I16 | IFIT_I24 | IFIT_I32;  // symbol values are not available yet
                     code.sizeUnknown += 1;
                     return 1;
                 }
@@ -838,9 +821,6 @@ uint32_t findFormat(SInstruction const & listentry, uint32_t imm) {
         instrModel.a.mode2 = listentry.op1 & 7;
     }
     else instrModel.a.mode2 = 0;
-    if (listentry.category == 2) { // tiny
-        instrModel.a.il = 1;  instrModel.a.mode = 6;
-    }
     instrModel.a.op1 = listentry.op1;
     instrModel.b[0] = imm & 0xFF;
     // look op details for this format (from emulator2.cpp)
@@ -849,7 +829,7 @@ uint32_t findFormat(SInstruction const & listentry, uint32_t imm) {
 
 // find the smallest representation that the floating point operand fits into
 int fitFloat(double x) {
-    if (x == 0.) return IFIT_U4 | IFIT_I8 | FFIT_16 | FFIT_32 | FFIT_64;
+    if (x == 0.) return IFIT_I8 | FFIT_16 | FFIT_32 | FFIT_64;
     union {
         double d;
         struct {
@@ -874,7 +854,6 @@ int fitFloat(double x) {
         int i = int(x);
         if (i == x && i >= -128 && i < 128) {
             fit |= IFIT_I8;
-            if (i >= 0 && i < 16) fit |= IFIT_U4;
         }
     }
     return fit;
@@ -921,7 +900,7 @@ int CAssembler::fitCode(SCode & code) {
         variant = interpretTemplateVariants(instructionlistId[ii].template_variant);  // instruction-specific variants
 
         switch (instructionlistId[ii].category) {
-        case 1:  case 2:  // single format and tiny instructions. find entry in formatList
+        case 1:   // single format. find entry in formatList
             formatIx = findFormat(instructionlistId[ii], code.value.w);
             code.formatp = formatList + formatIx;
             if (instructionFits(code, codeTemp, ii)) {
@@ -1002,7 +981,6 @@ bool CAssembler::instructionFits(SCode const & code, SCode & codeTemp, uint32_t 
     codeTemp.category = code.formatp->cat;
     codeTemp.size = (code.formatp->format2 >> 8) & 3;
     if (codeTemp.size == 0) codeTemp.size = 1;
-    if (codeTemp.category == 2) codeTemp.size = 0;
     codeTemp.instr1 = ii;
 
     // check vector use
@@ -1057,25 +1035,10 @@ bool CAssembler::instructionFits(SCode const & code, SCode & codeTemp, uint32_t 
     if ((code.etype & (XPR_MASK | XPR_FALLBACK)) && (code.fallback & 0x1F) != (code.reg1 & 0x1F)) {
         numReq += 2;  // fallback different from reg1, implies reg1 != destination
     }
-    else if ((code.etype & XPR_REG1) && code.dest && code.reg1 != code.dest) {
+    else if ((code.etype & XPR_REG1) && code.dest && code.reg1 != code.dest && !(variant & VARIANT_D3)) {
         numReq++;     // reg1 != destination
     }
     if (numReq > numReg) return false;  // not enough registers in this format
-
-    if (code.category == 2) {  // tiny instruction. fewer registers
-        switch (instructionlistId[ii].format) {
-        case 2: case 10:  // rs can be r0-15, v0-15
-            if (code.reg2 & 0x10) return false;
-            if (!(code.etype & XPR_REG2) && (code.reg1) & 0x10) return false;
-            break;
-        case 11:  // dest can be r0-14, r31
-            if ((code.dest & 0x1F) > 0xE && (code.dest & 0x1F) != 0x1F) return false;
-            break;
-        case 4: case 5: case 12: case 13:  // base pointer can be r0-14, r31
-            if ((code.base & 0x1F) > 0xE && (code.base & 0x1F) != 0x1F) return false;
-            break;
-        }
-    }
 
     // check if mask available
     if ((code.etype & XPR_MASK) && !(code.formatp->tmpl == 0xA || code.formatp->tmpl == 0xE)) return false;
@@ -1221,12 +1184,6 @@ bool CAssembler::instructionFits(SCode const & code, SCode & codeTemp, uint32_t 
         }
         // check if size fits. general cases
         switch (code.formatp->immSize) {
-        case 14:  // check tiny format, 4 bit integer
-            if (code.formatp->cat == 2 && (instructionlistId[ii].format == 1 || instructionlistId[ii].format == 9)) {
-                // 4 bit integer
-                if (codeTemp.fitNum & IFIT_U4) break;  // fits unsigned 4 bit
-            }
-            return false;  // immediate operand not supported
         case 1:
             if (codeTemp.fitNum & IFIT_I8) break;  // fits
             if ((variant & VARIANT_U0) && (codeTemp.fitNum & IFIT_U8)) break; // unsigned fits
@@ -1692,7 +1649,7 @@ void CAssembler::checkCode2(SCode & code) {
 
     uint32_t nReg = 0;
     for (j = 0; j < 3; j++) nReg += (code.etype & (XPR_REG1 << j)) != 0;
-    if (nReg < numReq) errors.reportLine(ERR_TOO_FEW_OPERANDS);
+    if (nReg < numReq && !(variant & VARIANT_D3)) errors.reportLine(ERR_TOO_FEW_OPERANDS);
     else if (nReg > numReq) errors.reportLine(ERR_TOO_MANY_OPERANDS);
 
     // count number of available registers in format
@@ -1743,7 +1700,7 @@ void CAssembler::checkCode2(SCode & code) {
 
         if (lineError) return;  // skip additional errors
     }
-    if ((variant & (VARIANT_D0 | VARIANT_D1)) != 0 && code.dest != 0) {  // should not have destination        
+    if ((variant & (VARIANT_D0 | VARIANT_D1 | VARIANT_D2)) != 0 && code.dest != 0) {  // should not have destination        
         errors.reportLine(ERR_NO_DESTINATION);
     }
     if ((variant & (VARIANT_D0 | VARIANT_D1)) == 0 && code.dest == 0) {  // should have destination

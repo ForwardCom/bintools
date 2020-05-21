@@ -2,12 +2,12 @@
 * Author:        Agner Fog
 * date created:  2017-11-14
 * Last modified: 2018-03-30
-* Version:       1.01
+* Version:       1.10
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
 * This module contains the linker.
 *
-* Copyright 2017-2018 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2020 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 /*     Overview of data structures used during linking process

@@ -1,8 +1,8 @@
 /****************************  emulator1.cpp  ********************************
 * Author:        Agner Fog
 * date created:  2018-02-18
-* Last modified: 2020-04-15
-* Version:       1.09
+* Last modified: 2020-05-17
+* Version:       1.10
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
 * Basic functionality of the emulator
@@ -308,7 +308,6 @@ CThread::CThread() {
     lastMask = numContr;
     ninstructions = 0;
     mapIndex1 = mapIndex2 = mapIndex3 = 0;                 // indexes into memory map
-    pendingTinyInstruction = false;
     callDept = 0;
     listLines = 0;
     tempBuffer = 0;
@@ -346,6 +345,7 @@ void CThread::run() {
     listStart();                                 // start writing debug output list
     running = 1;  terminate = false;
     while (running && !terminate) {
+
         fetch();                                 // fetch next instruction
         if (terminate) break;
         decode();                                // decode instruction
@@ -360,8 +360,6 @@ void CThread::run() {
 
 // fetch next instruction
 void CThread::fetch() {
-    // get any pending tiny instruction
-    if (pendingTinyInstruction) return;
     // find memory map entry
     while (ip < memoryMap[mapIndex1].startAddress) {
         if (mapIndex1 > 0) mapIndex1--;
@@ -386,55 +384,11 @@ static const uint8_t lengthList[8] = {1,1,1,1,2,2,3,4};
 
 // decode current instruction
 void CThread::decode() {
-    // check for tiny instruction pair
-    if ((pInstr->i[0] & 0xF0000000) == 0x70000000) {
-        STinyTemplate tt;
-        if (pendingTinyInstruction) {
-            // get second tiny instruction from pair
-            tt.i = pInstr->i[0] >> 14;
-            pendingTinyInstruction = false;
-            if (tt.t.op1) listInstruction(ip + 1 - ip0);           // make debug listing
-        }
-        else {
-            // get first tiny instruction from pair
-            tt.i = pInstr->i[0];
-            // remember next tiny instruction, except if it is a NOP
-            pendingTinyInstruction = (pInstr->i[0] & 0x0FFFC000) != 0;
-            listInstruction(ip - ip0);            // make debug listing
-        }
-        // op code
-        op  = tt.t.op1;
-        rs  = tt.t.rs;
 
-        // find format in tables
-        uint32_t ff = lookupFormat(0x70000000 | op << 21);
-        fInstr = &formatList[ff];
-        // find operands
-        nOperands = numOperands[fInstr->exeTable][op];
-        noVectorLength = (nOperands & 0x10) != 0;              // bit 4: vector length determined by execution function
-        dontRead       = (nOperands & 0x40) != 0;              // bit 6: don't read source operand
-        doubleStep = false;
-        nOperands &= 0x7;                                      // bit 0-2: number of operands
-        operandType = fInstr->ot & 7;
-        if (fInstr->ot == 0x35) operandType = 5 + (op & 1);
-        vect = fInstr->vect != 0;
-        operands[0] = operands[4] = tt.t.rd;
-        operands[5] = tt.t.rs;
-        if (fInstr->immSize) {
-            operands[5] = 0x20;   // operand is immediate
-            parm[2].q = tt.t.rs;
-        }
-        if (fInstr->mem) operands[5] = 0x40;       // operand is memory. 
-        operands[1] = 0xFF;   // no mask
-        if (!pendingTinyInstruction) ip += 4;  // next ip
-        returnType = operandType | 0x10 | vect << 8;
-        return;
-    }
-    // all other formats than tiny:
     listInstruction(ip - ip0);            // make debug listing
     // decoding similar to CDisassembler::parseInstruction()
     op = pInstr->a.op1;
-    rs = pInstr->a.rs;
+    //rs = pInstr->a.rs;
 
     // Get format
     uint32_t format = (pInstr->a.il << 8) + (pInstr->a.mode << 4); // Construct format = (il,mode,submode)
@@ -882,8 +836,8 @@ void CThread::writeVectorElement(uint32_t v, uint64_t value, uint32_t vectorOffs
 uint64_t CThread::getMemoryAddress() {
     // find base register
     if ((fInstr->mem & 3) == 0) err.submit(ERR_INTERNAL);
-    //uint8_t basereg = (fInstr->mem & 1) ? pInstr->a.rt : pInstr->a.rs;
-    uint8_t basereg = (fInstr->mem & 1) ? pInstr->a.rt : rs;
+    uint8_t basereg = (fInstr->mem & 1) ? pInstr->a.rt : pInstr->a.rs;
+    //uint8_t basereg = (fInstr->mem & 1) ? pInstr->a.rt : rs;
     readonly = false;
     // base register value
     uint64_t baseval = registers[basereg];
@@ -1145,7 +1099,7 @@ void CThread::listResult(uint64_t result) {
             float f;
         } u;
         if (vectorLengthR == 0) listOut.put("Empty");
-        if (returnType & 0x40) vectorLengthR += elementSize;  // one extra element (save_cp instruction)
+        //if (returnType & 0x40) vectorLengthR += elementSize;  // one extra element (save_cp instruction)
         for (uint32_t vectorOffset = 0; vectorOffset < vectorLengthR; vectorOffset += elementSize) {
             if (returnType & 0x20) { // memory destination
                 result = readMemoryOperand(getMemoryAddress() + vectorOffset);

@@ -2,7 +2,7 @@
 * Author:        Agner Fog
 * date created:  2018-02-18
 * Last modified: 2020-02-08
-* Version:       1.02
+* Version:       1.10
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
 * Emulator: System functions
@@ -242,6 +242,7 @@ void CThread::systemCall(uint32_t mod, uint32_t funcid, uint8_t rd, uint8_t rs) 
     }
     uint64_t temp;    // temporary
     uint64_t dsize;   // data size
+    const char * str = 0;    // string
     if (mod == SYSM_SYSTEM) {// system function
         // dispatch by function id
         switch (funcid) {
@@ -256,10 +257,11 @@ void CThread::systemCall(uint32_t mod, uint32_t funcid, uint8_t rd, uint8_t rs) 
             if (registers[0] && checkSysMemAccess(registers[0], 8, rd, rs, SHF_WRITE)) *(uint64_t*)(memory + registers[0]) = temp;
             registers[0] = temp;  break;
         case SYSF_PUTS:      // write string to stdout
-            if (strlen((const char*)memory + registers[0]) > checkSysMemAccess(registers[0], -1, rd, rs, SHF_READ)) {
+            str = (const char*)memory + registers[0];
+            if (strlen(str) > checkSysMemAccess(registers[0], -1, rd, rs, SHF_READ)) {
                 interrupt(INT_ACCESS_READ);
             }
-            else puts((const char*)memory + registers[0]);
+            else puts(str);
             break;
         case SYSF_PUTCHAR:   // write character to stdout
             putchar((char)registers[0]); 

@@ -1,8 +1,8 @@
 /*************************    system_functions.h    ***************************
 * Author:        Agner Fog
 * Date created:  2018-03-20
-* Last modified: 2018-03-20
-* Version:       1.01
+* Last modified: 2018-03-26
+* Version:       1.10
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        system_functions.h
 * Description:

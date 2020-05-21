@@ -2,7 +2,7 @@
 * Author:        Agner Fog
 * Date created:  2017-04-17
 * Last modified: 2020-04-15
-* Version:       1.09
+* Version:       1.10
 * Project:       Binary tools for ForwardCom instruction set
 * Description:   This includes assembler, disassembler, linker, library
 *                manager, and emulator in one program

@@ -1,8 +1,8 @@
 /****************************    assem5.cpp    ********************************
 * Author:        Agner Fog
 * Date created:  2017-09-19
-* Last modified: 2018-03-30
-* Version:       1.01
+* Last modified: 2020-05-19
+* Version:       1.10
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.cpp
 * Description:
@@ -10,7 +10,7 @@
 * This module contains functions for interpreting high level language constructs:
 * functions, branches, and loops
 *
-* Copyright 2017 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2020 GNU General Public License http://www.gnu.org/licenses
 ******************************************************************************/
 #include "stdafx.h"
 
@@ -1529,8 +1529,13 @@ void CAssembler::interpretCondition(SCode & code) {
 
 // push registers on stack
 void CAssembler::codePush() {   
-    uint32_t state = 0;                     // 0: begin, 1: after 'push', 2: after '(', 3: after register, 4: after ',', 5: after ')'
-    uint32_t reg1;                          // register
+    uint32_t state = 0;                     // 0: begin, 1: after type, 2: after 'push', 3: after '(', 
+                                            // 4: after register 1, 5: after comma, 6: after register 2, 7: after comma,
+                                            // 8: after constant, 9: after ')'
+    int32_t reg1 = -1;                      // register  1, stack pointer if specified
+    int32_t reg2 = -1;                      // register  2
+    uint32_t imm = -1;                       // immediate operand
+    uint32_t ot  = 3;                       // operand type
     uint32_t tok = 0;                       // token index
     SToken token;                           // token
     SCode code;                             // code structure
@@ -1540,87 +1545,116 @@ void CAssembler::codePush() {
     for (tok = tokenB; tok < tokenB + tokenN; tok++) {
         token = tokens[tok];
         switch (state) {
-        case 0:               // begin. expect 'push'
-            if (token.id == HLL_PUSH) state = 1;
-            else if (token.type == TOK_TYP) state = 0;  // ignore type
+        case 0:               // begin. expect type or 'push'
+            if (token.id == HLL_PUSH) state = 2;
+            else if (token.type == TOK_TYP) {
+                ot = tokens[tok].id;
+                state = 1;
+            }
+            else errors.report(token);
+            break; 
+
+        case 1:               // after type. expect 'push'
+            if (token.id == HLL_PUSH) state = 2;
             else errors.report(token);
             break;
-        case 1:  // after 'push'. expect '('
-            if (token.type == TOK_OPR && token.id == '(') state = 2;
+
+        case 2:  // after 'push'. expect '('
+            if (token.type == TOK_OPR && token.id == '(') state = 3;
             else errors.report(token);
             break;
-        case 3:  // after register. expect ',' or ')'
-            if (token.type == TOK_OPR && token.id == ',') state = 4;
-            else if (token.type == TOK_OPR && token.id == ')') state = 5;
-            else errors.report(token);
-            break;
-        case 5:  // after ')'. expect nothing
-            errors.report(token);
-        case 2: case 4:  // expect register
+
+        case 3:  // after '('. expect register
             if (token.type != TOK_REG) {
                 errors.report(token); return;
             }
-            state = 3;
+            state = 4;
             reg1 = token.id;
-            if (reg1 & REG_R) {  // general purpose register. 
-                // sp -= 8
-                code.instruction = II_SUB;
-                code.reg1 = code.dest = REG_R + 31; // sp
-                code.value.i = 8;
-                code.etype = XPR_INT | XPR_REG | XPR_REG1;
-                code.dtype = TYP_INT64;
-                checkCode1(code);
-                fitCode(code); 
-                if (lineError) return;     
-                codeBuffer.push(code);  // save code
-                // [sp] = reg
-                code.instruction = II_STORE;
-                code.reg1 = reg1;
-                code.dest = 2;
-                code.value.i = 0;
-                code.base = REG_R + 31; // sp
-                code.etype = XPR_REG | XPR_REG1 | XPR_MEM | XPR_BASE;
-                checkCode1(code);
-                fitCode(code); 
-                if (lineError) return;     
-                codeBuffer.push(code);  // save code 
+            break;
+
+        case 4:  // after register. expect ',' or ')'
+            if (token.type == TOK_OPR && token.id == ',') state = 5;
+            else if (token.type == TOK_OPR && token.id == ')') state = 9;
+            else errors.report(token);
+            break;
+
+        case 5:  // after comma. expect register or constant
+            if (token.type == TOK_REG) {
+                reg2 = token.id;  state = 6;
             }
-            else if (reg1 & REG_V) {  // vector register. 
-                // sp = sub_cps(sp, reg)
-                code.instruction = 0x2001D;
-                code.reg1 = code.dest = REG_R + 31; // sp
-                code.reg2 = reg1;
-                code.etype = XPR_REG | XPR_REG1 | XPR_REG2;
-                code.dtype = TYP_INT64;
-                checkCode1(code);
-                fitCode(code); 
-                if (lineError) return;     
-                codeBuffer.push(code);  // save code
-                // [sp] = save_cp(reg)
-                code.instruction = 0x2001F;
-                code.reg1 = reg1;
-                code.reg2 = 0;
-                code.dest = 2;
-                code.base =REG_R + 31; // sp 
-                code.etype = XPR_REG | XPR_REG1 | XPR_MEM | XPR_BASE;
-                checkCode1(code);
-                fitCode(code); 
-                if (lineError) return;     
-                codeBuffer.push(code);  // save code 
+            else if (token.type == TOK_NUM) {
+                imm = expression(tok, 1, 0).value.w;  state = 8;
             }
-            else {  // other register type
-                errors.report(token);
+            else errors.report(token);
+            break;
+
+        case 6:  // after second register. expect comma or ')'
+            if (token.type == TOK_OPR && token.id == ',') state = 7;
+            else if (token.type == TOK_OPR && token.id == ')') state = 9;
+            else errors.report(token);
+            break;
+
+        case 7:  // after second comma. expect constant
+            if (token.type == TOK_NUM) {
+                imm = expression(tok, 1, 0).value.w;  state = 8;
             }
+            else errors.report(token);
+            break;
+
+        case 8:  // after constant. expect ')'
+            if (token.type == TOK_OPR && token.id == ')') state = 9;
+            else errors.report(token);
+            break;
+
+        default:  // after ')'. expect nothing
+            errors.report(token);
+            break;
         }
     }
-    if (state != 5) errors.reportLine(ERR_UNFINISHED_INSTRUCTION);
+    if (state != 9) {
+        errors.reportLine(ERR_UNFINISHED_INSTRUCTION);
+        return;
+    }
+    if (reg2 == -1) {  // stack pointer not specified. use default stack pointer
+        reg2 = reg1;  reg1 = 0x1F | REG_R;
+    }
+    if (imm == -1) {  // no immediate operand. push only one register
+        imm = reg2 & 0x1F;
+    }
+    if ((imm & 0x1F) < uint32_t(reg2 & 0x1F)) {
+        errors.reportLine(ERR_OPERANDS_WRONG_ORDER);
+        return;
+    }
+    if (!(reg1 & REG_R)) {
+        errors.reportLine(ERR_WRONG_OPERANDS);
+        return;
+    }
+    if ((reg2 & REG_V) && (imm & 0x80)) {
+        errors.reportLine(ERR_WRONG_OPERANDS);
+        return;
+    }
+    code.instruction = II_PUSH;
+    code.dest = reg1;
+    code.reg1 = reg2;
+    code.value.u = imm;
+    code.etype = XPR_INT | XPR_REG | XPR_REG1;
+    code.dtype = TYP_INT8 | (ot & 0xF);
+    checkCode1(code);
+    fitCode(code);
+    if (lineError) return;
+    codeBuffer.push(code);  // save code
 }
 
 
 // pop register from stack
 void CAssembler::codePop() {
-    uint32_t state = 0;                     // 0: begin, 1: after 'pop', 2: after '(', 3: after register, 4: after ',', 5: after ')'
-    uint32_t reg1;                          // register
+    uint32_t state = 0;                     // 0: begin, 1: after type, 2: after 'push', 3: after '(', 
+                                            // 4: after register 1, 5: after comma, 6: after register 2, 7: after comma,
+                                            // 8: after constant, 9: after ')'
+    int32_t reg1 = -1;                      // register  1, stack pointer if specified
+    int32_t reg2 = -1;                      // register  2
+    uint32_t imm = -1;                       // immediate operand
+    uint32_t ot = 3;                       // operand type
     uint32_t tok = 0;                       // token index
     SToken token;                           // token
     SCode code;                             // code structure
@@ -1630,76 +1664,102 @@ void CAssembler::codePop() {
     for (tok = tokenB; tok < tokenB + tokenN; tok++) {
         token = tokens[tok];
         switch (state) {
-        case 0:               // begin. expect 'push'
-            if (token.id == HLL_POP) state = 1;
-            else if (token.type == TOK_TYP) state = 0;  // ignore type
+        case 0:               // begin. expect type or 'push'
+            if (token.id == HLL_POP) state = 2;
+            else if (token.type == TOK_TYP) {
+                ot = tokens[tok].id;
+                state = 1;
+            }
             else errors.report(token);
             break;
-        case 1:  // after 'push'. expect '('
-            if (token.type == TOK_OPR && token.id == '(') state = 2;
+
+        case 1:               // after type. expect 'push'
+            if (token.id == HLL_POP) state = 2;
             else errors.report(token);
             break;
-        case 3:  // after register. expect ',' or ')'
-            if (token.type == TOK_OPR && token.id == ',') state = 4;
-            else if (token.type == TOK_OPR && token.id == ')') state = 5;
+
+        case 2:  // after 'push'. expect '('
+            if (token.type == TOK_OPR && token.id == '(') state = 3;
             else errors.report(token);
             break;
-        case 5:  // after ')'. expect nothing
-            errors.report(token);
-        case 2: case 4:  // expect register
+
+        case 3:  // after '('. expect register
             if (token.type != TOK_REG) {
                 errors.report(token); return;
             }
-            state = 3;
+            state = 4;
             reg1 = token.id;
-            if (reg1 & REG_R) {  // general purpose register. 
-                // reg = [sp]
-                code.instruction = II_MOVE;
-                code.reg1 = code.reg2 = 0;
-                code.dest = reg1;
-                code.base = REG_R + 31; // sp
-                code.value.i = 0;
-                code.etype = XPR_MEM | XPR_BASE;
-                code.dtype = TYP_INT64;
-                checkCode1(code);
-                fitCode(code);
-                if (lineError) return;
-                codeBuffer.push(code);  // save code 
-                // sp += 8
-                code.instruction = II_ADD;
-                code.reg1 = code.dest = REG_R + 31; // sp
-                code.base = 0;
-                code.value.i = 8;
-                code.etype = XPR_INT | XPR_REG | XPR_REG1;
-                checkCode1(code);
-                fitCode(code);
-                if (lineError) return;
-                codeBuffer.push(code);  // save code
+            break;
+
+        case 4:  // after register. expect ',' or ')'
+            if (token.type == TOK_OPR && token.id == ',') state = 5;
+            else if (token.type == TOK_OPR && token.id == ')') state = 9;
+            else errors.report(token);
+            break;
+
+        case 5:  // after comma. expect register or constant
+            if (token.type == TOK_REG) {
+                reg2 = token.id;  state = 6;
             }
-            else if (reg1 & REG_V) {  // vector register. 
-                // reg = restore_cp([sp])
-                code.instruction = 0x2001E;
-                code.reg1 = code.reg2 = 0;
-                code.dest = reg1;
-                code.base = REG_R + 31; // sp 
-                code.value.i = 0;
-                code.etype = XPR_MEM | XPR_BASE;
-                checkCode1(code);
-                fitCode(code);
-                if (lineError) return;
-                codeBuffer.push(code);  // save code
-                // sp = add_cps(sp, reg)
-                code.instruction = 0x2001C;
-                code.reg1 = code.dest = REG_R + 31; // sp
-                code.reg2 = reg1;
-                code.etype = XPR_REG | XPR_REG1 | XPR_REG2;
-                code.dtype = TYP_INT64;
-                checkCode1(code);
-                fitCode(code);
-                if (lineError) return;
-                codeBuffer.push(code);  // save code
+            else if (token.type == TOK_NUM) {
+                imm = expression(tok, 1, 0).value.w;  state = 8;
             }
+            else errors.report(token);
+            break;
+
+        case 6:  // after second register. expect comma or ')'
+            if (token.type == TOK_OPR && token.id == ',') state = 7;
+            else if (token.type == TOK_OPR && token.id == ')') state = 9;
+            else errors.report(token);
+            break;
+
+        case 7:  // after second comma. expect constant
+            if (token.type == TOK_NUM) {
+                imm = expression(tok, 1, 0).value.w;  state = 8;
+            }
+            else errors.report(token);
+            break;
+
+        case 8:  // after constant. expect ')'
+            if (token.type == TOK_OPR && token.id == ')') state = 9;
+            else errors.report(token);
+            break;
+
+        default:  // after ')'. expect nothing
+            errors.report(token);
+            break;
         }
     }
-    if (state != 5) errors.reportLine(ERR_UNFINISHED_INSTRUCTION);
+    if (state != 9) {
+        errors.reportLine(ERR_UNFINISHED_INSTRUCTION);
+        return;
+    }
+    if (reg2 == -1) {  // stack pointer not specified. use default stack pointer
+        reg2 = reg1;  reg1 = 0x1F | REG_R;
+    }
+    if (imm == -1) {  // no immediate operand. push only one register
+        imm = reg2 & 0x1F;
+    }
+    if ((imm & 0x1F) < uint32_t(reg2 & 0x1F)) {
+        errors.reportLine(ERR_OPERANDS_WRONG_ORDER);
+        return;
+    }
+    if (!(reg1 & REG_R)) {
+        errors.reportLine(ERR_WRONG_OPERANDS);
+        return;
+    }
+    if ((reg2 & REG_V) && (imm & 0x80)) {
+        errors.reportLine(ERR_WRONG_OPERANDS);
+        return;
+    }
+    code.instruction = II_POP;
+    code.dest = reg1;
+    code.reg1 = reg2;
+    code.value.u = imm;
+    code.etype = XPR_INT | XPR_REG | XPR_REG1;
+    code.dtype = TYP_INT8 | (ot & 0xF);
+    checkCode1(code);
+    fitCode(code);
+    if (lineError) return;
+    codeBuffer.push(code);  // save code
 }

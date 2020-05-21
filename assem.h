@@ -1,8 +1,8 @@
 /****************************    assem.h    ***********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2020-04-18
-* Version:       1.09
+* Last modified: 2020-05-17
+* Version:       1.10
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.h
 * Description:
@@ -201,7 +201,8 @@ const uint32_t II_SUB_H          =  0x50009;
 const uint32_t II_MUL_H          =  0x5000B;
 const uint32_t II_DIV_H          =  0x50010;
 const uint32_t II_MUL_ADD_H      =  0x50031;
-
+const uint32_t II_PUSH           =  0x18038;
+const uint32_t II_POP            =  0x18039;
 const uint32_t II_REPLACE        =  0xA0001;
 const uint32_t II_REPLACE_EVEN   =  0x26004;
 const uint32_t II_REPLACE_ODD    =  0x26005;
@@ -233,7 +234,7 @@ const int MAX_ALIGN         =     4096;  // maximum allowed alignment  (note: if
 // Indicates how many bits are needed to contain address offset or immediate constant of an instruction
 //const int IFIT_I4        =        1;  // fits into signed 4-bit integer
 //const int IFIT_J4        =        2;  // (-x) fits into signed 4-bit integer
-const int IFIT_U4        =        4;  // x fits into unsigned 4-bit integer
+//const int IFIT_U4        =        4;  // x fits into unsigned 4-bit integer
 const int IFIT_I8        =     0x10;  // fits into signed 8-bit integer
 const int IFIT_J8        =     0x20;  // (-x) fits into signed 8-bit integer
 const int IFIT_U8        =     0x40;  // x fits into unsigned 8-bit integer
@@ -257,7 +258,7 @@ const int IFIT_RELOC   = 0x10000000;  // relocation record needed
 const int IFIT_LARGE   = 0x20000000;  // choose the larger size if uncertain. This input is used if optimization process has convergence problems
 
 // values for immediate operand types
-const int OPI_INT4            =   1;  // int4
+//const int OPI_INT4            =   1;  // int4
 const int OPI_INT8            =   2;  // int8
 const int OPI_INT16           =   3;  // int16
 const int OPI_INT32           =   4;  // int32
@@ -266,7 +267,7 @@ const int OPI_INT8SH          =   6;  // int8 << i
 const int OPI_INT16SH         =   7;  // int16 << i
 const int OPI_INT16SH16       =   8;  // int16 << 16
 const int OPI_INT32SH32       =   9;  // int32 << 32
-const int OPI_UINT4           =  17;  // uint4
+//const int OPI_UINT4           =  17;  // uint4
 const int OPI_UINT8           =  18;  // uint8
 const int OPI_UINT16          =  19;  // uint16
 const int OPI_UINT32          =  20;  // uint32
@@ -277,7 +278,7 @@ const int OPI_2INT16          =  26;  // int16+int16
 const int OPI_INT1632         =  27;  // int16+int32
 const int OPI_2INT32          =  28;  // int32+int32
 const int OPI_INT1688         =  29;  // int16+int8+int8
-const int OPI_UINT4F          =  33;  // uint4 converted to float
+//const int OPI_UINT4F          =  33;  // uint4 converted to float
 const int OPI_INT8F           =  34;  // int8 converted to float
 const int OPI_INT16F          =  35;  // int16 converted to float
 const int OPI_FLOAT16         =  64;  // float16
@@ -375,7 +376,7 @@ struct SCode : public SExpression {
     uint32_t fitAddr;             // indicates if relative address or jump offsets fits a certain number of bits
     uint8_t  dest;                // destination register (2 = memory destination)
     uint8_t  numOp;               // number of source operands
-    uint8_t  size;                // size of instruction (0 = tiny). minimum size if actual size depends on unresolved cross references
+    uint8_t  size;                // size of instruction. minimum size if actual size depends on unresolved cross references
     uint8_t  sizeUnknown;         // actual size may be up to this value bigger
     uint8_t  category;            // instruction category
 };
@@ -569,7 +570,7 @@ protected:
     void pass5();                                // Make binary file
     void copySections();                         // copy sections to outFile
     void copySymbols();                          // copy symbols to outFile
-    void removePrivateSymbols();                 // remove local symbols and adjust relocation records with new symbol indexes
+    //void removePrivateSymbols();                 // remove local symbols and adjust relocation records with new symbol indexes
     void makeListFile();                         // make output listing
     int64_t calculateMemoryOffset(SCode & code);    // calculate memory address possibly involving symbol. generate relocation if necessary
     int64_t calculateConstantOperand(SExpression & expr, uint64_t address, uint32_t fieldSize); // calculate constant or immediate operand possibly involving symbol. generate relocation if necessary

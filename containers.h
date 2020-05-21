@@ -1,14 +1,14 @@
 /****************************  containers.h   ********************************
 * Author:        Agner Fog
 * Date created:  2006-07-15
-* Last modified: 2017-11-10
-* Version:       1.01
+* Last modified: 2018-02-28
+* Version:       1.10
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        containers.h
 * Description:
 * Header file for container classes and dynamic memory allocation
 *
-* Copyright 2006-2017 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2006-2020 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 /*****************************************************************************

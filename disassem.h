@@ -1,14 +1,14 @@
 /****************************  disassem.h   **********************************
 * Author:        Agner Fog
 * Date created:  2017-04-26
-* Last modified: 2018-03-30
-* Version:       1.01
+* Last modified: 2020-05-17
+* Version:       1.10
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        disassem.h
 * Description:
 * Header file for disassembler
 *
-* Copyright 2006-2017 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2006-2020 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 
@@ -47,24 +47,10 @@ union STemplate {
         uint32_t mode:  3;   // Mode in format D
         uint32_t il:    2;   // Instruction length in format D
     } d;
-    struct {
-        uint32_t tiny1:14;   // First tiny instruction in format T
-        uint32_t tiny2:14;   // Second tiny instruction in format T
-        uint32_t ilmd:  4;   // 0B0111 in format T
-    } t;
     uint8_t      b[12];      // IM1 in format B
     uint16_t     s[4];       // IM1+2 in format C
     uint32_t     i[3];       // IM2 and IM3 in format A2, A3, B2, B3
     float        f[2];       // IM2 as float
-};
-
-union STinyTemplate {
-    uint32_t i;
-    struct {
-        uint32_t rs:     4;
-        uint32_t rd:     5;
-        uint32_t op1:    5;
-    } t;
 };
 
 // Record in nested lookup lists for formats.
@@ -81,8 +67,8 @@ struct SFormatIndex {
 // The size of SFormat is a power of 2 for fast table lookup
 struct SFormat {
     uint16_t format2;        // 0x0XYZ, where X = il, Y = mode, Z = subformat (mode2 or OP1) or variant within format
-    uint8_t  cat;            // Category: 1 = single format, 2 = tiny, 3 = multi-format, 4 = jump instruction                         
-    uint8_t  tmpl;           // Template: 0xA, 0xB, 0xC, 0xD, 0xE. 0 = tiny
+    uint8_t  cat;            // Category: 1 = single format,  3 = multi-format, 4 = jump instruction                         
+    uint8_t  tmpl;           // Template: 0xA, 0xB, 0xC, 0xD, 0xE.
 
     uint8_t  opAvail;        // Operands available: 1 = immediate, 2 = memory,
                              // 0x10 = RT, 0x20 = RS, 0x40 = RU, 0x80 = RD
@@ -158,14 +144,16 @@ uint64_t interpretTemplateVariants(const char *);
 const int VARIANT_D0 = (1 << 0);                 // no destination, no operand type
 const int VARIANT_D1 = (1 << 1);                 // no destination, but operant type specified
 const int VARIANT_D2 = (1 << 2);                 // operant type ignored
-const int VARIANT_M0 = (1 << 3);                 // memory operand destination
-const int VARIANT_M1 = (1 << 4);                 // IM3 used as extra immediate operand in E formats with a memory operand
+const int VARIANT_D3 = (1 << 3);                 // register RD used for other purpose
+const int VARIANT_M0 = (1 << 4);                 // memory operand destination
+const int VARIANT_M1 = (1 << 5);                 // IM3 used as extra immediate operand in E formats with a memory operand
 const int VARIANT_R0 = (1 << 8);                 // destination is general purpose register
 const int VARIANT_R1B =       9;                 // bit index to VARIANT_R1
 const int VARIANT_R1 = (1 << VARIANT_R1B);       // first source operand is general purpose register
 const int VARIANT_R2 = (1 << (VARIANT_R1B+1));   // second source operand is general purpose register
 const int VARIANT_R3 = (1 << (VARIANT_R1B+2));   // third source operand is general purpose register
 const int VARIANT_R123 = (VARIANT_R1|VARIANT_R2|VARIANT_R3);  // source operand is general purpose register
+const int VARIANT_D3R0 = VARIANT_D3 | VARIANT_R0; // RD is general purpose register
 const int VARIANT_RL = (1 << 12);                // RS is a general purpose register specifying length
 const int VARIANT_F1 = (1 << 15);                // can have fallback register without mask register
 const int VARIANT_I2 = (1 << 16);                // immediate operand is integer
@@ -228,7 +216,6 @@ protected:
     void writeInstruction();                     // Write current instruction to output file
     void writeNormalInstruction();               // Write normal instruction to output file
     void writeJumpInstruction();                 // Write jump instruction to output file
-    void writeTinyInstruction();                 // Write tiny instruction pair to output file
     void writeOperandType(uint32_t ot);          // Write operand type
     void writeMemoryOperand();                   // Write memory operand of current instruction
     void writeImmediateOperand();                // Write immediate operand depending on type in instruction list
@@ -278,9 +265,9 @@ const int numInstructionColumns = 13;  // Number of columns in csv file to read.
 // Record structure for instruction definition
 struct SInstruction {
     uint32_t id;                       // id number
-    uint32_t category;                 // 1: single format, 2: tiny, 3: multiformat, 4: jump
+    uint32_t category;                 // 1: single format, 3: multiformat, 4: jump
     uint64_t format;                   // Formats supported. See table in manual
-    uint32_t templt;                   // Format template. 0xA - 0xE, or 1 for tiny, 0 for multiple templates
+    uint32_t templt;                   // Format template. 0xA - 0xE, 0 for multiple templates
     uint32_t sourceoperands;           // Number of source operands, including register, memory and immediate operands
     uint32_t op1;                      // Operation code
     uint32_t op2;                      // Additional operation code

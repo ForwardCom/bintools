@@ -1,7 +1,7 @@
 /****************************  disasm2.cpp   ********************************
 * Author:        Agner Fog
 * Date created:  2017-04-26
-* Last modified: 2020-05-12
+* Last modified: 2020-05-17
 * Version:       1.10
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        disassem.h
@@ -705,13 +705,6 @@ void CDisassembler::writeInstruction() {
     // Check if instruction crosses section boundary
     if (iInstr + instrLength * 4 > sectionEnd) writeError("Instruction crosses section boundary");
 
-    if (fInstr->cat == 2) {
-        // Tiny instruction pair
-        writeTinyInstruction();
-        outFile.newLine();
-        return;
-    }
-
     // Find instruction in instruction_list
     SInstruction2 iRecSearch;
 
@@ -831,7 +824,7 @@ void CDisassembler::writeNormalInstruction() {
     outFile.tabulate(asmTab1);
 
     // Write destination operand
-    if (!(variant & (VARIANT_D0 | VARIANT_D1))) {          // skip if no destination operands        
+    if (!(variant & (VARIANT_D0 | VARIANT_D1 | VARIANT_D3))) {          // skip if no destination operands        
         if (variant & VARIANT_M0) {
             writeMemoryOperand();                          // Memory destination operand
         }
@@ -908,7 +901,9 @@ void CDisassembler::writeNormalInstruction() {
             case 7:  // RU
             case 8:  // RD
                 if (variant & VARIANT_SPECS) writeSpecialRegister(reg, variant >> VARIANT_SPECB);
-                else if (fInstr->vect == 0 || ((uint32_t)variant & VARIANT_R123 & (1 << (VARIANT_R1B + j)))) writeGPRegister(reg);
+                else if (fInstr->vect == 0 || ((uint32_t)variant & VARIANT_R123 & (1 << (VARIANT_R1B + j))) || (variant & VARIANT_D3R0) == VARIANT_D3R0) {
+                    writeGPRegister(reg);
+                }
                 else writeVectorRegister(reg);
                 break;
             }
@@ -967,7 +962,7 @@ void CDisassembler::writeJumpInstruction(){
     if (iRecord->sourceoperands > 1) {
         // Instruction has arithmetic operands
 
-        if (!(variant & (VARIANT_D0 | VARIANT_D1))) {
+        if (!(variant & (VARIANT_D0 | VARIANT_D1 | VARIANT_D3))) {
             // Write destination operand
             writeRegister(pInstr->a.rd, operandType);
             outFile.put(" = ");
@@ -1006,157 +1001,6 @@ void CDisassembler::writeJumpInstruction(){
     outFile.put(' ');
     writeRelocationTarget(iInstr + fInstr->addrPos, fInstr->addrSize);
 }
-
-
-void CDisassembler::writeTinyInstruction() {
-    // Write a pair of tiny instructions
-    // Extract the two tiny instructions
-    uint32_t index, n, j;
-    STinyTemplate ti[2];
-    ti[0].i = pInstr->t.tiny1;
-    ti[1].i = pInstr->t.tiny2;
-    // Loop through two tiny instructions
-    for (j = 0; j < 2; j++) { 
-        // save cross reference for second instruction in pair if not NOP
-        if (debugMode && j == 1 && ti[1].t.op1) {
-            SLineRef xref = {iInstr + sectionAddress + 1, 1, outFile.dataSize()};
-            lineList.push(xref);
-        }
-
-        // Find instruction in instruction_list
-        SInstruction2 iRecSearch;
-        iRecSearch.category = 2;
-        iRecSearch.op1 = ti[j].t.op1;
-        iRecSearch.op2 = 0;
-        n = instructionlist.findAll(&index, iRecSearch);
-        if (n != 1) {
-            writeWarning("Unknown tiny instruction");
-        }
-        else {
-            // Save pointer to record
-            iRecord = &instructionlist[index];
-
-            // Get variant and options
-            variant = interpretTemplateVariants(iRecord->template_variant);
-
-            uint32_t rdType = 0; // 0: none, 3: g.p. reg, 5: vector float , 6: vector double
-            uint32_t rsType = 0; // 0: none, 3: int64, 5: float, 6: double, 0x10: constant, 0x20: memory
-            bool swapOperands = false;
-
-            // Tiny subformat determines operand types
-            switch (iRecord->format) {
-            case 0:
-                rdType = rsType = 0;
-                break;
-            case 1:
-                rdType = 3; rsType = 0x10;
-                break;
-            case 2:
-                rdType = rsType = 3;
-                break;
-            case 5: swapOperands = true; // continue in case 4
-                rdType = 3; rsType = 0x20;
-                break;
-            case 4:
-                rdType = 3; rsType = 0x20;
-                break;
-            case 8:
-                rdType = 5; rsType = 0;
-                break;
-            case 9:
-                rdType = 5; rsType = 0x10;
-                break;
-            case 11:
-                swapOperands = true;
-                rdType = 5; rsType = 3;
-                break;
-            case 10:
-                rdType = rsType = 5;
-                break;
-            case 13: swapOperands = true; // continue in case 12
-            case 12:
-                rdType = 5; rsType = 0x20;
-                break;
-            }
-            if (rdType == 5 && (ti[j].t.op1 & 1)) rdType = 6; // double precision for odd op1
-
-            uint32_t destinationType = swapOperands ? rsType : rdType;
-            uint32_t sourceType = swapOperands ? rdType : rsType;
-            uint32_t rs2 = ti[j].t.rs & 0xF;
-            if (rs2 == 15 && (ti[j].t.op1 >= 28 || rsType == 0x20)) rs2 = 31;  // use stack pointer
-            // Write operand type
-            if (destinationType && !(variant & VARIANT_D0) && ti[j].t.op1 != 16 && ti[j].t.op1 != 17 && ti[j].t.op1 != 30 && ti[j].t.op1 != 31) {
-                outFile.tabulate(asmTab0);
-                writeOperandType(destinationType < 0x10 ? destinationType : sourceType);
-                outFile.put(' ');
-            }
-            outFile.tabulate(asmTab1);
-
-            // Write destination
-            if (!(variant & VARIANT_D0)) {
-                if (destinationType == 0x20) { // destination is memory
-                    outFile.put('[');  writeRegister(rs2, 3);  outFile.put("] = ");
-                }
-                else if (destinationType) { // destination is register
-                    writeRegister(swapOperands ? rs2 : ti[j].t.rd, destinationType);
-                    outFile.put(" = ");
-                }
-            }
-            // Instruction name
-            outFile.put(iRecord->name); 
-            if (ti[j].t.op1) outFile.put('(');
-            // Write source operands
-            if (iRecord->sourceoperands > 1) {
-                // Repeat destination operand
-                writeRegister(swapOperands ? rs2 : ti[j].t.rd, destinationType);
-                outFile.put(", ");
-            }
-            if (iRecord->sourceoperands) {
-                // source operand
-                if (sourceType == 0x10) {
-                    // unsigned 4-bit integer
-                    outFile.putDecimal(ti[j].t.rs & 0xF, 0);
-                }
-                else if (sourceType == 0x20) {
-                    // memory operand
-                    outFile.put('[');  writeRegister(rs2, 3);  outFile.put(']');
-                }
-                else {
-                    // register operand
-                    writeRegister(swapOperands ? ti[j].t.rd : rs2, sourceType);
-                }
-            }
-            if (ti[j].t.op1) outFile.put(')');
-        }
-        if (!debugMode) {
-
-            // write comment 
-            outFile.tabulate(asmTab3);                    // tabulate to comment field
-            outFile.put(commentSeparator); outFile.put(' '); // Start comment
-            // Write address
-            if (sectionEnd + sectionAddress > 0xFFFF) {
-                // Write 32 bit address
-                if (j == 0) outFile.putHex((uint32_t)(iInstr + sectionAddress), 2);
-                else outFile.put(">>>>>>>>");
-            }
-            else {
-                // Write 16 bit address
-                if (j == 0) outFile.putHex((uint16_t)(iInstr + sectionAddress), 2);
-                else outFile.put(">>>>");
-            }
-
-            // Space after address
-            outFile.put(" _ T ");
-
-            // Write op1 rd.rs
-            outFile.putHex(uint8_t(ti[j].t.op1), 2); outFile.put(' ');
-            outFile.putHex(uint8_t(ti[j].t.rd), 0); outFile.put('.');
-            outFile.putHex((uint8_t)(ti[j].t.rs & 0x0F), 0);
-        }
-        if (j == 0) outFile.newLine();
-    }
-}
-
 
 void CDisassembler::writeCodeComment() {
     // Write hex listing of instruction as comment after single-format or multi-format instruction
@@ -1464,10 +1308,6 @@ void CDisassembler::writeImmediateOperand() {
         case 8:
             x = *(int64_t*)(bb + fInstr->immPos);
             break;
-        case 14:   // 4 bits
-            x = *(int8_t*)(bb + fInstr->immPos) & 0xF;
-            if (iRecord->opimmediate == OPI_INT4) x = (int8_t)x << 4 >> 4;  // sign extend 4 bits signed integer
-            break; 
         case 0:
             if (fInstr->tmpl == 0xE) {
                 x = (pInstr->s[2]);

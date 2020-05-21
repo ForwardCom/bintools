@@ -1,8 +1,8 @@
 /****************************  maindef.h   **********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2020-04-20
-* Version:       1.09
+* Last modified: 2020-05-19
+* Version:       1.10
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        maindef.h
 * Original location: https://github.com/forwardcom/binutils
@@ -16,7 +16,7 @@
 
 // Program version
 #define FORWARDCOM_VERSION         1
-#define FORWARDCOM_SUBVERSION      9
+#define FORWARDCOM_SUBVERSION      10
 
 
 // Get high part of a 64-bit integer

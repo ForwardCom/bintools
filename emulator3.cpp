@@ -1,13 +1,13 @@
 /****************************  emulator6.cpp  ********************************
 * Author:        Agner Fog
 * date created:  2018-02-18
-* Last modified: 2020-04-15
-* Version:       1.09
+* Last modified: 2020-05-19
+* Version:       1.10
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
 * Emulator: Execution functions for jump instructions
 *
-* Copyright 2018 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2018-2020 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 #include "stdafx.h"
@@ -740,16 +740,16 @@ static uint64_t add_jump(CThread * t) {
 
 static uint64_t jump_call_58(CThread * t) {
     // op = 58: jump, 59: call
-    // Format 1.4 and 2.5.0: Indirect jump or call with memory operand
-    // Format 1.5 C, 2.5.2, and 3.1.0: Unconditional direct jump or call
+    // Format 1.6 and 2.5.0: Indirect jump or call with memory operand
+    // Format 1.7 C, 2.5.2, and 3.1.0: Unconditional direct jump or call
     uint64_t target = 0;                         // target address
 
     // different instructions for different formats
     switch (t->fInstr->format2) {
-    case 0x141: case 0x250: // Indirect jump or call with memory operand
+    case 0x161: case 0x250: // Indirect jump or call with memory operand
         target = t->readMemoryOperand(t->memAddress);
         break;
-    case 0x152: case 0x252: // Unconditional direct jump or call with relative address
+    case 0x172: case 0x252: // Unconditional direct jump or call with relative address
         target = t->ip + t->addrOperand * 4;     // add relative offset to IP
         break;
     case 0x310: // Unconditional direct jump or call with absolute address
@@ -770,14 +770,14 @@ static uint64_t jump_call_58(CThread * t) {
 
 static uint64_t multiway_and_indirect(CThread * t) {
     // op = 60: jump, 61: call
-    // Format 1.4 and 2.5.0: Multiway jump or call with table of relative addresses
-    // Format 1.5 C: Indirect jump or call to value of register 
+    // Format 1.6 and 2.5.0: Multiway jump or call with table of relative addresses
+    // Format 1.7 C: Indirect jump or call to value of register 
     uint64_t target = 0;                         // target address
     uint64_t offset;                             // offset relative to reference point
 
     // different instructions for different formats
     switch (t->fInstr->format2) {
-    case 0x142: case 0x250: // Indirect jump or call with memory operand
+    case 0x162: case 0x250: // Indirect jump or call with memory operand
         offset = t->readMemoryOperand(t->memAddress);
         // sign extend table entry
         switch (t->operandType) {
@@ -795,7 +795,7 @@ static uint64_t multiway_and_indirect(CThread * t) {
         offset <<= 2;                            // scale by 4
         target = t->parm[1].q + offset;          // add reference point
         break;
-    case 0x153: // Unconditional indirect jump or call to value of register
+    case 0x173: // Unconditional indirect jump or call to value of register
         target = t->registers[t->operands[0]];
         break;
     default: 
@@ -813,11 +813,11 @@ static uint64_t multiway_and_indirect(CThread * t) {
 }
 
 static uint64_t return_62(CThread * t) {
-    // Format 1.4: Normal function return
-    // Format 1.5 C: system return
+    // Format 1.6: Normal function return
+    // Format 1.7 C: system return
     uint64_t target = 0;                         // target address
     switch (t->fInstr->format2) {
-    case 0x143: // return
+    case 0x163: // return
         if (t->callStack.numEntries() == 0) {
             t->interrupt(INT_CALL_STACK);        // call stack empty
             target = t->entry_point;             // return to program start            
@@ -826,7 +826,7 @@ static uint64_t return_62(CThread * t) {
             target = t->callStack.pop();         // pop return address
         }
         break;
-    case 0x153: // system return
+    case 0x173: // system return
         // to do!
         target = t->ip;
         break;
@@ -839,9 +839,9 @@ static uint64_t return_62(CThread * t) {
 }
 
 static uint64_t syscall_63(CThread * t) {
-    // Format 1.4: sys call. ID in register
+    // Format 1.6: sys call. ID in register
     // Format 2.5.1, 2.5.4 and 3.1.0: sys call. ID in constants
-    // Format 1.5 C: trap or filler
+    // Format 1.7 C: trap or filler
     // Format 2.5.3: conditional traps
     uint8_t rd = t->pInstr->a.rd;
     uint8_t rs = t->pInstr->a.rs;
@@ -849,7 +849,7 @@ static uint64_t syscall_63(CThread * t) {
     uint32_t mod;                                // module id
     uint32_t funcid;                             // function id
     switch (t->fInstr->format2) {
-    case 0x143: // system call. ID in register
+    case 0x163: // system call. ID in register
         if (t->operandType == 2) { // 16+16 bit
             mod = uint16_t(t->registers[rt] >> 16);
             funcid = uint16_t(t->registers[rt]);
@@ -876,7 +876,7 @@ static uint64_t syscall_63(CThread * t) {
         funcid = t->pInstr->i[1];
         t->systemCall(mod, funcid, rd, rs);
         break;
-    case 0x154: case 0x155: // trap or filler
+    case 0x174: case 0x175: // trap or filler
         t->interrupt(t->pInstr->s[0]);
         break;
     case 0x253: // conditional traps
@@ -894,7 +894,7 @@ static uint64_t syscall_63(CThread * t) {
 }
 
 // Jump instructions, conditional and indirect
-PFunc funcTab3[64] = {
+PFunc funcTab2[64] = {
     sub_jump_generic, sub_jump_generic, sub_jump_generic, sub_jump_generic,              // 0 - 3
     sub_jump_generic, sub_jump_generic, sub_jump_generic, sub_jump_generic,              // 4 - 7
     sub_jump_generic, sub_jump_generic, shift_left_jump_zero, shift_left_jump_zero,      // 8 - 11
@@ -914,7 +914,7 @@ PFunc funcTab3[64] = {
 };
 
 // jump and call instructions with 24 bit offset
-PFunc funcTab4[16] = {
+PFunc funcTab3[16] = {
     f_jump, f_jump, f_jump, f_jump, f_jump, f_jump, f_jump, f_jump, 
     f_call, f_call, f_call, f_call, f_call, f_call, f_call, f_call
 };

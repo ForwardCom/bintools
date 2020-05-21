@@ -1,13 +1,13 @@
 ﻿/****************************  emulator5.cpp  ********************************
 * Author:        Agner Fog
 * date created:  2018-02-18
-* Last modified: 2020-04-15
-* Version:       1.09
+* Last modified: 2020-05-19
+* Version:       1.10
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
-* Emulator: Execution functions for single format instructions
+* Emulator: Execution functions for single format instructions, part 1
 *
-* Copyright 2018 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2020 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 #include "stdafx.h"
@@ -232,6 +232,56 @@ static uint64_t write_sys(CThread * t) {
     t->returnType = 0;
     return 0;
 }
+
+static uint64_t push_r(CThread * t) {
+    // push one or more g.p. registers on a stack pointed to by rd
+    int32_t step = dataSizeTable[t->operandType];
+    if (!(t->parm[2].i & 0x80)) step = -step;
+    uint8_t reg0 = t->operands[0] & 0x1F;   // pointer register
+    uint8_t reg1 = t->operands[4] & 0x1F;   // first push register
+    uint8_t reglast = t->parm[2].i & 0x1F;  // last push register
+    uint8_t reg;
+    uint64_t pointer = t->registers[reg0];
+    // loop through registers to push
+    for (reg = reg1; reg <= reglast; reg++) {
+        pointer += (int64_t)step;
+        uint64_t value = t->registers[reg];
+        t->writeMemoryOperand(value, pointer);    
+        t->listResult(value);
+    }
+    t->registers[reg0] = pointer;
+    return pointer;
+}
+
+static uint64_t pop_r(CThread * t) {
+    // pop one or more g.p. registers from a stack pointed to by rd
+    int32_t step = dataSizeTable[t->operandType];
+    if (t->parm[2].i & 0x80) step = -step;
+    uint8_t reg0 = t->operands[0] & 0x1F;   // pointer register
+    uint8_t reg1 = t->operands[4] & 0x1F;   // first push register
+    uint8_t reglast = t->parm[2].i & 0x1F;  // last push register
+    uint8_t reg;
+    uint64_t pointer = t->registers[reg0];
+    // loop through registers to pop in reverse order
+    for (reg = reglast; reg >=  reg1; reg--) {
+        uint64_t value = t->readMemoryOperand(pointer);
+        t->registers[reg] = value;
+        pointer += (int64_t)step;
+        t->listResult(value);
+    }
+    t->registers[reg0] = pointer;
+    return pointer;
+}
+
+static uint64_t vectors_used(CThread * t) {
+    // tell which vector registers are used
+    uint32_t value = 0;
+    for (int i = 0; i < 32; i++) {
+        if (t->vectorLength[i] > 0) value |= 1 << i;
+    }
+    return value;
+}
+
 
 // Format 2.9 A. Three general purpose registers and a 32-bit immediate operand
 
@@ -1439,19 +1489,19 @@ static uint64_t output_ (CThread * t) {
 
 // tables of single format instructions
 // Format 1.0 A. Three general purpose registers
-PFunc funcTab5[64] = {
+PFunc funcTab4[64] = {
     0, 0, 0, 0, 0, 0, 0, 0
 };
 
 // Format 1.1 C. One general purpose register and a 16 bit immediate operand. int64
-PFunc funcTab6[64] = {
+PFunc funcTab5[64] = {
     move_16s, move_16u, f_add, 0, 0, f_mul, f_div, shift16_add,  // 0 - 7
     0, 0, 0, 0, 0, 0, 0, 0,                                      // 8 - 15
     shifti1_move, shifti1_add, shifti1_and, shifti1_or, shifti1_xor, 0, 0, 0, // 16 -23
 };
 
 // Format 1.2 A. Three vector register operands
-PFunc funcTab7[64] = {
+PFunc funcTab6[64] = {
     set_len, get_len, set_len, get_len, insert_, extract_, broad_, 0,  // 0  - 7
     compress_sparse, expand_sparse, 0, 0, bits2bool, bool2bits, bool_reduce, 0,  // 8 - 15
     shift_expand, shift_reduce, shift_up, shift_down, rotate_up, rotate_down, 0, 0, // 16 - 23
@@ -1471,6 +1521,8 @@ PFunc funcTab9[64] = {
     0, 0, 0, 0, 0, 0, 0, 0,                                      // 24 - 31
     read_spec, write_spec, read_capabilities, write_capabilities, read_perf, read_perf, read_sys, write_sys, // 32 - 39
     0, 0, 0, 0, 0, 0, 0, 0,                                      // 40 - 47
+    0, 0, 0, 0, 0, 0, 0, 0,                                      // 48 - 55
+    push_r, pop_r, 0, vectors_used, 0, 0, 0, 0                   // 56 - 63
 };
 
 // Format 2.9 A. Three general purpose registers and a 32-bit immediate operand

@@ -2,7 +2,7 @@
 * Author:        Agner Fog
 * Date created:  2006-07-18
 * Last modified: 2018-03-30
-* Version:       1.01
+* Version:       1.10
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        elf.cpp
 * Description:
@@ -16,7 +16,7 @@
 * I have included limited support for x86-64 ELF (e_machine == EM_X86_64) for 
 * testing purposes. This may be removed.
 *
-* Copyright 2006-2018 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2006-2020 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 #include "stdafx.h"
 

@@ -2,14 +2,14 @@
 * Author:        Agner Fog
 * Date created:  2006-07-15
 * Last modified: 2018-03-30
-* Version:       1.01
+* Version:       1.10
 * Project:       Binary tools for ForwardCom instruction set
 *
 * This module contains container classes CMemoryBuffer and CFileBuffer for
 * dynamic memory allocation and file read/write. See containers.h for
 * further description.
 *
-* Copyright 2006-2017 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2006-2020 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 #include "stdafx.h"

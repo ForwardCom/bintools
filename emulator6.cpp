@@ -2,7 +2,7 @@
 * Author:        Agner Fog
 * date created:  2018-02-18
 * Last modified: 2020-04-21
-* Version:       1.09
+* Version:       1.10
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
 * Emulator: Execution functions for single format instructions, continued
@@ -1093,7 +1093,104 @@ static uint64_t truth_tab2 (CThread * t) {
     return ((c.b >> ((a.b & 1) | (b.b & 1) << 1)) & 1) | (a.q & ~uint64_t(1));
 }
 
-// Format 1.3 C. One vector register and a broadcast 16-bit immediate operand.
+static uint64_t push_v(CThread * t) {
+    // push one or more vector registers on a stack pointed to by rd
+    if (t->parm[2].i & 0xE0) {
+        t->interrupt(INT_INST_ILLEGAL); return 0;  // forward-growing stack not supported for vector registers
+    }
+    uint8_t reg0 = t->operands[0] & 0x1F;   // pointer register
+    uint8_t reg1 = t->operands[4] & 0x1F;   // first push register
+    uint8_t reglast = t->parm[2].i & 0x1F;  // last push register
+    uint8_t reg;                            // current regiser
+    uint32_t length;                        // length of current register
+    uint32_t length2;                       // length rounded up to nearest multiple of stack word size
+    uint64_t pointer = t->registers[reg0];
+    const int stack_word_size = 8;
+    t->operandType = 3;                     // must be 64 bits.
+    // loop through registers to push
+    for (reg = reg1; reg <= reglast; reg++) {
+        length = t->vectorLength[reg];
+        length2 = (length + stack_word_size - 1) & -stack_word_size;  // round up to multiple of 8
+        if (length != 0) {
+            pointer -= length2;
+            for (uint32_t j = 0; j < length2; j += 8) {
+                uint64_t value = t->readVectorElement(reg, j);
+                t->writeMemoryOperand(value, pointer + j);  // write vector  
+            }
+            t->returnType = 0x113;
+            t->operands[0] = reg;
+            t->listResult(0);
+        }
+        pointer -= stack_word_size;
+        t->writeMemoryOperand(length, pointer);  // write length  
+        t->returnType = 0x13;
+        t->listResult(length);
+    }
+    t->registers[reg0] = pointer;
+    t->returnType = 0x13;
+    t->operands[0] = reg0;
+    t->vect = 4;                              // stop vector loop
+    t->running = 2;                           // don't store result register
+    return pointer;
+}
+
+static uint64_t pop_v(CThread * t) {
+    // pop one or more vector registers from a stack pointed to by rd
+    if (t->parm[2].i & 0xE0) {
+        t->interrupt(INT_INST_ILLEGAL); return 0;  // forward-growing stack not supported for vector registers
+    }
+    uint8_t reg0 = t->operands[0] & 0x1F;   // pointer register
+    uint8_t reg1 = t->operands[4] & 0x1F;   // first pop register
+    uint8_t reglast = t->parm[2].i & 0x1F;  // last pop register
+    uint8_t reg;                            // current regiser
+    uint32_t length;                        // length of current register
+    uint32_t length2;                       // length rounded up to nearest multiple of stack word size
+    uint64_t pointer = t->registers[reg0];  // value of stack pointer or pointer register
+    const int stack_word_size = 8;
+    t->operandType = 3;                     // must be 64 bits.
+    // reverse loop through registers to pop
+    for (reg = reglast; reg >= reg1; reg--) {
+        length = (uint32_t)t->readMemoryOperand(pointer);  // read length  
+        length2 = (length + stack_word_size - 1) & -stack_word_size;  // round up to multiple of 8
+        t->vectorLength[reg] = length;          // set vector length
+        pointer += stack_word_size;             // pop length
+        if (length != 0) {
+            for (uint32_t j = 0; j < length2; j += 8) { // read vector           
+                uint64_t value = t->readMemoryOperand(pointer + j);  // read from memory
+                t->writeVectorElement(reg, value, j);
+            }
+            pointer += length2;
+            t->returnType = 0x113;
+            t->operands[0] = reg;
+            t->listResult(0);
+        }
+        t->returnType = 0x13;
+        t->listResult(length);
+    }
+    t->registers[reg0] = pointer;
+    t->returnType = 0x13;
+    t->operands[0] = reg0;
+    t->vect = 4;                              // stop vector loop
+    t->running = 2;                           // don't store result register
+    return pointer;
+}
+
+static uint64_t clear_(CThread * t) {
+    // clear one or more vector registers
+    uint8_t reg1 = t->operands[4] & 0x1F;   // first register
+    uint8_t reglast = t->parm[2].i & 0x1F;  // last register
+    uint8_t reg;                            // current regiser
+    for (reg = reg1; reg <= reglast; reg++) {
+        t->vectorLength[reg] = 0;
+    }
+    t->vect = 4;                              // stop vector loop
+    t->running = 2;                           // don't store result register
+    t->returnType = 0; 
+    return 0;
+}
+
+
+// Format 1.4 C. One vector register and a broadcast 16-bit immediate operand.
 
 static uint64_t move_i16 (CThread * t) {
     // Move 16 bit integer constant to 16-bit scalar
@@ -1629,16 +1726,27 @@ static uint64_t repeat_within_blocks (CThread * t) {
 // tables of single format instructions
 
 // Format 1.3 B. Two vector registers and a broadcast 8-bit immediate operand.
-// Format 1.3 C. One vector register and a broadcast 16-bit immediate operand.
-PFunc funcTab8[64] = {
+PFunc funcTab7[64] = {
     gp2vec, vec2gp, read_spev, make_sequence, insert_, extract_, compress, expand,  // 0  - 7
     0, 0, 0, 0, float2int, int2float, round_, round2n,                              // 8 - 15
     abs_, fp_category, broad_, broad_, byte_reverse, bitscan_, popcount_, 0,        // 16 - 23
     truth_tab2, 0, 0, 0, 0, 0, 0, 0,                                                // 24 - 31
-    move_i16, f_add, and_i16, or_i16, xor_i16, add_h16, mul_h16, 0,                 // 32 - 39
-    move_8shift8, move_8shift8, add_8shift8, add_8shift8, and_8shift8, and_8shift8, or_8shift8, or_8shift8, // 40 - 47
-    xor_8shift8, xor_8shift8, 0, 0, 0, 0, 0, 0,                                     // 48 - 55
-    move_half2float, move_half2double, add_half2float, add_half2double, mul_half2float, mul_half2double, 0, 0
+    0, 0, 0, 0, 0, 0, 0, 0,                                                         // 32 - 39
+    0, 0, 0, 0, 0, 0, 0, 0,                                                         // 40 - 47
+    0, 0, 0, 0, 0, 0, 0, 0,                                                         // 48 - 55
+    push_v, pop_v, clear_, 0, 0, 0, 0, 0,                                           // 56 - 63
+};
+
+// Format 1.4 C. One vector register and a broadcast 16-bit immediate operand.
+PFunc funcTab8[64] = {
+    move_i16, f_add, and_i16, or_i16, xor_i16, 0, 0, 0,               // 0 - 7
+    move_8shift8, move_8shift8, add_8shift8, add_8shift8, and_8shift8, and_8shift8, or_8shift8, or_8shift8, // 8 - 15
+    xor_8shift8, xor_8shift8, 0, 0, 0, 0, 0, 0,                                     // 16 - 23
+    0, 0, 0, 0, 0, 0, 0, 0,                                                         // 24 - 31
+    move_half2float, move_half2double, add_half2float, add_half2double, mul_half2float, mul_half2double, 0, 0,  // 32 - 39
+    add_h16, mul_h16, 0, 0, 0, 0, 0, 0,                                             // 40 - 47
+    0, 0, 0, 0, 0, 0, 0, 0,                                                         // 48 - 55
+    0, 0, 0, 0, 0, 0, 0, 0,                                                         // 56 - 63
 };
 
 // Format 2.5 A. Single format instructions with memory operands or mixed register types

@@ -1,14 +1,14 @@
 /****************************  linker.h   ************************************
 * Author:        Agner Fog
 * date created:  2017-11-14
-* Last modified: 2018-03-30
-* Version:       1.01
+* Last modified: 2020-05-19
+* Version:       1.10
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        linker.h
 * Description:
 * header file for linker
 *
-* Copyright 2017-2017 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2020 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 // Structure for list of imported library modules
@@ -200,11 +200,11 @@ protected:
     CDynamicArray<SSymbolXref2> unresWeakSym;    // list of unresolved weak symbols
     CDynamicArray<SRelinkModule> relinkModules;  // list of modules and libraries in input file to relink
     CDynamicArray<SLCommand> rnames;             // List of modules and libraries to delete or replace
-    CDynamicArray<ElfFwcEvent> eventData;       // container for all event records
+    CDynamicArray<ElfFwcEvent> eventData;        // container for all event records
     CELF memberBuffer;                           // buffer containing temporary copy of single library member
-    ElfFwcEhdr fileHeader;                      // file header for executable file
+    ElfFwcEhdr fileHeader;                       // file header for executable file
     bool relinkable;                             // output file is relinkable
     bool relinking;                              // relinking existing file
 };
 
-const uint32_t fillerInstruction = 0x6FFFFFFF;   // binary representation of filler instruction
+const uint32_t fillerInstruction = 0x7FFFFFFF;   // binary representation of filler instruction

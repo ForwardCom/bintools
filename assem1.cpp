@@ -1,8 +1,8 @@
 /****************************    assem1.cpp    ********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2020-04-15
-* Version:       1.09
+* Last modified: 2020-05-17
+* Version:       1.10
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.cpp
 * Description:
@@ -10,7 +10,7 @@
 * pass1(): Split input file into lines and tokens. Remove comments. Find symbol definitions
 * pass2(): Handle meta code. Classify lines. Identify symbol names, sections, functions
 *
-* Copyright 2017 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2020 GNU General Public License http://www.gnu.org/licenses
 ******************************************************************************/
 #include "stdafx.h"
 
