@@ -1,8 +1,8 @@
 /****************************    assem4.cpp    ********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2020-05-17
-* Version:       1.10
+* Last modified: 2020-09-11
+* Version:       1.11
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.cpp
 * Description:
@@ -103,12 +103,19 @@ void CAssembler::interpretCodeLine() {
 
     // interpret line by state machine looping through tokens
     for (tok = tokenB; tok < tokenB + tokenN; tok++) {
+        SToken token = tokens[tok];
+        if (token.type == TOK_XPR && expressions[token.value.w].etype & XPR_REG) {
+            // this is an alias for a register. Translate to register
+            token.type = TOK_REG;
+            token.id = expressions[token.value.w].reg1;
+        }
         if (lineError) break;
         code.section = section;
+
         if (state == 5) {  // after '='
-            if (tokens[tok].type == TOK_INS) {  // instruction
-                if (code.instruction) errors.report(tokens[tok]);  // instruction after += etc.
-                code.instruction = tokens[tok].id;
+            if (token.type == TOK_INS) {  // instruction
+                if (code.instruction) errors.report(token);  // instruction after += etc.
+                code.instruction = token.id;
                 state = 7;
             }
             else {  // expression after equal sign
@@ -140,18 +147,18 @@ void CAssembler::interpretCodeLine() {
             else if (expr.etype & (XPR_INT | XPR_SYM1)) {
                 code.sym1 = expr.sym1;
                 code.offset = expr.value.i;
-                if (expr.value.w & 3) errors.report(tokens[tok].pos, tokens[tok].stringLength, ERR_JUMP_TARGET_MISALIGN);
+                if (expr.value.w & 3) errors.report(token.pos, token.stringLength, ERR_JUMP_TARGET_MISALIGN);
                 tok += expr.tokens - 1;
                 code.etype |= XPR_JUMPOS | (expr.etype & ~XPR_IMMEDIATE);
             }
             else {
-                errors.report(tokens[tok].pos, tokens[tok].stringLength, ERR_EXPECT_JUMP_TARGET);
+                errors.report(token.pos, token.stringLength, ERR_EXPECT_JUMP_TARGET);
                 break;
             }
         }
-        else if (state == 8 && tokens[tok].type != TOK_OPT && tokens[tok].type != TOK_REG) {
+        else if (state == 8 && token.type != TOK_OPT && token.type != TOK_REG) {
             // expression in parameter list
-            if (tokens[tok].type == TOK_OPR && tokens[tok].id == ')') {
+            if (token.type == TOK_OPR && token.id == ')') {
                 state = 6; break;  // end of parameter list
             }
             // interpret any expression, except register or option
@@ -161,14 +168,14 @@ void CAssembler::interpretCodeLine() {
                 // multiple immediate integer constants
                 if (code.etype & XPR_INT2) {
                     // three integer operands
-                    if (code.etype & XPR_OPTIONS) errors.report(tokens[tok].pos, tokens[tok].stringLength, ERR_TOO_MANY_OPERANDS);
+                    if (code.etype & XPR_OPTIONS) errors.report(token.pos, token.stringLength, ERR_TOO_MANY_OPERANDS);
                     code.optionbits = uint8_t(expr.value.w);
                     code.etype |= XPR_OPTIONS;
                     expr.value.u = 0;
                 }
                 else {
                     // two integer operands
-                    if (code.value.u >> 32 != 0) errors.report(tokens[tok].pos, tokens[tok].stringLength, ERR_TOO_MANY_OPERANDS);
+                    if (code.value.u >> 32 != 0) errors.report(token.pos, token.stringLength, ERR_TOO_MANY_OPERANDS);
                     code.value.u = code.value.w | expr.value.u << 32;
                     code.etype |= XPR_INT2;
                     expr.value.u = 0;
@@ -186,11 +193,11 @@ void CAssembler::interpretCodeLine() {
             state = 9;
         }
         else {
-            switch (tokens[tok].type) {
+            switch (token.type) {
             case TOK_LAB:  case TOK_SYM:
                 if (state == 0) {
-                    //code.label = tokens[tok].value.w;
-                    code.label = tokens[tok].id;
+                    //code.label = token.value.w;
+                    code.label = token.id;
                     if (code.label) {
                         int32_t symi = findSymbol(code.label);
                         if (symi > 0) symbols[symi].st_section = section;
@@ -200,38 +207,38 @@ void CAssembler::interpretCodeLine() {
                 else goto ST_ERROR;
                 break;
             case TOK_OPR:
-                if (tokens[tok].id == ':' && state == 1) {
+                if (token.id == ':' && state == 1) {
                     state = 2;
                 }
-                else if (tokens[tok].id == '+' && state == 3) {
+                else if (token.id == '+' && state == 3) {
                     code.dtype |= TYP_PLUS;
                 }
-                else if (tokens[tok].priority == 15 && state == 4) {
+                else if (token.priority == 15 && state == 4) {
                     // assignment operator
                     state = 5;
-                    if (tokens[tok].id & EQ) { // combined operator and assignment: += -= *= etc.
+                    if (token.id & EQ) { // combined operator and assignment: += -= *= etc.
                         code.reg1 = code.dest;
                         code.etype |= XPR_REG | XPR_REG1;
-                        code.instruction = tokens[tok].id & ~EQ;  // temporarily store operator in .instruction
+                        code.instruction = token.id & ~EQ;  // temporarily store operator in .instruction
                     }
-                    else if (tokens[tok].id != '=') errors.report(tokens[tok]);
+                    else if (token.id != '=') errors.report(token);
                 }
-                else if (tokens[tok].id == '=' && state == 11) {
+                else if (token.id == '=' && state == 11) {
                     state = 12;
                 }
-                else if (tokens[tok].id == ',' && state == 6) {
+                else if (token.id == ',' && state == 6) {
                     state = 10;
                 }
-                else if (tokens[tok].id == ',' && state == 9) {
+                else if (token.id == ',' && state == 9) {
                     state = 8;
                 }
-                else if (tokens[tok].id == '(' && state == 7) {
+                else if (token.id == '(' && state == 7) {
                     state = 8;
                 }
-                else if (tokens[tok].id == ')' && (state == 8 || state == 9)) {
+                else if (token.id == ')' && (state == 8 || state == 9)) {
                     state = 6;
                 }
-                else if (tokens[tok].id == '[' && (state == 0 || state == 2 || state == 3)) {
+                else if (token.id == '[' && (state == 0 || state == 2 || state == 3)) {
                     // interpret memory destination
                     expr = expression(tok, tokenB + tokenN - tok, 0);
                     tok += expr.tokens - 1;
@@ -239,9 +246,9 @@ void CAssembler::interpretCodeLine() {
                     code.dest = 2;
                     state = 4;
                 }
-                else if ((tokens[tok].id == '+' + D2 || tokens[tok].id == '-' + D2) && (state == 3 || state == 4)) {
+                else if ((token.id == '+' + D2 || token.id == '-' + D2) && (state == 3 || state == 4)) {
                     // ++ and -- operators
-                    code.instruction = (tokens[tok].id == '+' + D2) ? II_ADD : II_SUB;
+                    code.instruction = (token.id == '+' + D2) ? II_ADD : II_SUB;
                     // operand is 1, integer or float
                     if (dataType & TYP_FLOAT) {
                         code.value.d = 1.0;
@@ -253,59 +260,60 @@ void CAssembler::interpretCodeLine() {
                     }
                     if (state == 3) { // prefix operator. expect register
                         tok++;
-                        if (tokens[tok].type != TOK_REG) errors.report(tokens[tok]);
-                        code.dest = tokens[tok].id;
+                        if (token.type != TOK_REG) errors.report(token);
+                        code.dest = token.id;
                     }
                     code.reg1 = code.dest;
                     code.etype |= XPR_REG1;
                     state = 6;
                 }
-                else if (tokens[tok].id == ';') {} // ignore terminating ';'
+                else if (token.id == ';') {} // ignore terminating ';'
                 else goto ST_ERROR;
                 break;
             case TOK_TYP:
                 if (state == 0 || state == 2) {
-                    dataType = code.dtype = tokens[tok].id;
+                    dataType = code.dtype = token.id;
                     state = 3;
                 }
                 else goto ST_ERROR;
                 break;
             case TOK_REG:
                 if (state == 0 || state == 2 || state == 3) {
-                    code.dest = tokens[tok].id;
+                    code.dest = token.id;
                     state = 4;
                 }
                 else if (state == 8) {
                     if (nReg < 3) {
-                        (&code.reg1)[nReg] = (uint8_t)tokens[tok].id;  // insert register in expression
+                        (&code.reg1)[nReg] = (uint8_t)token.id;  // insert register in expression
                         code.etype |= XPR_REG1 << nReg++;
-                        if ((code.etype & (XPR_INT | XPR_FLT | XPR_MEM)) && code.dest != 2)  errors.report(tokens[tok].pos, tokens[tok].stringLength, ERR_OPERANDS_WRONG_ORDER);
+                        if ((code.etype & (XPR_INT | XPR_FLT | XPR_MEM)) && code.dest != 2)  errors.report(token.pos, token.stringLength, ERR_OPERANDS_WRONG_ORDER);
                     }
-                    else errors.report(tokens[tok].pos, tokens[tok].stringLength, ERR_TOO_MANY_OPERANDS);
+                    else errors.report(token.pos, token.stringLength, ERR_TOO_MANY_OPERANDS);
                     state = 9;
                 }
                 else goto ST_ERROR;
                 break;
             case TOK_XPR: 
-                if (tokens[tok].value.u >= expressions.numEntries())  goto ST_ERROR; // expression not found
-                if (expressions[tokens[tok].value.w].etype & XPR_MEM) {  // this is an alias for a memory operand
-                    insertMem(code, expressions[tokens[tok].value.w]);
+                if (token.value.u >= expressions.numEntries())  goto ST_ERROR; // expression not found
+                if (expressions[token.value.w].etype & XPR_MEM) {  // this is an alias for a memory operand
+                    insertMem(code, expressions[token.value.w]);
                     code.dest = 2;
                     state = 4;
                 }
-                else if (expressions[tokens[tok].value.w].etype & XPR_REG) {  // this is an alias for a register
+                /*
+                else if (expressions[token.value.w].etype & XPR_REG) {  // this is an alias for a register. Translation done above
                     if (state == 0 || state == 2 || state == 3) {
-                        code.dest = expressions[tokens[tok].value.w].reg1;
+                        code.dest = expressions[token.value.w].reg1;
                         state = 4;
                     }
                     else goto ST_ERROR;
-                }
+                }*/
                 else goto ST_ERROR;
                 break;
             case TOK_INS:
                 if (state == 0 || state == 2 || state == 3) {
                     // interpret instruction name
-                    code.instruction = tokens[tok].id;
+                    code.instruction = token.id;
                     state = 7;                              // expect parenthesis and parameters
                     if (code.instruction & II_JUMP_INSTR) {
                         // Jump or call instruction. The next may be a jump target, a register or a memory operand
@@ -319,9 +327,9 @@ void CAssembler::interpretCodeLine() {
                         }
                     }
                 }
-                else if ((state == 6 || state == 10) && (tokens[tok].id & II_JUMP_INSTR)) {
+                else if ((state == 6 || state == 10) && (token.id & II_JUMP_INSTR)) {
                     // second half of jump instruction
-                    code.instruction |= tokens[tok].id;    // combine two partial instruction names
+                    code.instruction |= token.id;    // combine two partial instruction names
                     state = 11;                            // expect jump target
                 }
                 else goto ST_ERROR;
@@ -345,7 +353,7 @@ void CAssembler::interpretCodeLine() {
                 else goto ST_ERROR;
                 break;
             case TOK_ATT:
-                if (tokens[tok].id == ATT_ALIGN && state == 0 && tokenN >= 2) {  
+                if (token.id == ATT_ALIGN && state == 0 && tokenN >= 2) {  
                     // align n directive
                     code.instruction = II_ALIGN;
                     expr = expression(tok + 1, tokenB + tokenN - tok - 1, 0);
@@ -364,7 +372,7 @@ void CAssembler::interpretCodeLine() {
                 return;
             default:;
             ST_ERROR:
-                errors.report(tokens[tok]);
+                errors.report(token);
                 break;
             }
         }
@@ -1649,7 +1657,8 @@ void CAssembler::checkCode2(SCode & code) {
 
     uint32_t nReg = 0;
     for (j = 0; j < 3; j++) nReg += (code.etype & (XPR_REG1 << j)) != 0;
-    if (nReg < numReq && !(variant & VARIANT_D3)) errors.reportLine(ERR_TOO_FEW_OPERANDS);
+    if (nReg < numReq && !(variant & VARIANT_D3)) 
+        errors.reportLine(ERR_TOO_FEW_OPERANDS);
     else if (nReg > numReq) errors.reportLine(ERR_TOO_MANY_OPERANDS);
 
     // count number of available registers in format
