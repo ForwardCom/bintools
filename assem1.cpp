@@ -1,8 +1,8 @@
 /****************************    assem1.cpp    ********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2020-05-17
-* Version:       1.10
+* Last modified: 2020-09-18
+* Version:       1.11
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.cpp
 * Description:
@@ -459,6 +459,7 @@ void CAssembler::pass1() {
             switch (token.id) {
 
             case 39: case '"':  // quoted string in single or double quotes
+                if (comment) break;
                 // search for end of string
                 token.type = token.id == 39 ? TOK_CHA : TOK_STR;
                 token.pos = n + 1;

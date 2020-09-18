@@ -1,8 +1,8 @@
 /****************************    assem5.cpp    ********************************
 * Author:        Agner Fog
 * Date created:  2017-09-19
-* Last modified: 2020-05-19
-* Version:       1.10
+* Last modified: 2020-09-18
+* Version:       1.11
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.cpp
 * Description:
@@ -1543,7 +1543,13 @@ void CAssembler::codePush() {
     code.section = section;
     // loop through tokens on line
     for (tok = tokenB; tok < tokenB + tokenN; tok++) {
-        token = tokens[tok];
+        token = tokens[tok]; 
+        if (token.type == TOK_XPR && expressions[token.value.w].etype & XPR_REG) {
+            // this is an alias for a register. Translate to register
+            token.type = TOK_REG;
+            token.id = expressions[token.value.w].reg1;
+        }
+
         switch (state) {
         case 0:               // begin. expect type or 'push'
             if (token.id == HLL_PUSH) state = 2;
@@ -1582,7 +1588,7 @@ void CAssembler::codePush() {
             if (token.type == TOK_REG) {
                 reg2 = token.id;  state = 6;
             }
-            else if (token.type == TOK_NUM) {
+            else if (token.type == TOK_NUM || token.type == TOK_SYM) {
                 imm = expression(tok, 1, 0).value.w;  state = 8;
             }
             else errors.report(token);
@@ -1595,7 +1601,7 @@ void CAssembler::codePush() {
             break;
 
         case 7:  // after second comma. expect constant
-            if (token.type == TOK_NUM) {
+            if (token.type == TOK_NUM || token.type == TOK_SYM) {
                 imm = expression(tok, 1, 0).value.w;  state = 8;
             }
             else errors.report(token);
@@ -1663,6 +1669,11 @@ void CAssembler::codePop() {
     // loop through tokens on line
     for (tok = tokenB; tok < tokenB + tokenN; tok++) {
         token = tokens[tok];
+        if (token.type == TOK_XPR && expressions[token.value.w].etype & XPR_REG) {
+            // this is an alias for a register. Translate to register
+            token.type = TOK_REG;
+            token.id = expressions[token.value.w].reg1;
+        }
         switch (state) {
         case 0:               // begin. expect type or 'push'
             if (token.id == HLL_POP) state = 2;
@@ -1701,7 +1712,7 @@ void CAssembler::codePop() {
             if (token.type == TOK_REG) {
                 reg2 = token.id;  state = 6;
             }
-            else if (token.type == TOK_NUM) {
+            else if (token.type == TOK_NUM || token.type == TOK_SYM) {
                 imm = expression(tok, 1, 0).value.w;  state = 8;
             }
             else errors.report(token);
@@ -1714,7 +1725,7 @@ void CAssembler::codePop() {
             break;
 
         case 7:  // after second comma. expect constant
-            if (token.type == TOK_NUM) {
+            if (token.type == TOK_NUM || token.type == TOK_SYM) {
                 imm = expression(tok, 1, 0).value.w;  state = 8;
             }
             else errors.report(token);
