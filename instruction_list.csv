@@ -1,4 +1,4 @@
-Instruction list for ForwardCom instruction set. Version 1.10,,,,,,,,,,,,,
+Instruction list for ForwardCom instruction set. Version 1.10. 2020-09-18,,,,,,,,,,,,,
 Name,Id,Category,Formats,Template,Template variant,Source operands,OP1,OP2,Operand types general purpose registers,Operand types scalar,Operand types vectors,Immediate operand type,Description
 nop,0x30000,3,0x00000FFF,0,D0,0,0,0,0x000F,0xFF,0,0,no operation
 nop2,0x30200,3,0xFFFFF000,0,D0,0,0,0,0x000F,0xFF,0,0,no operation
@@ -321,7 +321,8 @@ jump_carry,0x102000,4,0,0,,3,-1,0,0,0,0,0,partial instruction name. jump if carr
 jump_ncarry,0x102100,4,0,0,,3,-1,0,0,0,0,0,partial instruction name. jump if not carry
 jump_eq,0x101200,4,0,0,D1,2,-1,0,0,0,0,0,partial instruction name. jump if equal
 jump_equal,0x101200,4,0,0,D1,2,-1,0,0,0,0,0,alias
-jump_neq,0x101300,4,0,0,D1,2,-1,0,0,0,0,0,partial instruction name. jump if not equal
+jump_nequal,0x101300,4,0,0,D1,2,-1,0,0,0,0,0,partial instruction name. jump if not equal
+jump_neq,0x101300,4,0,0,D1,2,-1,0,0,0,0,0,alias
 jump_notequal,0x101300,4,0,0,D1,2,-1,0,0,0,0,0,alias
 jump_sbelow,0x101600,4,0,0,D1,2,-1,0,0,0,0,0,partial instruction name. jump if below
 jump_saboveeq,0x101700,4,0,0,D1,2,-1,0,0,0,0,0,partial instruction name. jump if above or equal
