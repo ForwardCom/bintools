@@ -1,7 +1,7 @@
 /****************************    assem4.cpp    ********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2020-09-11
+* Last modified: 2020-09-19
 * Version:       1.11
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.cpp

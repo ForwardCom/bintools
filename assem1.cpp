@@ -1228,8 +1228,6 @@ void CAssembler::interpretVariableDefinition2() {
     if (section == 0) {
         errors.reportLine(ERR_DATA_WO_SECTION);
     }
-    //!!
-    pass += 0;
 
     // loop through tokens on this line
     for (tok = tokenB; tok < tokenB + tokenN; tok++) {
