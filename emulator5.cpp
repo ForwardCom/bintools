@@ -1063,7 +1063,7 @@ static uint64_t sqrt_ (CThread * t) {
         }
         break;
     case 6:   // double
-        if (a.f < 0) {
+        if (a.d < 0) {
             result.q = t->makeNan(nan_invalid_sqrt, operandType);
         }
         else {
