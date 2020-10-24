@@ -236,10 +236,10 @@ static uint64_t write_sys(CThread * t) {
 static uint64_t push_r(CThread * t) {
     // push one or more g.p. registers on a stack pointed to by rd
     int32_t step = dataSizeTable[t->operandType];
-    if (!(t->parm[2].i & 0x80)) step = -step;
+    if (!(t->parm[4].i & 0x80)) step = -step;
     uint8_t reg0 = t->operands[0] & 0x1F;   // pointer register
     uint8_t reg1 = t->operands[4] & 0x1F;   // first push register
-    uint8_t reglast = t->parm[2].i & 0x1F;  // last push register
+    uint8_t reglast = t->parm[4].i & 0x1F;  // last push register
     uint8_t reg;
     uint64_t pointer = t->registers[reg0];
     // loop through registers to push
@@ -256,10 +256,10 @@ static uint64_t push_r(CThread * t) {
 static uint64_t pop_r(CThread * t) {
     // pop one or more g.p. registers from a stack pointed to by rd
     int32_t step = dataSizeTable[t->operandType];
-    if (t->parm[2].i & 0x80) step = -step;
+    if (t->parm[4].i & 0x80) step = -step;
     uint8_t reg0 = t->operands[0] & 0x1F;   // pointer register
     uint8_t reg1 = t->operands[4] & 0x1F;   // first push register
-    uint8_t reglast = t->parm[2].i & 0x1F;  // last push register
+    uint8_t reglast = t->parm[4].i & 0x1F;  // last push register
     uint8_t reg;
     uint64_t pointer = t->registers[reg0];
     // loop through registers to pop in reverse order
@@ -402,7 +402,7 @@ uint64_t insert_(CThread * t) {
     }
     else {   // format 0x130
         sourceVector = t->operands[4];      // source register 
-        pos = t->parm[2].q << dsizelog;
+        pos = t->parm[4].q << dsizelog;
     }
     t->vectorLengthR = t->vectorLength[rd];
     if (pos == t->vectorOffset) {
