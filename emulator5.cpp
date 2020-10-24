@@ -1,8 +1,8 @@
 ﻿/****************************  emulator5.cpp  ********************************
 * Author:        Agner Fog
 * date created:  2018-02-18
-* Last modified: 2020-05-19
-* Version:       1.10
+* Last modified: 2020-10-24
+* Version:       1.11
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
 * Emulator: Execution functions for single format instructions, part 1
@@ -435,7 +435,7 @@ uint64_t extract_(CThread * t) {
     }
     else {  // format 0x130
         rsource = t->operands[4];                   // source vector
-        pos = t->parm[2].q << dsizelog;
+        pos = t->parm[4].q << dsizelog;
     }
 
     uint32_t sourceLength = t->vectorLength[rsource];           // length of source vector
@@ -1063,7 +1063,7 @@ static uint64_t sqrt_ (CThread * t) {
         }
         break;
     case 6:   // double
-        if (a.f < 0) {
+        if (a.d < 0) {
             result.q = t->makeNan(nan_invalid_sqrt, operandType);
         }
         else {
