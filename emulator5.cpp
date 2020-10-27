@@ -1,7 +1,7 @@
 ﻿/****************************  emulator5.cpp  ********************************
 * Author:        Agner Fog
 * date created:  2018-02-18
-* Last modified: 2020-10-24
+* Last modified: 2020-10-27
 * Version:       1.11
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
@@ -422,36 +422,35 @@ uint64_t insert_(CThread * t) {
 
 uint64_t extract_(CThread * t) {
     // Extract one element from vector RT, at offset RS·OS or IM1·OS, with size OS 
-    // into scalar in vector register RD.
-    uint8_t  rd = t->operands[0];                   // destination register
-    uint8_t  rsource;                               // source vector
+    // and broadcast into vector register RD.
+    uint8_t  rd = t->operands[0];                          // destination register
+    uint8_t  rsource;                                      // source vector
     uint8_t  operandType = t->operandType;                 // operand type
     uint8_t  dsizelog = dataSizeTableLog[operandType];     // log2(elementsize)
-    uint64_t pos;                                       // position = index * OS
+    uint64_t pos;                                          // position = index * OS
     if (t->fInstr->format2 == 0x120) {
-        rsource = t->operands[5];                   // source vector
-        uint8_t  rs = t->operands[4];                   // index register
+        rsource = t->operands[5];                          // source vector
+        uint8_t  rs = t->operands[4];                      // index register
         pos = t->registers[rs] << dsizelog;
     }
     else {  // format 0x130
-        rsource = t->operands[4];                   // source vector
+        rsource = t->operands[4];                          // source vector
         pos = t->parm[4].q << dsizelog;
     }
 
-    uint32_t sourceLength = t->vectorLength[rsource];           // length of source vector
+    uint32_t sourceLength = t->vectorLength[rsource];      // length of source vector
     uint64_t result;
     if (pos >= sourceLength) {
         result = 0;                                        // beyond end of source vector
     }
     else {
-        int8_t * source = t->vectors.buf() + rsource * t->MaxVectorLength; // address of rsource data
+        int8_t * source = t->vectors.buf() + (uint64_t)rsource * t->MaxVectorLength; // address of rsource data
         result = *(uint64_t*)(source+pos);                 // no problem reading too much, it will be cut off later if the operand size is < 64 bits
         if (dsizelog >= 4) {                               // 128 bits
             t->parm[5].q = *(uint64_t*)(source+pos+8);     // store high part of 128 bit element
         }
     }
-    t->vectorLength[rd] = 1 << dsizelog;                   // length of destination vector
-    t->vect = 4;                                           // stop vector loop
+    t->vectorLength[rd] = t->vectorLengthR = sourceLength; // length of destination vector
     return result;
 }
 
