@@ -1,8 +1,8 @@
 /****************************    assem2.cpp    ********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2020-05-17
-* Version:       1.10
+* Last modified: 2021-06-20
+* Version:       1.11
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.cpp
 * Description:
@@ -10,12 +10,12 @@
 * This module contains:
 * - expression(): Interpretation of expressions containing operators and 
 *                 any type of operands.
-* Copyright 2017-2020 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2021 GNU General Public License http://www.gnu.org/licenses
 ******************************************************************************/
 #include "stdafx.h"
 
 
-// Interpret and evaluate expre-ssion
+// Interpret and evaluate expression
 SExpression CAssembler::expression(uint32_t tok1, uint32_t maxtok, uint32_t options) {
     // tok1: index to first token, 
     // maxtok: maximum number of tokens to use, 
@@ -44,9 +44,11 @@ SExpression CAssembler::expression(uint32_t tok1, uint32_t maxtok, uint32_t opti
     uint32_t bracketlevel = 0;    // number of brackets in stack
     uint32_t state = 0;           // 0: expecting value, 1: after value, expecting operator or end
     uint32_t i;                   // loop counter
+    uint32_t temp;                // temporary result
     uint32_t tokid;               // token.id
     int32_t  symi;                // symbol index
-    uint8_t endbracket;           // expected end bracket
+    bool     is_local = false;    // symbol is local constant
+    uint8_t  endbracket;          // expected end bracket
 
     SExpression exp1, exp2;       // expressions during evaluation
     zeroAllMembers(exp1);         // reset exp1
@@ -113,12 +115,14 @@ SExpression CAssembler::expression(uint32_t tok1, uint32_t maxtok, uint32_t opti
                 }
                 if (tokens[tok].priority == 3) state = 1; else state = 0;  // state 0 except after monadic operator
             }
-            else if (state == 0 && (tokens[tok].id == '-' || tokens[tok].id == '+' || tokens[tok].priority == 3) && priority < 3) {
+            else if (state == 0 && (tokens[tok].id == '-' || tokens[tok].id == '+' || tokens[tok].priority == 3)) {
                 // monadic operator
-                priority = 3;  toklow = tok;
+                if (priority < 3) {                
+                    priority = 3;  toklow = tok;
+                }
             }
-            else {
-                break;  // unexpected operator. end here
+            else {                
+                errors.report(tokens[tok]);  break;  // unexpected operator
             }
         }
         else {
@@ -134,6 +138,14 @@ SExpression CAssembler::expression(uint32_t tok1, uint32_t maxtok, uint32_t opti
                     break;
                 case TOK_TYP:
                     state = 1; // type expression
+                    break;
+                case TOK_HLL:
+                    if (tokens[tok].id == HLL_FALSE || tokens[tok].id == HLL_TRUE) {
+                        state = 1; 
+                    }
+                    else {
+                        errors.report(tokens[tok]);
+                    }
                     break;
                 default:
                     errors.report(tokens[tok]);  break;
@@ -181,29 +193,53 @@ SExpression CAssembler::expression(uint32_t tok1, uint32_t maxtok, uint32_t opti
             switch (tokens[tok1].type) {
             case TOK_LAB: case TOK_VAR: case TOK_SEC: case TOK_SYM:
                 exp1.etype = XPR_SYM1;            // symbol address
-                //exp1.sym1 = tokens[tok1].value.w;
-                exp1.sym1 = tokens[tok1].id;
-                // get symbol value if possible
-                if (options & 2) exp1.etype |= XPR_MEM;
-                symi = findSymbol(exp1.sym1);
-                if (symi > 0 && symbols[symi].st_bind == STB_LOCAL && (symbols[symi].st_type == STT_CONSTANT || symbols[symi].st_type == STT_VARIABLE)) {
-                    exp1.etype = XPR_INT;
-                    exp1.value.i = tokens[tok1].value.u;   // don't take value from symbol, it may change
-                    exp1.sym1 = 0;  // symbol expression converted to constant expression
-                    if (symbols[symi].st_other & STV_FLOAT) exp1.etype = XPR_FLT;
-                    if (symbols[symi].st_other & STV_STRING) {
-                        exp1.etype = XPR_STRING; exp1.sym2 = (uint32_t)symbols[symi].st_unitnum;
+                exp1.sym3 = tokens[tok1].id;
+                symi = findSymbol(exp1.sym3);
+                // is symbol local with known value?
+                is_local = symi > 0 && symbols[symi].st_bind == STB_LOCAL && (symbols[symi].st_type == STT_CONSTANT || symbols[symi].st_type == STT_VARIABLE);
+                if (options & 2) {  // symbol inside []
+                    exp1.etype |= XPR_MEM;
+                    exp1.sym3 = 0;
+                    if (is_local) {
+                        exp1.offset_mem = tokens[tok1].value.w;   // don't take value from symbol, it may change
                     }
-                    if ((options & 2) && (exp1.etype & (XPR_FLT | XPR_STRING))) { // float or string not allowed in memory operand
+                    else {
+                        exp1.sym1 = tokens[tok1].id;
+                    }
+                    if (exp1.etype & (XPR_FLT | XPR_STRING)) { // float or string not allowed in memory operand
                         errors.report(tokens[tok1].pos, tokens[tok1].stringLength, ERR_WRONG_TYPE);
                     }
-                    break;
+                }
+                else {  // symbol outside []
+                    if (is_local) {
+                        if (symbols[symi].st_other & STV_FLOAT) exp1.etype |= XPR_FLT;
+                        else exp1.etype |= XPR_INT;
+                        exp1.value.i = tokens[tok1].value.u;   // don't take value from symbol, it may change
+                        if (symbols[symi].st_other & STV_STRING) {
+                            exp1.etype = XPR_STRING; 
+                            exp1.sym2 = (uint32_t)symbols[symi].st_unitnum; // sym2 used for string length
+                        }
+                        else {
+                            exp1.etype &= ~XPR_SYM1;            // symbol reference no longer needed
+                            exp1.sym3 = 0;
+                        }
+                    }
+                    else {                    
+                        exp1.etype |= XPR_INT; // type not known yet?
+                        exp1.sym3 = tokens[tok1].id;
+                    }
                 }
                 break;
-            case TOK_NUM: 
-                exp1.etype = XPR_INT;  // integer value
-                exp1.value.i = interpretNumber((char*)buf()+tokens[tok1].pos, tokens[tok1].stringLength, &i);
-                if (i) errors.report(tokens[tok1]);
+            case TOK_NUM:
+                if (options & 2) { // number inside [] is offset
+                    exp1.etype = XPR_OFFSET;  // integer value
+                    exp1.offset_mem = (int32_t)interpretNumber((char*)buf()+tokens[tok1].pos, tokens[tok1].stringLength, &temp);
+                }
+                else {  // number outside [] is operand
+                    exp1.etype = XPR_INT;  // integer value
+                    exp1.value.i = interpretNumber((char*)buf() + tokens[tok1].pos, tokens[tok1].stringLength, &temp);
+                }
+                if (temp) errors.report(tokens[tok1]);
                 break;
             case TOK_FLT:
                 exp1.etype = XPR_FLT;  // floating point value
@@ -212,13 +248,33 @@ SExpression CAssembler::expression(uint32_t tok1, uint32_t maxtok, uint32_t opti
                     errors.report(tokens[tok1].pos, tokens[tok1].stringLength, ERR_WRONG_TYPE);
                 }
                 break;
-            case TOK_CHA:            // character(s). convert to integer
+            case TOK_CHA:  {          // character(s). convert to integer
                 exp1.etype = XPR_INT; 
                 exp1.value.u = 0;
+                bool escape = false;  // check for \ escape characters
+                int j = 0;            // count characters
                 for (i = 0; i < tokens[tok1].stringLength; i++) {
-                    exp1.value.u += (uint64_t)(uint8_t)buf()[tokens[tok1].pos+i] << (i*8);
+                    uint8_t c = get<uint8_t>(tokens[tok1].pos + i);
+                    if (c == '\\' && !escape) {
+                        escape = true; continue;           // escape next character
+                    }
+                    if (escape) {   // special escape characters
+                        switch (c) {
+                        case '\\':            break;
+                        case 'n':  c = '\n';  break;
+                        case 'r':  c = '\r';  break;
+                        case 't':  c = '\t';  break;
+                        case '0':  c = 0;     break;
+                        }
+                    }
+                    escape = false;
+                    exp1.value.u += uint64_t(c) << j*8;
+                    j++;
                 }
-                break;
+                if (options & 2) {   // string not allowed in memory operand
+                    errors.report(tokens[tok1].pos, tokens[tok1].stringLength, ERR_WRONG_TYPE);
+                }
+                break;}
             case TOK_STR:  {          // string
                 exp1.etype = XPR_STRING;
                 exp1.value.u = stringBuffer.dataSize();    // save position of string
@@ -235,6 +291,7 @@ SExpression CAssembler::expression(uint32_t tok1, uint32_t maxtok, uint32_t opti
                         case 'n':  c = '\n';  break;
                         case 'r':  c = '\r';  break;
                         case 't':  c = '\t';  break;
+                        case '0':  c = 0;     break;
                         }
                     }
                     if (escape && exp1.sym2) exp1.sym2--;  // reduce length
@@ -249,7 +306,10 @@ SExpression CAssembler::expression(uint32_t tok1, uint32_t maxtok, uint32_t opti
             case TOK_REG:
                 if (options & 2) { // register inside [] is base register
                     exp1.etype = XPR_BASE | XPR_MEM;
-                    exp1.base = tokens[tok1].id;
+                    exp1.base = uint8_t(tokens[tok1].id);
+                    if ((tokens[tok1].id & 0xFE0) == REG_SPEC) {
+                        exp1.base = tokens[tok1].id >> 16;  // special register. to do: check if register type is valid
+                    }
                 }
                 else {             // normal register operand
                     exp1.etype = XPR_REG | XPR_REG1;
@@ -284,6 +344,15 @@ SExpression CAssembler::expression(uint32_t tok1, uint32_t maxtok, uint32_t opti
             case TOK_TYP:
                 exp1.etype = XPR_TYPENAME;
                 exp1.value.u = tokens[tok1].id;
+                break;
+            case TOK_HLL:
+                if (tokens[tok1].id == HLL_FALSE || tokens[tok1].id == HLL_TRUE) {  // translate to constant
+                    exp1.etype = XPR_INT;
+                    exp1.value.u = tokens[tok1].id & 1;
+                }
+                else {
+                    errors.report(tokens[tok1]);
+                }
                 break;
             default:
                 errors.report(tokens[tok1]);
@@ -326,13 +395,21 @@ SExpression CAssembler::expression(uint32_t tok1, uint32_t maxtok, uint32_t opti
                 && (exp1.etype & XPR_REG1) && (exp1.etype & (XPR_REG2 | XPR_INT | XPR_IMMEDIATE))) {
                     // compare instruction. invert condition
                     exp1.optionbits ^= 1;
+                    exp1.etype |= XPR_OPTIONS;
                     if ((exp1.reg1 & REG_V) && (dataType & TYP_FLOAT)) exp1.optionbits ^= 8; // floating point compare. invert gives unordered
                     goto RETURNEXP1;
                 }
                 if (exp1.instruction == II_AND
                 && (exp1.etype & XPR_REG1) && (exp1.etype & XPR_INT)) {
-                    // test_bit/jump instruction. invert condition
+                    // test_bit/test_bits_or/jump instruction. invert condition
                     exp1.optionbits ^= 4;
+                    exp1.etype |= XPR_OPTIONS;
+                    goto RETURNEXP1;
+                }
+                if (exp1.instruction == II_TEST_BITS_AND && (exp1.etype & XPR_REG1) && (exp1.etype & XPR_INT)) {
+                    // test_bits_and/jump instruction. invert condition
+                    exp1.optionbits ^= 1;
+                    exp1.etype |= XPR_OPTIONS;
                     goto RETURNEXP1;
                 }
                 if (exp1.etype & (XPR_MEM | XPR_REG)) { // '!' ambiguous on register and memory operands
@@ -376,8 +453,9 @@ SExpression CAssembler::expression(uint32_t tok1, uint32_t maxtok, uint32_t opti
     tokid = tokens[toklow].id;  // operator id
     if (lineError) return exp1;
 
-    DYADIC:
+DYADIC:
     exp1 = op2(tokid, exp1, exp2);
+
     RETURNEXP1:
     if (lineError) return exp1;
     if (exp1.etype & XPR_ERROR) {
@@ -388,21 +466,33 @@ SExpression CAssembler::expression(uint32_t tok1, uint32_t maxtok, uint32_t opti
 
 // Interpret dyadic expression with any type of operands
 SExpression CAssembler::op2(uint32_t op, SExpression & exp1, SExpression & exp2) {
+
     if ((exp1.etype | exp2.etype) & XPR_UNRESOLV) {
         exp1.etype = XPR_UNRESOLV;  // unresolved operand. make unresolved result
         exp1.tokens += exp2.tokens + 1;
     }
-    else if ((exp1.etype & exp2.etype & XPR_MEM) && 
-        ((exp1.etype|exp2.etype) & (XPR_BASE|XPR_INDEX|XPR_OPTION|XPR_SYM1|XPR_SYM2|XPR_LIMIT|XPR_LENGTH|XPR_BROADC))) {
+    else if ((exp1.etype & exp2.etype & XPR_MEM) 
+        //&& ((exp1.etype|exp2.etype) & (XPR_BASE|XPR_INDEX|XPR_OPTION|XPR_SYM1|XPR_SYM2|XPR_LIMIT|XPR_LENGTH|XPR_BROADC))
+        ) {
         exp1 = op2Memory(op, exp1, exp2);                // generation of memory operand. both operands inside [] and contain not only constants
     }
     else if (exp1.etype == XPR_OPTION && op == '=') {
         // option = value is handled by op2Memory
         exp1 = op2Memory(op, exp1, exp2);
     }
+    else if (exp1.etype & exp2.etype & XPR_SYM1) {
+        // adding or subtracting symbols and integers
+        exp1 = op2Memory(op, exp1, exp2);
+    } 
+    else if ((exp1.etype & XPR_SYM2) && (exp2.etype & XPR_INT)) {
+        // (sym1-sym2)/const
+        exp1 = op2Memory(op, exp1, exp2);
+    }
     // generation of instruction involving registers and/or memory operand:
     // (don't rely on XPR_MEM flag here because we would catch expressions involving constants only inside [] )
-    else if ((exp1.etype | exp2.etype) & (XPR_REG | XPR_BASE /*| XPR_SYM1*/)) {
+    //!else if ((exp1.etype | exp2.etype) & (XPR_REG | XPR_BASE /*| XPR_SYM1*/)) {
+//    else if ((exp1.etype | exp2.etype) & (XPR_REG | XPR_BASE | XPR_SYM1)) {     //??
+    else if (((exp1.etype | exp2.etype) & (XPR_REG | XPR_BASE)) || (exp1.sym1 | exp2.sym1)) {     //??
         exp1 = op2Registers(op, exp1, exp2);                
     }
     else if ((exp1.etype | exp2.etype) & XPR_STRING) {
@@ -411,10 +501,6 @@ SExpression CAssembler::op2(uint32_t op, SExpression & exp1, SExpression & exp2)
     else if ((exp1.etype & 0xF) == XPR_FLT || (exp2.etype & 0xF) == XPR_FLT) {
         // dyadic operators for float                 // floating point operation
         exp1 = op2Float(op, exp1, exp2);
-    }
-    else if ((exp1.etype | exp2.etype) & XPR_SYM1) {
-        // adding or subtracting symbols and integers
-        exp1 = op2Memory(op, exp1, exp2);
     }
     else if ((exp1.etype & 0xF) == XPR_INT && (exp2.etype & 0xF) == XPR_INT) {
         // dyadic operators for integers              // integer operation
@@ -507,6 +593,9 @@ SExpression CAssembler::op2Int(uint32_t op, SExpression const & exp1, SExpressio
     case '|' + D2:  // logical or
         expr.value.u = exp1.value.u || exp2.value.u;
         break;
+    case '^' + D2:  // logical xor
+        expr.value.u = (exp1.value.u != 0) ^ (exp2.value.u != 0);
+        break;
     default:  // unsupported operator
         expr.etype |= XPR_ERROR;
         expr.value.u = ERR_WRONG_TYPE;
@@ -586,7 +675,7 @@ SExpression CAssembler::op2Float(uint32_t op, SExpression & exp1, SExpression & 
 
 // Interpret dyadic expression with register or memory operands, generating instruction
 SExpression CAssembler::op2Registers(uint32_t op, SExpression const & ex1, SExpression const & ex2) {
-    SExpression expr = {0};           // return expression
+    SExpression expr = {{0}};         // return expression
     uint8_t swapped = false;          // operands are swapped
     uint8_t cannotSwap = false;       // cannot swap operands because both contain vector registers
     uint32_t i;                       // loop counter
@@ -596,59 +685,50 @@ SExpression CAssembler::op2Registers(uint32_t op, SExpression const & ex1, SExpr
     uint32_t numtokens = ex1.tokens + ex2.tokens + 1; // number of tokens
     expr.tokens = numtokens;
 
-    if (ex1.etype & ex2.etype & XPR_SYM1) { // both expression have a symbol
-        expr.etype = XPR_ERROR;
-        expr.value.u = ERR_CONFLICT_TYPE;
-        return expr;
-    }
-
     // resolve nested expressions
     if ((ex1.etype | ex2.etype) & XPR_OP) {
+        /*
         if (op == '&' && (ex1.etype & XPR_REG) && !(ex1.etype & XPR_OP) && ex2.instruction == II_XOR && ((ex2.etype & 0xF) == XPR_INT) && ex2.value.i == -1) {
-            // A & (B ^ -1) = and_not(A,B)
+            // A & (B ^ -1) = and_not(A,B). This instruction is removed
             expr = ex1;  expr.tokens = numtokens;
             expr.etype |= XPR_OP;
             expr.instruction = II_AND_NOT;
             expr.reg2 = ex2.reg1;
             return expr;
-        }
+        } */
         // simplify both expressions if possible
         exp12[0] = ex1;  exp12[1] = ex2; 
         for (i = 0; i < 2; i++) {
-            if ((exp12[i].etype & XPR_REG) && (exp12[i].etype & XPR_IMMEDIATE) && exp12[i].value.i == 0) {
+            if ((exp12[i].etype & (XPR_REG | XPR_MEM)) && (exp12[i].etype & XPR_IMMEDIATE) && exp12[i].value.i == 0) {
                 if (exp12[i].instruction == II_SUB_REV) {
-                    // expression is -R converted to (0-R). change to register and sign bit
+                    // expression is -A converted to (0-A). change to register and sign bit
                     exp12[i].etype &= ~(XPR_OPTIONS | XPR_IMMEDIATE | XPR_OP);
                     exp12[i].instruction = 0;
                     exp12[i].optionbits = 1;
                 }
-                else if (exp12[i].instruction == II_MUL_ADD2) {
-                    // expression is -A*B converted to (0-A*B). change to A*B and sign bit
+                else if (exp12[i].instruction == II_MUL_ADD && exp12[i].value.i == 0) {
+                    // expression is -A*B converted to (-A*B+0). change to A*B and sign bit
                     exp12[i].instruction = II_MUL;
-                    exp12[i].optionbits = (exp12[i].optionbits >> 2) & 1;
+                    exp12[i].optionbits = exp12[i].optionbits & 1;
                     exp12[i].etype &= ~(XPR_OPTIONS | XPR_IMMEDIATE);
                 }
                 else if (exp12[i].instruction == II_ADD_ADD && (exp12[i].etype & (XPR_INT | XPR_FLT)) && (exp12[i].optionbits & 3) == 3 && exp12[i].value.i == 0) {
                     // expression is -(A+B) converted to (-A-B+0). change to A+B and sign bit
                     exp12[i].etype &= ~(XPR_INT | XPR_FLT);
                     exp12[i].instruction = II_ADD;
-                    exp12[i].optionbits = 1;
+                    exp12[i].optionbits ^= 3;
                     exp12[i].etype &= ~(XPR_OPTIONS | XPR_IMMEDIATE);
                 }
             }
-            else if (exp12[i].instruction == II_SUB_REV /* && exp12[i].value.i == 0*/) {
+            else if (exp12[i].instruction == II_SUB_REV) {
                 // change -A+B to -(A-B)
                 exp12[i].instruction = II_SUB;
                 exp12[i].optionbits ^= 3;
             }
         }
-        if ((exp12[0].etype & XPR_IMMEDIATE) && (exp12[1].etype & XPR_IMMEDIATE) && !((exp12[0].etype & exp12[1].etype) & XPR_REG)) {
-            // both operands contain an immediate. combine the immediates
-            if (exp12[1].etype & XPR_REG) {
-                // second operand contains a register. swap operands
-                expr = exp12[0];  exp12[0] = exp12[1];  exp12[1] = expr;
-                swapped = true;
-            }
+        if ((exp12[0].etype & XPR_IMMEDIATE) && (exp12[1].etype & XPR_IMMEDIATE)) {
+            // both operands contain an immediate. combine the immediates if possible
+
             bool isfloat[2];  // check if operands are float
             for (i = 0; i < 2; i++) isfloat[i] = (exp12[i].etype & XPR_IMMEDIATE) == XPR_FLT; 
 
@@ -659,101 +739,134 @@ SExpression CAssembler::op2Registers(uint32_t op, SExpression const & ex1, SExpr
                     isfloat[i] = true;
                 }
             }
-            expr = exp12[0];  expr.tokens = numtokens;
-            if (op == '+' || op == '-') { // add or subtract second operand
-                uint8_t s = exp12[0].optionbits;  // sign bits of register, i1, i2
+
+            if (op == '+' || op == '-') { // add or subtract operands and store in exp12[1]
+                uint8_t sign = 0;  
                 switch (exp12[0].instruction) {
-                case II_ADD:
-                    if (op == '-') s ^= swapped ? 3 : 4;
+                case II_ADD: case II_SUB_REV:
+                    sign = exp12[0].optionbits >> 1 & 1;
+                    if (op == '-') sign ^= 1;
                     break;
                 case II_SUB:
-                    s ^= 2;
-                    if (op == '-') {
-                        s ^= 4;
-                        if (swapped) s ^= 7;
-                    }
+                    sign = (exp12[0].optionbits >> 1 & 1) ^ 1;
+                    if (op == '-') sign ^= 1;
                     break;
-                case II_SUB_REV:
-                    s ^= 1;
-                    if (op == '-') {
-                        s |= 4;
-                        if (swapped) s ^= 7;
-                    }
+                case II_ADD_ADD:
+                    sign = exp12[0].optionbits >> 2 & 1;
+                    if (op == '-') sign ^= 1;
                     break;
                 default:   // no other instructions can be combined with + or -
                     expr.etype |= XPR_ERROR; expr.value.u = ERR_WRONG_OPERANDS;
                     return expr;
                 }
-                // change sign of immediates, and add them
-                if (isfloat[0]) {                
-                    if (s & 2) exp12[0].value.d = -exp12[0].value.d;
-                    if (s & 4) exp12[1].value.d = -exp12[1].value.d;
-                    expr.value.d = exp12[0].value.d + exp12[1].value.d;
+                if (exp12[1].instruction == II_SUB) sign ^= 1;
+
+                // add immediates and store them in exp12[1]
+                if (sign) {
+                    if (isfloat[1]) exp12[1].value.d -= exp12[0].value.d;
+                    else exp12[1].value.i -= exp12[0].value.i;
                 }
                 else {
-                    if (s & 2) exp12[0].value.i = -exp12[0].value.i;
-                    if (s & 4) exp12[1].value.i = -exp12[1].value.i;
-                    expr.value.u = exp12[0].value.u + exp12[1].value.u;
+                    if (isfloat[1]) exp12[1].value.d += exp12[0].value.d;
+                    else exp12[1].value.i += exp12[0].value.i;
                 }
-                expr.optionbits = 0;
-                expr.instruction = (s & 1) ? II_SUB_REV : II_ADD; // sign of register operand
-                expr.etype = (expr.etype & ~XPR_IMMEDIATE) | (isfloat[0] ? XPR_FLT : XPR_INT); 
-            }
-            else if (op == '*' && expr.instruction == II_MUL) {
-                if (isfloat[0]) {                
-                    expr.value.d = exp12[0].value.d * exp12[1].value.d;
+                exp12[0].value.i = 0;
+                exp12[0].etype &= ~ (XPR_INT | XPR_FLT);
+                if (exp12[0].instruction == II_ADD_ADD) {
+                    exp12[0].instruction = II_ADD; 
+                    exp12[0].optionbits &= ~ 4;
                 }
                 else {
-                    expr.value.u = exp12[0].value.u * exp12[1].value.u;
+                    exp12[0].instruction = 0;
                 }
             }
-            else if (op == '&' && expr.instruction == II_AND && !isfloat[0]) {
-                expr.value.u = exp12[0].value.u & exp12[1].value.u;
+            else if (op == '*' && exp12[0].instruction == II_MUL) {
+                if (isfloat[0]) {                
+                    exp12[1].value.d *= exp12[0].value.d;
+                }
+                else {
+                    exp12[1].value.i *= exp12[0].value.i;
+                }
+                exp12[0].value.i = 0;
+                exp12[0].etype &= ~ (XPR_INT | XPR_FLT | XPR_OP);
+                exp12[0].instruction = 0;
+            } /*
+            else if (op == '&' && exp12[0].instruction == II_AND && !isfloat[0]) {
+                exp12[1].value.i &= exp12[0].value.i;
+                exp12[0].value.i = 0;
+                exp12[0].etype &= ~ XPR_INT;
+                exp12[0].instruction = 0;
             }
-            else if (op == '|' && expr.instruction == II_OR && !isfloat[0]) {
-                expr.value.u = exp12[0].value.u | exp12[1].value.u;
+            else if (op == '|' && exp12[0].instruction == II_OR && !isfloat[0]) {
+                exp12[1].value.i |= exp12[0].value.i;
+                exp12[0].value.i = 0;
+                exp12[0].etype &= ~ XPR_INT;
+                exp12[0].instruction = 0;
             }
-            else if (op == '^' && expr.instruction == II_XOR && !isfloat[0]) {
-                expr.value.u = exp12[0].value.u ^ exp12[1].value.u;
-            }
+            else if (op == '^' && exp12[0].instruction == II_XOR && !isfloat[0]) {
+                exp12[1].value.i ^= exp12[0].value.i;
+                exp12[0].value.i = 0;
+                exp12[0].etype &= ~ XPR_INT;
+                exp12[0].instruction = 0;
+            } */
             else {
                 expr.etype |= XPR_ERROR; expr.value.u = ERR_WRONG_OPERANDS;
             }
-            return expr;
         }
 
-        // error if two memory or integer operands
-        if (((exp12[0].etype & (XPR_IMMEDIATE | XPR_MEM)) && (exp12[1].etype & (XPR_IMMEDIATE | XPR_MEM)))
-            || (exp12[0].value.i && exp12[1].value.i)) {
+        // error if two memory operands 
+        uint32_t etyp0 = exp12[0].etype, etyp1 = exp12[1].etype;
+        //if ((etyp0 &  etyp1 & XPR_MEM) || (exp12[0].value.i && exp12[1].value.i)) {
+        if (etyp0 & etyp1 & XPR_MEM) {
             expr.etype |= XPR_ERROR; expr.value.u = ERR_WRONG_OPERANDS;
             return expr;
         }
 
-        if (exp12[0].etype & (XPR_IMMEDIATE | XPR_MEM)) {
-            // first operand is integer, float or memory. swap operands if not two vector registers
+        // error if too many operands
+        if (((etyp0 & XPR_REG1) != 0) + ((etyp0 & XPR_REG2) != 0) + ((etyp0 & XPR_REG3) != 0)
+            + ((etyp1 & XPR_REG1) != 0) + ((etyp1 & XPR_REG2) != 0) + ((etyp1 & XPR_REG3) != 0)
+            + (((etyp0 | etyp1) & XPR_MEM) != 0) + (((etyp0 | etyp1) & XPR_IMMEDIATE) != 0) > 3) {
+            expr.etype |= XPR_ERROR; expr.value.u = ERR_TOO_MANY_OPERANDS;
+            return expr;
+        } 
+
+        // check which operations can swap
+        if (op != '+' && op != '*' && op != '&' && op != '|' && op != '^' && op != '-') {
+            cannotSwap = true;  // operation is not commutative ('-' is handled with sign bits)
+        } 
+
+        // put operands in this order: register, memory, immediate
+        if ((exp12[0].etype & (XPR_IMMEDIATE | XPR_MEM)) && !(exp12[1].etype & XPR_IMMEDIATE) && !cannotSwap) {
+            // first operand is immediate or memory, and second operant is not immediate
+            // swap operands if not two vector registers
             if (exp12[0].reg1 & exp12[1].reg1 & REG_V) {                
                 // both operands contain a vector register. cannot swap. make error message later if swapping required
                 cannotSwap = true;
             }
-            else if (exp12[1].etype & (XPR_IMMEDIATE | XPR_MEM)) {
-                // second operand also contains memory or immediate constant
+            else if ((exp12[1].etype & XPR_MEM) && op == '*') {
+                // second operand also contains memory
                 cannotSwap = true;
             }
             else {  // swap operands to get immediate or memory operand last
                 expr = exp12[0];  exp12[0] = exp12[1];  exp12[1] = expr;
+                if (op == '-') {
+                    op = '+';  // convert '-' to '+' and flip sign bit to make operation commutative
+                    exp12[0].optionbits ^= 1;
+                }
                 swapped = true;
             }
         } 
 
         if (op == '+' || op == '-') {
-            if (exp12[0].etype & (XPR_IMMEDIATE | XPR_MEM) && exp12[1].instruction == II_MUL && !(exp12[1].etype & (XPR_INT | XPR_FLT | XPR_MEM))) {
+            /* done above:
+            if (exp12[0].etype & (XPR_IMMEDIATE | XPR_MEM) && exp12[1].instruction == II_MUL && !(exp12[1].etype & (XPR_INT | XPR_FLT))) {
                 // (memory or constant) + reg*reg. swap operands
                 expr = exp12[0];  exp12[0] = exp12[1];  exp12[1] = expr;
                 if (op == '-') {
                     exp12[0].optionbits ^= 1;  // invert signs in both operands
                     exp12[1].optionbits ^= 1;
                 }
-            }
+            } */
             if (!((exp12[0].etype | exp12[1].etype) & XPR_OP)) {
                 // +/-R1 +/-R2
                 if (op == '-') exp12[1].optionbits ^= 1;   // sign of second operand
@@ -790,85 +903,124 @@ SExpression CAssembler::op2Registers(uint32_t op, SExpression const & ex1, SExpr
                 }
                 return expr;
             }
-            else if (exp12[0].instruction == II_MUL) {
-                // A*B+C
-                expr = exp12[1];
+            else if (exp12[0].instruction == II_MUL || exp12[1].instruction == II_MUL) {
+                // (A*B)+C
+                if (op == '-') exp12[1].optionbits ^= 1;  // change sign if '-'
+                if (exp12[1].instruction == II_MUL) {     // swap expressions if A+(B*C)
+                    if (exp12[0].reg1 & REG_V) {
+                        expr.etype |= XPR_ERROR;
+                        expr.value.w = ERR_CANNOT_SWAP_VECT; // cannot put vector addend as first operand
+                        return expr;
+                    }
+                    expr = exp12[0]; exp12[0] = exp12[1]; exp12[1] = expr; // swap expressions
+                } 
+                expr = exp12[0] | exp12[1];  // combine expressions
                 expr.tokens = numtokens;
-                if (exp12[0].etype & (XPR_IMMEDIATE | XPR_MEM)) {
+                if ((exp12[0].etype & exp12[1].etype & (XPR_MEM|XPR_IMMEDIATE)) || // two memory or two immediate operands
+                ((exp12[0].etype & (XPR_MEM|XPR_IMMEDIATE)) == (XPR_MEM|XPR_IMMEDIATE))) { // exp12[0] has both memory and immediate
+                    expr.etype |= XPR_ERROR;
+                    expr.value.w = ERR_TOO_COMPLEX;
+                    return expr;
+                }
+                expr.instruction = II_MUL_ADD;
+                expr.etype |= XPR_OPTIONS;
+                if (((exp12[0].etype & XPR_MEM) && !(exp12[1].etype & XPR_IMMEDIATE)) || (exp12[0].etype & XPR_IMMEDIATE)) {
+                    expr.instruction = II_MUL_ADD2;   // get A*C+B
+                    // we don't need to do anything with signs here because the sign options apply to product and addend, not to specific operands
+                }
+                expr.etype |= XPR_OP;
+                expr.reg1 = exp12[0].reg1;  expr.reg2 = exp12[0].reg2;  
+                if (exp12[1].etype & XPR_REG) {  // C has a register
+                    if (exp12[0].etype & XPR_REG2) {  // 3 registers
+                        expr.reg3 = exp12[1].reg1;
+                        expr.etype |= XPR_REG3;
+                    }
+                    else {
+                        expr.reg2 = exp12[1].reg1;    // 2 registers
+                        expr.etype |= XPR_REG2;
+                    }
+                } 
+                // optionbits 0-1 = sign of product. optionbits 2-3 = sign of addend. 
+                expr.optionbits = 3 * (exp12[0].optionbits & 1) | 0xC * (exp12[1].optionbits & 1);
+                expr.etype |= XPR_OPTIONS;
+                return expr;
+            }
+            else if (exp12[0].instruction == II_ADD || exp12[0].instruction == II_SUB) {
+                // (A+B)+C
+                expr = exp12[0] | exp12[1];  // combine expressions 
+                expr.tokens = numtokens;
+                expr.reg1 = exp12[0].reg1;
+                expr.etype |= XPR_OP;
+                expr.instruction = II_ADD_ADD;
+
+                if ((exp12[0].etype & XPR_IMMEDIATE) || ((exp12[0].etype & XPR_MEM) && !(exp12[1].etype & XPR_IMMEDIATE))) {
                     // does not fit
                     expr.etype |= XPR_ERROR;
                     expr.value.w = cannotSwap ? ERR_CANNOT_SWAP_VECT : ERR_TOO_COMPLEX;
                     return expr;
                 }
-                expr.etype |= XPR_OP;
-                expr.instruction = II_MUL_ADD2;
-                if (exp12[1].etype & XPR_REG) {  // 3 registers
-                    expr.reg3 = exp12[1].reg1;
-                    expr.etype |= XPR_REG3;
-                }
-                expr.reg1 = exp12[0].reg1;  expr.reg2 = exp12[0].reg2;  
-                expr.etype |= XPR_REG1 | XPR_REG2;
-                expr.optionbits = 0xC * (exp12[0].optionbits & 1) | 3 * ((exp12[1].optionbits & 1) ^ (op == '-'));
-                expr.etype |= XPR_OPTIONS;
-                return expr;
-            }
-            else if (exp12[1].instruction == II_MUL) {
-                // A+B*C
-                expr = exp12[1];  
-                expr.tokens = numtokens;
-                if (exp12[0].etype & (XPR_IMMEDIATE | XPR_MEM)) {
-                    // does not fit
-                    expr.etype |= XPR_ERROR;
-                    expr.value.w = cannotSwap ? ERR_CANNOT_SWAP_VECT : ERR_TOO_COMPLEX;
-                    return expr; 
-                }
-                expr.etype |= XPR_OP;
-                expr.instruction = II_MUL_ADD;
-                if (!(exp12[1].etype & (XPR_IMMEDIATE | XPR_MEM))) {
-                    // 3 registers
-                    expr.reg3 = exp12[1].reg2;
-                    expr.etype |= XPR_REG3;
-                }
-                expr.reg2 = exp12[1].reg1;  expr.etype |= XPR_REG2;
-                expr.reg1 = exp12[0].reg1;
-                expr.optionbits = 3 * (exp12[0].optionbits & 1) | 0xC * ((exp12[1].optionbits & 1) ^ (op == '-'));
-                expr.etype |= XPR_OPTIONS;
-                return expr;
-            } 
-            else if (exp12[0].instruction == II_ADD || exp12[0].instruction == II_SUB) {
-            // (A+B)+C
-                expr = exp12[0] | exp12[1];  expr.tokens = numtokens;
-                expr.reg1 = exp12[0].reg1;
-                expr.etype |= XPR_OP;
-                expr.instruction = II_ADD_ADD;
-                if (exp12[0].etype & (XPR_IMMEDIATE | XPR_MEM)) {  // mem or immediate from exp1 goes to third operand
-                    expr.reg2 = exp12[1].reg1;  expr.etype |= XPR_REG2;
-                    expr.optionbits = (exp12[0].optionbits & 1) | ((exp12[1].optionbits & 1) ^ (op == '-')) << 1 | ((exp12[0].optionbits >> 1 & 1) ^ (exp12[0].instruction == II_SUB)) << 2;                    
-                }
-                else {  // exp1 has two registers
-                    if (exp12[1].etype & XPR_REG) {
-                        expr.reg3 = exp12[1].reg1; // third register
+
+                if (exp12[1].etype & XPR_REG) {  // C has a register
+                    if (exp12[0].etype & XPR_REG2) {  // 3 registers
+                        expr.reg3 = exp12[1].reg1;
                         expr.etype |= XPR_REG3;
                     }
-                    expr.optionbits = 3 * (exp12[0].optionbits & 1) | ((exp12[1].optionbits & 1) ^ (op == '-')) << 2;
-                    if (exp12[0].instruction == II_SUB) expr.optionbits ^= 2;                    
+                    else if (exp12[0].etype & XPR_REG1) {  // 2 registers
+                        expr.reg2 = exp12[1].reg1;
+                        expr.etype |= XPR_REG2;
+                    }
+                    else {
+                        expr.reg1 = exp12[1].reg1;    // 1 registers
+                        expr.etype |= XPR_REG1;
+                    }
                 }
+                expr.optionbits = (exp12[0].optionbits & 3) | ((exp12[1].optionbits & 1) ^ (op == '-')) << 2;
+                if (exp12[0].instruction == II_SUB) expr.optionbits ^= 2;                    
                 if (swapped && op == '-') expr.optionbits ^= 7;
                 expr.etype |= XPR_OPTIONS;
                 return expr;
+
             }
-            else if ((exp12[1].instruction == II_ADD || exp12[1].instruction == II_SUB) && !(exp12[0].etype & (XPR_INT | XPR_FLT | XPR_MEM))) {
+            else if (exp12[1].instruction == II_ADD || exp12[1].instruction == II_SUB) {
                 // A+(B+C)
-                expr = exp12[1];  expr.tokens = numtokens;
+                expr = exp12[0] | exp12[1];  // combine expressions 
+                expr.tokens = numtokens;
+                expr.reg1 = exp12[0].reg1;
                 expr.etype |= XPR_OP;
                 expr.instruction = II_ADD_ADD;
-                if (!(exp12[1].etype & (XPR_IMMEDIATE | XPR_MEM))) {
-                    // 3 registers
-                    expr.reg3 = exp12[1].reg2;
-                    expr.etype |= XPR_REG3;
+
+                if (exp12[0].etype & exp12[1].etype & (XPR_IMMEDIATE | XPR_MEM)) {
+                    // does not fit
+                    expr.etype |= XPR_ERROR;
+                    expr.value.w = ERR_TOO_COMPLEX;
+                    return expr;
                 }
-                expr.reg2 = exp12[1].reg1;  expr.etype |= XPR_REG2;
-                expr.reg1 = exp12[0].reg1;
+
+                if (exp12[0].etype & XPR_MEM) {
+                    // A = mem, B = register, C = immediate. Needs additional reordering
+                    expr.optionbits = ((exp12[1].optionbits & 1) ^ (op == '-'))   // register into first place
+                        | (exp12[0].optionbits & 1) << 1                          // memory in second place
+                        | ((exp12[1].optionbits >> 1 & 1) ^ (op == '-')) << 2;     // immediate in third place
+                    if (exp12[1].instruction == II_SUB) expr.optionbits ^= 4;
+                    if (swapped && op == '-') expr.optionbits ^= 7;
+                    expr.reg1 = exp12[1].reg1;
+                    expr.etype |= XPR_OPTIONS;
+                    return expr;
+                }
+
+
+                if (exp12[1].etype & XPR_REG2) {
+                    // 3 registers
+                    expr.reg2 = exp12[1].reg1;
+                    expr.reg3 = exp12[1].reg2;
+                    expr.etype |= XPR_REG2 | XPR_REG3;
+                }
+                else if (exp12[1].etype & XPR_REG1) {
+                    // 2 registers
+                    expr.reg2 = exp12[1].reg1;
+                    expr.etype |= XPR_REG2;
+                }
+
                 expr.optionbits = (exp12[0].optionbits & 1) | 6 * ((exp12[1].optionbits & 1) ^ (op == '-'));
                 if (exp12[1].instruction == II_SUB) expr.optionbits ^= 4;
                 if (swapped && op == '-') expr.optionbits ^= 7;
@@ -884,20 +1036,23 @@ SExpression CAssembler::op2Registers(uint32_t op, SExpression const & ex1, SExpr
             expr.tokens = numtokens;
             expr.optionbits = exp12[0].optionbits ^ exp12[1].optionbits;
             if (expr.optionbits & 1) {   // change sign
-                if ((exp12[1].etype & 0xF) == XPR_FLT) exp12[1].value.d = -exp12[1].value.d;
-                else if ((exp12[1].etype & 0xF) == XPR_INT) exp12[1].value.i = -exp12[1].value.i;
-                else if ((exp12[1].etype & XPR_REG) && op == '*' && expr.value.i == 0) {  
-                    // change -a*b to 0-a*b
-                    expr.instruction = II_MUL_ADD2;
-                    expr.optionbits = 0xC;
-                    expr.reg1 = exp12[0].reg1;
-                    expr.reg2 = exp12[1].reg1;  expr.etype |= XPR_REG2;
-                    expr.etype |= XPR_INT | XPR_OPTIONS;
-                    return expr;
+                if ((exp12[1].etype & 0xF) == XPR_FLT) {
+                    expr.value.d = -exp12[1].value.d;
+                    expr.optionbits = 0;
                 }
-                else if ((exp12[1].etype & XPR_MEM) && op == '*') {  
-                    // note: -mem*reg cannot be represented by a single instruction, even if we may later add a g.p. register so that reg-mem*reg would fit
-                    expr.etype |= XPR_ERROR; expr.value.w = ERR_TOO_COMPLEX;
+                else if ((exp12[1].etype & 0xF) == XPR_INT) {
+                    expr.value.i = -exp12[1].value.i;
+                    expr.optionbits = 0;
+                }
+                else if (/*(exp12[1].etype & XPR_REG) &&*/ op == '*' && expr.value.i == 0) {  
+                    // change -a*b to -a*b + 0
+                    expr.instruction = II_MUL_ADD;
+                    expr.optionbits = 0x3;
+                    expr.reg1 = exp12[0].reg1;
+                    if (exp12[1].etype & XPR_REG1) {                    
+                        expr.reg2 = exp12[1].reg1;  expr.etype |= XPR_REG2;
+                    }
+                    expr.etype |= XPR_INT | XPR_OPTIONS;
                     return expr;
                 }
                 else {
@@ -906,15 +1061,66 @@ SExpression CAssembler::op2Registers(uint32_t op, SExpression const & ex1, SExpr
                 }
             }
             expr.reg1 = exp12[0].reg1;
-            expr.reg2 = exp12[1].reg1;  expr.etype |= XPR_REG2;
+            if (exp12[1].etype & XPR_REG1) {            
+                expr.reg2 = exp12[1].reg1;  expr.etype |= XPR_REG2;
+            }
             expr.instruction = (op == '*') ? II_MUL : II_DIV;
             return expr;
-        }
+        } 
 
-        // complex cases not one of the above
-        expr.etype |= XPR_ERROR; expr.value.u = ERR_TOO_COMPLEX;
-        expr.tokens = numtokens;
-        return expr;
+        else if (((exp12[0].etype & exp12[1].etype) & XPR_INT) 
+        && (op == '='+D2 || op == '!'+EQ)
+        && exp12[0].value.i == exp12[1].value.i 
+        && ((exp12[0].etype | exp12[1].etype) & (XPR_REG1 | XPR_REG2)) == XPR_REG1
+        && (exp12[0].etype & exp12[1].etype & XPR_REG1) == 0) {
+            // (r1 & const) == const gives test_bits_and
+            expr = exp12[0] | exp12[1];
+            expr.etype |= XPR_OP | XPR_OPTIONS;
+            expr.tokens = numtokens;
+            expr.instruction = II_TEST_BITS_AND;
+            if (op == '!'+EQ) expr.optionbits ^= 1;             
+            return expr;
+        }
+        else if (op == '&'+D2 || op == '|'+D2 || op == '^' || op == '^'+D2) {
+            // possible combination of compare or test with extra boolean operand
+            int swap = exp12[1].instruction != 0;
+            expr = exp12[swap];
+            if (expr.instruction == II_COMPARE && exp12[1-swap].etype == (XPR_REG | XPR_REG1)) {
+                // use fallback register as an extra boolean operand on compare instruction
+                switch (op & 0xFF) {
+                case '&':
+                    expr.optionbits |= 0x10;  break;
+                case '|':
+                    expr.optionbits |= 0x20;  break;
+                case '^':
+                    expr.optionbits |= 0x30;  break;
+                default:
+                    expr.etype |= XPR_ERROR; expr.value.u = ERR_TOO_COMPLEX;
+                }
+                expr.etype |= XPR_OP | XPR_OPTIONS | XPR_FALLBACK;
+                expr.tokens = numtokens;
+                expr.fallback = exp12[1-swap].reg1;
+                return expr;
+            }
+            /*else if (expr.instruction >= II_TEST_BIT && expr.instruction <= II_TEST_BITS_OR && exp12[1-swap].etype == (XPR_REG | XPR_REG1)) {
+                // Use fallback register as an extra boolean operand on bit test instructions
+                // This does not work yet. test_bit cannot be expressed with high level operators
+                switch (op & 0xFF) {
+                case '&':
+                    expr.optionbits |= 0x01;  break;
+                case '|':
+                    expr.optionbits |= 0x02;  break;
+                case '^':
+                    expr.optionbits |= 0x03;  break;
+                default:
+                    expr.etype |= XPR_ERROR; expr.value.u = ERR_TOO_COMPLEX;
+                }
+                expr.etype |= XPR_OP | XPR_OPTIONS | XPR_FALLBACK;
+                expr.tokens = numtokens;
+                expr.fallback = exp12[1-swap].reg1;
+                return expr;
+            }*/
+        }
     }
 
     // not a complex expression
@@ -935,6 +1141,10 @@ SExpression CAssembler::op2Registers(uint32_t op, SExpression const & ex1, SExpr
     expr.reg2 = exp12[1].reg1;
     expr.etype |= (exp12[1].etype & XPR_REG1) << 1;
 
+    if (expr.instruction) {
+        expr.etype |= XPR_ERROR; expr.value.u = ERR_TOO_COMPLEX;
+        return expr;
+    } 
     // 2-operand instruction
     switch (op) {
     case '+':
@@ -952,7 +1162,7 @@ SExpression CAssembler::op2Registers(uint32_t op, SExpression const & ex1, SExpr
         expr.instruction = II_AND;  break;
     case '|':  case '|'+D2:  // boolean OR and bitwise OR have same implementation
         expr.instruction = II_OR;  break;
-    case '^':
+    case '^':  case '^'+D2:
         expr.instruction = II_XOR;  break;
     case '<':
         expr.instruction = II_COMPARE;
@@ -981,8 +1191,11 @@ SExpression CAssembler::op2Registers(uint32_t op, SExpression const & ex1, SExpr
         break;
     case '!'+EQ:  // !=
         expr.instruction = II_COMPARE;  
-        expr.optionbits = 1;  
         expr.etype |= XPR_OPTIONS;
+        expr.optionbits = 1;      // compare for not equal
+        if ((expr.reg1 & REG_V) && (dataType & TYP_FLOAT)) {
+            expr.optionbits |= 8; // floating point not equal includes unordered
+        }
         break;
     case '<' + D2:  // <<
         if (swapped) {expr.etype |= XPR_ERROR; expr.value.u = ERR_WRONG_TYPE;}
@@ -1007,17 +1220,75 @@ SExpression CAssembler::op2Memory(uint32_t op, SExpression & exp1, SExpression &
     SExpression expt;    // temporary value
     expr.tokens = exp1.tokens + exp2.tokens + 1;  // total number of tokens
     uint64_t f;        // temporary factor
+    int32_t symi1 = 0, symi2 = 0;       // symbol indexes
 
+    if (!((exp1.etype|exp2.etype) & (XPR_IMMEDIATE|XPR_BASE|XPR_INDEX|XPR_OPTION|XPR_SYM1|XPR_SYM2|XPR_LIMIT|XPR_LENGTH|XPR_BROADC))) {
+        // combination of only integer expressions inside []
+        // combine everything from the two operands
+        expr = exp1 | exp2;
+        expr.tokens = exp1.tokens + exp2.tokens + 1;
+        expr.etype &= ~XPR_OP;  expr.instruction = 0;  // operator is resolved here
+        switch (op) {
+        case '+':  // adding offsets
+            expr.offset_mem = exp1.offset_mem + exp2.offset_mem;
+            break;
+        case '-':  // 
+            expr.offset_mem = exp1.offset_mem - exp2.offset_mem;
+            break;
+        case '*':
+            expr.offset_mem = exp1.offset_mem * exp2.offset_mem;
+            break;
+        case '/':
+            if (exp2.offset_mem == 0) {
+                expr.etype |= XPR_ERROR;
+                expr.value.u = ERR_OVERFLOW;
+                break;
+            }
+            expr.offset_mem = exp1.offset_mem / exp2.offset_mem;
+            break;
+        case '<' + D2:  // <<
+            expr.offset_mem = exp1.offset_mem << exp2.offset_mem;
+            break;
+        case '>' + D2:  // >>  shift right signed
+             expr.offset_mem = exp1.offset_mem >> exp2.offset_mem; // signed shift right
+            break;
+        case '>' + D3:  // >>> unsigned shift right
+            expr.offset_mem = uint32_t(exp1.offset_mem) >> uint32_t(exp2.offset_mem); // unsigned shift right
+            break;
+        default:  // wrong operator
+            expr.value.u = ERR_WRONG_TYPE;
+            expr.etype |= XPR_ERROR;  return expr;
+        }
+        return expr;
+    }
+
+    // not only integer expressions
     if ((exp2.etype & XPR_SYM1) && op == '-') {
         // subtracting two symbol addresses
-        exp2.sym2 = exp2.sym1;  exp2.sym1 = 0;
-        exp2.etype = (exp2.etype & ~XPR_SYM1) | XPR_SYM2;
-        if (exp1.symscale == 0) exp1.symscale = 1;
-        if (exp2.symscale == 0) exp2.symscale = 1;
-        if (exp1.symscale != exp2.symscale) {
+        if (exp1.sym1) {
+            exp2.sym2 = exp2.sym1;  exp2.sym1 = 0;
+            exp2.etype = (exp2.etype & ~XPR_SYM1) | XPR_SYM2;
+            if (exp1.symscale1 == 0) exp1.symscale1 = 1;
+            if (exp2.symscale1 == 0) exp2.symscale1 = 1;
+            if (exp1.symscale1 != exp2.symscale1 || exp2.sym2 == 0) {
+                exp1.value.u = ERR_CONFLICT_TYPE;  // conflicting scale factors
+                exp1.etype |= XPR_ERROR;  return exp1;
+            }
+        }
+        else if (exp1.sym3) { 
+            exp2.sym4 = exp2.sym3;  exp2.sym3 = 0;
+            exp2.etype = (exp2.etype & ~XPR_SYM1) | XPR_SYM2;
+            if (exp1.symscale3 == 0) exp1.symscale3 = 1;
+            if (exp2.symscale3 == 0) exp2.symscale3 = 1;
+            if (exp1.symscale3 != exp2.symscale3 || exp2.sym4 == 0) {
+                exp1.value.u = ERR_CONFLICT_TYPE;  // conflicting scale factors
+                exp1.etype |= XPR_ERROR;  return exp1;
+            }
+        }
+        else {
             exp1.value.u = ERR_CONFLICT_TYPE;  // conflicting scale factors
             exp1.etype |= XPR_ERROR;  return exp1;
-        }    
+        }
     }
     // error checks
     if (exp1.etype & exp2.etype & (XPR_SYM1 | XPR_SYM2 | XPR_SYMSCALE | XPR_INDEX 
@@ -1048,17 +1319,19 @@ SExpression CAssembler::op2Memory(uint32_t op, SExpression & exp1, SExpression &
     expr = exp1 | exp2;
     expr.tokens = exp1.tokens + exp2.tokens + 1;
     expr.value.u = exp1.value.u + exp2.value.u;  // add values, except for special cases below
-    expr.offset = exp1.offset + exp2.offset;     // add offsets, except for special cases below
+    expr.offset_mem = exp1.offset_mem + exp2.offset_mem;        // add offsets, except for special cases below
+    expr.offset_jump = exp1.offset_jump + exp2.offset_jump;     // add jump offsets
     expr.etype &= ~XPR_OP;  expr.instruction = 0;  // operator is resolved here
 
     switch (op) {
     case '+':  // adding components. offsets have been added above
+        /* Changed: immediate value outside [] cannot be converted to offset:
         if ((expr.etype & (XPR_REG | XPR_BASE | XPR_SYM1)) && (expr.etype & XPR_INT) && (expr.etype & XPR_MEM)) {
             // adding offset. convert value to offset
             expr.offset += expr.value.i;
             expr.value.i = 0;
             expr.etype = (expr.etype | XPR_OFFSET) & ~XPR_IMMEDIATE;
-        }
+        } */
         break;
     case ',':  // combining components. components are combined below
         if (exp1.value.u && exp2.value.u) {          
@@ -1078,16 +1351,19 @@ SExpression CAssembler::op2Memory(uint32_t op, SExpression & exp1, SExpression &
             }
         }
         break;
-    case '-':         // subtract offsets or registers (symbol addresses subtracted above)
+    case '-':  // subtract offsets or registers (symbol addresses subtracted above)
+        /* Changed: immediate value outside [] cannot be converted to offset:
         if ((exp1.etype & (XPR_REG | XPR_BASE | XPR_SYM1)) && (exp2.etype & XPR_INT) && (expr.etype & XPR_MEM)) {
             // subtracting offset. convert value to offset
             expr.offset = exp1.offset - exp2.value.i;
             expr.value.i = 0;
             expr.etype = (expr.etype | XPR_OFFSET) & ~XPR_IMMEDIATE;
         }
-        else {
-            expr.offset = exp1.offset - exp2.offset;
-            expr.value.u = exp1.value.u - exp2.value.u; 
+        else  */
+        {
+        expr.offset_mem = exp1.offset_mem - exp2.offset_mem;
+        expr.offset_jump = exp1.offset_jump - exp2.offset_jump;
+        expr.value.u = exp1.value.u - exp2.value.u; 
         }
         if (exp2.etype & XPR_INDEX) {  // subtracting a register gives negative index
             expr.scale = - exp2.scale;
@@ -1095,8 +1371,14 @@ SExpression CAssembler::op2Memory(uint32_t op, SExpression & exp1, SExpression &
         else if ((exp1.etype & XPR_SYM1) && (exp2.etype & XPR_SYM2)) {
             // subtracting two symbols. has been fixed above
             // check if symbols are in the same domain
-            int32_t symi1 = findSymbol(exp1.sym1);
-            int32_t symi2 = findSymbol(exp2.sym2);
+            if (exp1.sym1) {
+                symi1 = findSymbol(exp1.sym1);
+                symi2 = findSymbol(exp2.sym2);
+            }
+            else if (exp1.sym3) {
+                symi1 = findSymbol(exp1.sym3);
+                symi2 = findSymbol(exp2.sym4);
+            }
             if (symi1 > 0 && symi2 > 0 
                 && (symbols[symi1].st_other & symbols[symi2].st_other & (SHF_IP | SHF_DATAP | SHF_THREADP)) == 0
                 && (symbols[symi1].st_type & symbols[symi2].st_type & STT_CONSTANT) == 0) {
@@ -1108,13 +1390,13 @@ SExpression CAssembler::op2Memory(uint32_t op, SExpression & exp1, SExpression &
             expr.value.u = ERR_WRONG_TYPE;    // cannot subtract these components
             expr.etype |= XPR_ERROR;  return expr;
         }
-        //expr.value.u = exp1.value.u - exp2.value.u; 
         break;
     case '<'+D2:  // index << s = index * (1 << s)
-        exp2.value.u = (uint64_t)1 << exp2.value.u;
+        //exp2.value.u = (uint64_t)1 << exp2.value.u; 
+        exp2.offset_mem = 1 << exp2.offset_mem;
         goto MULTIPLYINDEX; // continue in case '*'
     case '*':  // indexregister * scale
-        if ((exp1.etype & XPR_INT) && (exp2.etype & (XPR_BASE|XPR_INDEX))){
+        if ((exp1.etype & (XPR_INT|XPR_OFFSET)) && (exp2.etype & (XPR_BASE|XPR_INDEX))){
             // first operand is integer, second operand is register. swap operands
             expt = exp2;  exp2 = exp1;  exp1 = expt;
         }
@@ -1123,37 +1405,49 @@ SExpression CAssembler::op2Memory(uint32_t op, SExpression & exp1, SExpression &
             exp1.index = exp1.base;  exp1.base = 0;  exp1.scale = 1;
             exp1.etype = (exp1.etype & ~XPR_BASE) | XPR_INDEX;
         }
-        if (!(exp1.etype & XPR_INDEX) || ((exp2.etype & 0xF) != XPR_INT)
+        if (exp2.etype & XPR_INT) {  // convert integer to offset. should not occur
+            exp2.offset_mem = exp2.value.w; exp2.value.i = 0;
+            exp2.etype = (exp2.etype & ~XPR_INT) | XPR_OFFSET;
+        }
+        if (!(exp1.etype & XPR_INDEX) || !(exp2.etype & XPR_OFFSET)
             || ((exp1.etype | exp2.etype) & (XPR_OPTION|XPR_SYM1|XPR_SYM2|XPR_LIMIT|XPR_LENGTH|XPR_BROADC))) {
             expr.value.u = ERR_WRONG_TYPE;    // cannot multiply anything else
             expr.etype |= XPR_ERROR;  return expr;
         }
-        f = exp2.value.u * exp1.scale;
+        f = int64_t(exp2.offset_mem) * exp1.scale;
         if ((f & (f - 1)) || f == 0 || f > 16) {  // check that scale is a power of 2, not bigger than 16
             expr.value.u = ERR_SCALE_FACTOR;    // wrong scale factor
             expr.etype |= XPR_ERROR;  return expr;
         }
         expr.base = exp1.base;  expr.index = exp1.index;
         expr.scale = (int8_t)f;
-        expr.etype = exp1.etype | (exp2.etype & ~XPR_INT);
+        expr.etype = exp1.etype | (exp2.etype & ~(XPR_INT|XPR_OFFSET));
         expr.value.u = 0;
+        expr.offset_mem = exp1.offset_mem;
         break;
     case '>'+D2:  // divide (sym1-sym2) >> s = (sym1-sym2) / (1 << s)
         exp2.value.u = (uint64_t)1 << exp2.value.u;
+        exp2.offset_mem = (uint64_t)1 << exp2.offset_mem;
         // continue in case '/'
     case '/':  // divide (sym1-sym2) / scale
+        if ((exp2.etype & XPR_OFFSET) && !(exp2.etype & (XPR_REG | XPR_INT | XPR_BASE))) {
+            // constant has been interpreted as offset because it is inside []. change it to XPR_INT
+            exp2.value.i = exp2.offset_mem; exp2.offset_mem = 0;
+            exp2.etype = (exp2.etype & ~(XPR_OFFSET)) | XPR_INT;        
+            expr.offset_mem = exp1.offset_mem;
+        } 
         if (!(exp1.etype & XPR_SYM1) || ((exp2.etype & 0xF) != XPR_INT)
             || ((exp1.etype | exp2.etype) & (XPR_REG|XPR_OPTION|XPR_LIMIT|XPR_LENGTH|XPR_BROADC))) {
             expr.value.u = ERR_WRONG_TYPE;    // cannot divide anything else
             expr.etype |= XPR_ERROR;  return expr;
         }
         f = exp2.value.u;
-        if (exp1.symscale) f *= exp1.symscale;
+        if (exp1.symscale1) f *= exp1.symscale1;
         if ((f & (f - 1)) || f == 0 || f > 16) {  // check that scale is a power of 2, not bigger than 16
             expr.value.u = ERR_SCALE_FACTOR;    // wrong scale factor
             expr.etype |= XPR_ERROR;  return expr;
         }
-        expr.symscale = (int8_t)f;
+        expr.symscale1 = (int8_t)f;
         expr.etype |= XPR_SYMSCALE;
         expr.etype = exp1.etype | (exp2.etype & ~XPR_INT);
         expr.value.u = exp1.value.u;
@@ -1343,6 +1637,7 @@ SExpression CAssembler::op1minus(SExpression & exp1) {
         exp1.instruction = II_ADD_ADD;
         exp1.value.i = 0;
         exp1.optionbits = 3;
+        exp1.etype |= XPR_INT;
     }
     else if (exp1.instruction == II_ADD && (exp1.etype & XPR_IMMEDIATE)) {
         // -(R1+I) = -R1 + (-I)
@@ -1355,6 +1650,11 @@ SExpression CAssembler::op1minus(SExpression & exp1) {
         // -I or -(A*I)
         if (exp1.etype & XPR_FLT) exp1.value.d = -exp1.value.d;
         else exp1.value.i = -exp1.value.i;
+    }
+    else if (exp1.instruction == II_MUL && !(exp1.etype & XPR_IMMEDIATE)) {
+        exp1.instruction = II_MUL_ADD;
+        exp1.optionbits ^= 3;
+        exp1.etype |= XPR_INT;
     }
     else {
         exp1.etype = XPR_ERROR;
@@ -1465,6 +1765,7 @@ double interpretFloat(const char * s, uint32_t length) {
 SExpression CAssembler::symbol2expression(uint32_t symi) {
     SExpression expr;
     zeroAllMembers(expr);
+
     switch (symbols[symi].st_type) {
     case STT_CONSTANT:  case STT_VARIABLE:
         expr.etype = XPR_INT;   // default type

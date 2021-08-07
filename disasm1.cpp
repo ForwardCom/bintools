@@ -1,44 +1,25 @@
 /****************************  disasm1.cpp   ********************************
 * Author:        Agner Fog
 * Date created:  2017-04-26
-* Last modified: 2020-05-17
-* Version:       1.10
+* Last modified: 2021-03-30
+* Version:       1.11
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        disassem.h
-* Description:
+* Description:   Disassembler
 * Disassembler for ForwardCom
 *
-* Copyright 2007-2020 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2007-2021 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 #include "stdafx.h"
 
 
 uint64_t interpretTemplateVariants(const char * s) {
     // Interpret template variants in instruction record
-    // Return value:
-    // VARIANT_D0 (bit 0):     D0, no destination, no operant type
-    // VARIANT_D1 (bit 1):     D1, no destination, but operant type specified
-    // VARIANT_D2 (bit 2):     D2, operant type ignored
-    // VARIANT_M0 (bit 3):     M0, memory operand destination
-    // VARIANT_M1 (bit 4):     M1, IM3 is used as extra immediate operand in E formats with a memory operand
-    // VARIANT_R0 (bit 8):     R0, destination is general purpose register
-    // VARIANT_R1 (bit 9):     R1, first source operand is general purpose register
-    // VARIANT_R2 (bit 10):    R2, second source operand is general purpose register
-    // VARIANT_R3 (bit 11):    R3, third source operand is general purpose register
-    // VARIANT_RL (bit 12):    RL, RS is a general purpose register specifying length
-    // VARIANT_I2 (bit 16):    I2, second source operand is integer
-    // VARIANT_I3 (bit 17):    I3, third source operand is integer
-    // VARIANT_U0 (bit 18):    U0, integer operands are unsigned
-    // VARIANT_U3 (bit 19):    U3, integer operands are unsigned if bit 3 in IM3 (format 2.4.x, 2.8.x) is set.
-    // VARIANT_On (bit 24-26): On, n IM3 bits used for options
-    // VARIANT_H0 (bit 28):    H0, half precision floating point operands
-    // VARIANT_SPEC  (bit 32-37): Special register types for operands: bit 32-35 = register type, 
-    // VARIANT_SPECS (bit 36):    source, 
-    // VARIANT_SPECD (bit 37):    destination
-
+    // The return value is a combination of bits for each variant option
+    // These bits are defined as constants VARIANT_D0, etc., in disassem.h
     uint64_t v = 0;
     for (int i = 0; i < 8; i++) {          // Loop through string
-        char c = s[i], d = s[i+1];
+        char c = toupper(s[i]), d = toupper(s[i+1]);
         switch (c) {
         case 0:
             return v;                      // End of string
@@ -49,11 +30,12 @@ uint64_t interpretTemplateVariants(const char * s) {
             if (d == '3') v |= VARIANT_D3; // D3
             continue;
         case 'F': 
+            if (d == '0') v |= VARIANT_F0; // F0
             if (d == '1') v |= VARIANT_F1; // F1
             continue;            
         case 'M':
             if (d == '0') v |= VARIANT_M0; // M0
-            if (d == '1') v |= VARIANT_M1; // M1
+            //if (d == '1') v |= VARIANT_M1; // M1. No longer used
             continue;
         case 'R':
             if (d == '0') v |= VARIANT_R0; // R0
@@ -66,6 +48,7 @@ uint64_t interpretTemplateVariants(const char * s) {
         case 'I':
             if (d == '2') v |= VARIANT_I2; // I2
             continue;
+
         case 'O':
             if (d > '0' && d < '7') v |= (d - '0') << 24;    // O1 - O6
             continue;
@@ -351,7 +334,8 @@ void CDisassembler::getComponents2(CELF const & assembler, CMemoryBuffer const &
     relocations.copy(assembler.getRelocations());
     stringBuffer.copy(assembler.getStringBuffer());
     dataBuffer.copy(assembler.getDataBuffer());
-    // copy instruction list from assembler to avoid reading the csv file again
+    // Copy instruction list from assembler to avoid reading the csv file again.
+    // Use the unsorted list to make sure the preferred name for an instuction comes first, in case there are alias names
     instructionlist.copy(instructList);
     instructionlist.sort();  // Sort list, using the sort order needed by the disassembler as defined by SInstruction2
 }
@@ -572,192 +556,194 @@ void CDisassembler::updateSymbols() {
     // Find unnamed symbols, determine symbol types,
     // update symbol list, call checkJumpTarget if jump/call.
     // This function is called during pass 1 for every instruction
-    uint32_t relSource = iInstr + fInstr->addrPos; // Position of relocated field
-    if (fInstr->cat == 4 && fInstr->mem & 0x80) {
+    uint32_t relSource = 0; // Position of relocated field
+
+    if (fInstr->category == 4 && fInstr->jumpSize) {
         // Self-relative jump instruction. Check OPJ
         // uint32_t opj = (instrLength == 1) ? pInstr->a.op1 : pInstr->b[0]; // Jump instruction opcode
-        if (/*opj < 60 &&*/ fInstr->addrSize) {
-            // This instruction has a self-relative jump target.
-            // Check if there is a relocation here
-            ElfFwcReloc rel;
-            rel.r_offset = relSource;
-            rel.r_section = section;
-            rel.r_addend = 0;
-            if (relocations.findFirst(rel) < 0) {
-                // There is no relocation. Target must be in the same section. Find target
-                int32_t offset = 0;
-                switch (fInstr->addrSize) {                // Read offset of correct size
-                case 1:      // 8 bit
-                    offset = *(int8_t*)(sectionBuffer + relSource);
-                    rel.r_type = R_FORW_8 | 0x80000000;  //  add 0x80000000 to remember that this is not a real relocation
-                    break;
-                case 2:      // 16 bit
-                    offset = *(int16_t*)(sectionBuffer + relSource);
-                    rel.r_type = R_FORW_16 | 0x80000000;
-                    break;
-                case 3:      // 24 bit. Sign extend to 32 bits
-                    offset = *(int32_t*)(sectionBuffer + relSource) << 8 >> 8;
-                    rel.r_type = R_FORW_24 | 0x80000000;
-                    break; 
-                case 4:      // 32 bit
-                    offset = *(int32_t*)(sectionBuffer + relSource);
-                    rel.r_type = R_FORW_32 | 0x80000000;
-                    break;
-                }
-                // Scale offset by 4 and add offset to end of instruction
-                int32_t target = iInstr + instrLength * 4 + offset * 4;
-
-                // Add a symbol at target address if none exists
-                ElfFwcSym sym;
-                zeroAllMembers(sym);
-                sym.st_bind = STB_LOCAL;
-                sym.st_other = STV_EXEC;
-                sym.st_section = section;
-                sym.st_value = (uint64_t)(int64_t)target;
-                symbolExeAddress(sym);
-                int32_t symi = symbols.findFirst(sym);
-                if (symi < 0) {
-                    symi = newSymbols.push(sym);           // Add symbol to new symbols table
-                    symi |= 0x80000000;                    // Upper bit means index refers to newSymbols
-                }
-                // Add a dummy relocation record for this symbol. 
-                // This relocation does not need type, scale, or addend because the only purpose is to identify the symbol.
-                // It does have a size, though, because this is checked later in writeRelocationTarget()
-                rel.r_sym = (uint32_t)symi;
-                relocations.addUnique(rel);
+        // Check if there is a relocation here
+        relSource = iInstr + (fInstr->jumpPos); // Position of relocated field
+        ElfFwcReloc rel;
+        rel.r_offset = relSource;
+        rel.r_section = section;
+        rel.r_addend = 0;
+        if (relocations.findFirst(rel) < 0) {
+            // There is no relocation. Target must be in the same section. Find target
+            int32_t offset = 0;
+            switch (fInstr->jumpSize) {                // Read offset of correct size
+            case 1:      // 8 bit
+                offset = *(int8_t*)(sectionBuffer + relSource);
+                rel.r_type = R_FORW_8 | 0x80000000;  //  add 0x80000000 to remember that this is not a real relocation
+                break;
+            case 2:      // 16 bit
+                offset = *(int16_t*)(sectionBuffer + relSource);
+                rel.r_type = R_FORW_16 | 0x80000000;
+                break;
+            case 3:      // 24 bit. Sign extend to 32 bits
+                offset = *(int32_t*)(sectionBuffer + relSource) << 8 >> 8;
+                rel.r_type = R_FORW_24 | 0x80000000;
+                break;
+            case 4:      // 32 bit
+                offset = *(int32_t*)(sectionBuffer + relSource);
+                rel.r_type = R_FORW_32 | 0x80000000;
+                break;
             }
+            // Scale offset by 4 and add offset to end of instruction
+            int32_t target = iInstr + instrLength * 4 + offset * 4;
+
+            // Add a symbol at target address if none exists
+            ElfFwcSym sym;
+            zeroAllMembers(sym);
+            sym.st_bind = STB_LOCAL;
+            sym.st_other = STV_EXEC;
+            sym.st_section = section;
+            sym.st_value = (uint64_t)(int64_t)target;
+            symbolExeAddress(sym);
+            int32_t symi = symbols.findFirst(sym);
+            if (symi < 0) {
+                symi = newSymbols.push(sym);           // Add symbol to new symbols table
+                symi |= 0x80000000;                    // Upper bit means index refers to newSymbols
+            }
+            // Add a dummy relocation record for this symbol. 
+            // This relocation does not need type, scale, or addend because the only purpose is to identify the symbol.
+            // It does have a size, though, because this is checked later in writeRelocationTarget()
+            rel.r_sym = (uint32_t)symi;
+            relocations.addUnique(rel);
         }
     }
-    else { // Not a jump instruction
-        // Check if instruction has a memory reference relative to IP, DATAP, or THREADP
-        uint32_t basePointer = 0;
-        if (fInstr->mem & 1) basePointer = pInstr->a.rt;
-        else if (fInstr->mem & 2) basePointer = pInstr->a.rs;
 
-        if (fInstr->addrSize > 1 && basePointer >= 28 && basePointer <= 30) {
-            // Memory operand is relative to THREADP, DATAP or IP
-            // Check if there is a relocation here
-            uint32_t relpos = iInstr + fInstr->addrPos;
-            ElfFwcReloc rel;
-            rel.r_offset = relpos;
-            rel.r_section = section;
-            rel.r_type = (operandType | 0x80) << 24;
-            uint32_t nrel, irel = 0;
-            nrel = relocations.findAll(&irel, rel);
-            if (nrel > 1) writeWarning("Overlapping relocations here");
-            if (nrel) {
-                // Relocation found. Put the data type into the relocation record. 
-                // The data type will later be transferred to the symbol record in joinSymbolTables()
-                if (!(relocations[irel].r_type & 0x80000000)) {
-                    // Save target data type in upper 8 bits of r_type
-                    relocations[irel].r_type = (relocations[irel].r_type & 0x00FFFFFF) | (operandType /*| 0x80*/) << 24;
-                }
-                // Check if the target is a section + offset
-                uint32_t symi = relocations[irel].r_sym;
-                if (symi < symbols.numEntries() && symbols[symi].st_type == STT_SECTION && relocations[irel].r_addend > 0) {
-                    // Add a new symbol at this address
-                    ElfFwcSym sym;
-                    zeroAllMembers(sym);
-                    sym.st_bind = STB_LOCAL;
-                    sym.st_other = STT_OBJECT;
-                    sym.st_section = symbols[symi].st_section;
-                    sym.st_value = symbols[symi].st_value + (int64_t)relocations[irel].r_addend;
-                    symbolExeAddress(sym);
-                    uint32_t symi2 = newSymbols.push(sym);
-                    relocations[irel].r_sym = symi2 | 0x80000000;  // Upper bit means index refers to newSymbols
-                    relocations[irel].r_addend = 0;
-                }
+    // Check if instruction has a memory reference relative to IP, DATAP, or THREADP
+    uint32_t basePointer = 0;
+    if (fInstr->mem & 2) basePointer = pInstr->a.rs;
+    relSource = iInstr + fInstr->addrPos; // Position of relocated field
+
+    if (fInstr->addrSize > 1 && basePointer >= 28 && basePointer <= 30 && !(fInstr->mem & 0x20)) {
+        // Memory operand is relative to THREADP, DATAP or IP
+        // Check if there is a relocation here
+        uint32_t relpos = iInstr + fInstr->addrPos;
+        ElfFwcReloc rel;
+        rel.r_offset = relpos;
+        rel.r_section = section;
+        rel.r_type = (operandType | 0x80) << 24;
+        uint32_t nrel, irel = 0;
+        nrel = relocations.findAll(&irel, rel);
+        if (nrel > 1) writeWarning("Overlapping relocations here");
+        if (nrel) {
+            // Relocation found. Put the data type into the relocation record. 
+            // The data type will later be transferred to the symbol record in joinSymbolTables()
+            if (!(relocations[irel].r_type & 0x80000000)) {
+                // Save target data type in upper 8 bits of r_type
+                relocations[irel].r_type = (relocations[irel].r_type & 0x00FFFFFF) | (operandType /*| 0x80*/) << 24;
             }
-            else if (basePointer == (REG_IP & 0xFF) && fInstr->addrSize > 1) {
-                // No relocation found. Insert new relocation and new symbol
-                // This fits the address instruction with a local IP target.
-                // todo: Make it work for other cases
-
-                // Add a symbol at target address if none exists
-                int32_t target = iInstr + instrLength * 4;
-                switch (fInstr->addrSize) {                // Read offset of correct size
-                /* case 1:      // 8 bit. cannot use IP
-                    target += *(int8_t*)(sectionBuffer + relSource) << (operandType & 7);
-                    rel.r_type = R_FORW_8 | R_FORW_SELFREL | 0x80000000; 
-                    break;*/
-                case 2:      // 16 bit
-                    target += *(int16_t*)(sectionBuffer + relSource);
-                    rel.r_type = R_FORW_16 | R_FORW_SELFREL | 0x80000000;
-                    break;
-                case 4:      // 32 bit
-                    target += *(int32_t*)(sectionBuffer + relSource);
-                    rel.r_type = R_FORW_32 | R_FORW_SELFREL | 0x80000000;
-                    break;
-                }
+            // Check if the target is a section + offset
+            uint32_t symi = relocations[irel].r_sym;
+            if (symi < symbols.numEntries() && symbols[symi].st_type == STT_SECTION && relocations[irel].r_addend > 0) {
+                // Add a new symbol at this address
                 ElfFwcSym sym;
                 zeroAllMembers(sym);
                 sym.st_bind = STB_LOCAL;
-                sym.st_other = STV_EXEC;
-                sym.st_section = section;
-                sym.st_value = (uint64_t)(int64_t)target;
-
+                sym.st_other = STT_OBJECT;
+                sym.st_section = symbols[symi].st_section;
+                sym.st_value = symbols[symi].st_value + (int64_t)relocations[irel].r_addend;
                 symbolExeAddress(sym);
-                int32_t symi = symbols.findFirst(sym);
-                if (symi < 0) {
-                    symi = newSymbols.push(sym);           // Add symbol to new symbols table
-                    symi |= 0x80000000;                    // Upper bit means index refers to newSymbols
-                }
-                // Add a dummy relocation record for this symbol. 
-                // This relocation does not need type, scale, or addend because the only purpose is to identify the symbol.
-                // It does have a size, though, because this is checked later in writeRelocationTarget()
-                rel.r_offset = iInstr + fInstr->addrPos; // Position of relocated field
-                rel.r_section = section;
-                rel.r_addend = -4;
-                rel.r_sym = (uint32_t)symi;
-                relocations.addUnique(rel);
+                uint32_t symi2 = newSymbols.push(sym);
+                relocations[irel].r_sym = symi2 | 0x80000000;  // Upper bit means index refers to newSymbols
+                relocations[irel].r_addend = 0;
             }
-            else if ((basePointer == (REG_DATAP & 0xFF) || basePointer == (REG_THREADP & 0xFF))
-                && fInstr->addrSize > 1 && isExecutable) {
-                // No relocation found. Insert new relocation and new symbol. datap or threadp based
+        }
+        else if (basePointer == REG_IP >> 16 && fInstr->addrSize > 1 && !(fInstr->mem & 0x20)) {
+            // No relocation found. Insert new relocation and new symbol
+            // This fits the address instruction with a local IP target.
+            // to do: Make it work for other cases
 
-                // Add a symbol at target address if none exists
-                int64_t target = fileHeader.e_datap_base;
-                rel.r_type = R_FORW_DATAP;
-                uint32_t dom = 2;
-                uint32_t st_other = STV_DATAP;
-                if (basePointer == (REG_THREADP & 0xFF)) {
-                    target = fileHeader.e_threadp_base;
-                    rel.r_type = R_FORW_THREADP;
-                    dom = 3;
-                    st_other = STV_THREADP;
-                } 
-                switch (fInstr->addrSize) {                // Read offset of correct size
-                case 2:      // 16 bit
-                    target += *(int16_t*)(sectionBuffer + relSource);
-                    rel.r_type |= R_FORW_16 | 0x80000000;
-                    break;
-                case 4:      // 32 bit
-                    target += *(int32_t*)(sectionBuffer + relSource);
-                    rel.r_type |= R_FORW_32 | 0x80000000;
-                    break;
-                }
-                ElfFwcSym sym;
-                zeroAllMembers(sym);
-                sym.st_type = STT_OBJECT;
-                sym.st_bind = STB_WEAK;
-                sym.st_other = st_other;
-                sym.st_section = dom;
-                sym.st_value = (uint64_t)target;
-
-                int32_t symi = symbols.findFirst(sym);
-                if (symi < 0) {
-                    symi = newSymbols.push(sym);           // Add symbol to new symbols table
-                    symi |= 0x80000000;                    // Upper bit means index refers to newSymbols
-                }
-                // Add a dummy relocation record for this symbol. 
-                // This relocation does not need type, scale, or addend because the only purpose is to identify the symbol.
-                // It does have a size, though, because this is checked later in writeRelocationTarget()
-                rel.r_offset = iInstr + fInstr->addrPos; // Position of relocated field
-                rel.r_section = section;
-                rel.r_addend = 0;
-                rel.r_sym = (uint32_t)symi;
-                relocations.addUnique(rel);
+            // Add a symbol at target address if none exists
+            int32_t target = iInstr + instrLength * 4;
+            switch (fInstr->addrSize) {                // Read offset of correct size
+            /* case 1:      // 8 bit. cannot use IP
+                target += *(int8_t*)(sectionBuffer + relSource) << (operandType & 7);
+                rel.r_type = R_FORW_8 | R_FORW_SELFREL | 0x80000000;
+                break;*/
+            case 2:      // 16 bit
+                target += *(int16_t*)(sectionBuffer + relSource);
+                rel.r_type = R_FORW_16 | R_FORW_SELFREL | 0x80000000;
+                break;
+            case 4:      // 32 bit
+                target += *(int32_t*)(sectionBuffer + relSource);
+                rel.r_type = R_FORW_32 | R_FORW_SELFREL | 0x80000000;
+                break;
             }
+            ElfFwcSym sym;
+            zeroAllMembers(sym);
+            sym.st_bind = STB_LOCAL;
+            sym.st_other = STV_EXEC;
+            sym.st_section = section;
+            sym.st_value = (uint64_t)(int64_t)target;
+
+            symbolExeAddress(sym);
+            int32_t symi = symbols.findFirst(sym);
+            if (symi < 0) {
+                symi = newSymbols.push(sym);           // Add symbol to new symbols table
+                symi |= 0x80000000;                    // Upper bit means index refers to newSymbols
+            }
+            // Add a dummy relocation record for this symbol. 
+            // This relocation does not need type, scale, or addend because the only purpose is to identify the symbol.
+            // It does have a size, though, because this is checked later in writeRelocationTarget()
+            rel.r_offset = (uint64_t)iInstr + fInstr->addrPos; // Position of relocated field
+            rel.r_section = section;
+            rel.r_addend = -4;
+            rel.r_sym = (uint32_t)symi;
+            relocations.addUnique(rel);
+        }
+        else if ((basePointer == REG_DATAP >> 16 || basePointer == REG_THREADP >> 16)
+            && fInstr->addrSize > 1 && !(fInstr->mem & 0x20) && isExecutable) {
+            // No relocation found. Insert new relocation and new symbol. datap or threadp based
+
+            // Add a symbol at target address if none exists
+            int64_t target = fileHeader.e_datap_base;
+            rel.r_type = R_FORW_DATAP;
+            uint32_t dom = 2;
+            uint32_t st_other = STV_DATAP;
+            if (basePointer == REG_THREADP >> 16) {
+                target = fileHeader.e_threadp_base;
+                rel.r_type = R_FORW_THREADP;
+                dom = 3;
+                st_other = STV_THREADP;
+            }
+            switch (fInstr->addrSize) {                // Read offset of correct size
+            case 1:      // 8 bit
+                target += *(int8_t*)(sectionBuffer + relSource);
+                rel.r_type |= R_FORW_8 | 0x80000000;
+                break;
+            case 2:      // 16 bit
+                target += *(int16_t*)(sectionBuffer + relSource);
+                rel.r_type |= R_FORW_16 | 0x80000000;
+                break;
+            case 4:      // 32 bit
+                target += *(int32_t*)(sectionBuffer + relSource);
+                rel.r_type |= R_FORW_32 | 0x80000000;
+                break;
+            }
+            ElfFwcSym sym;
+            zeroAllMembers(sym);
+            sym.st_type = STT_OBJECT;
+            sym.st_bind = STB_WEAK;
+            sym.st_other = st_other;
+            sym.st_section = dom;
+            sym.st_value = (uint64_t)target;
+
+            int32_t symi = symbols.findFirst(sym);
+            if (symi < 0) {
+                symi = newSymbols.push(sym);           // Add symbol to new symbols table
+                symi |= 0x80000000;                    // Upper bit means index refers to newSymbols
+            }
+            // Add a dummy relocation record for this symbol. 
+            // This relocation does not need type, scale, or addend because the only purpose is to identify the symbol.
+            // It does have a size, though, because this is checked later in writeRelocationTarget()
+            rel.r_offset = iInstr + fInstr->addrPos; // Position of relocated field
+            rel.r_section = section;
+            rel.r_addend = 0;
+            rel.r_sym = (uint32_t)symi;
+            relocations.addUnique(rel);
         }
     }
 }
@@ -793,7 +779,7 @@ void CDisassembler::parseInstruction() {
                                                           
     // Get submode
     switch (format) {
-    case 0x200: case 0x220:  // submode in mode2
+    case 0x200: case 0x220: case 0x300: case 0x320:  // submode in mode2
         format += pInstr->a.mode2;
         break;
     case 0x250: case 0x310: // Submode for jump instructions etc.
@@ -810,10 +796,10 @@ void CDisassembler::parseInstruction() {
     static SFormat form;
     fInstr = &formatList[lookupFormat(pInstr->q)];     // lookupFormat is in emulator2.cpp
     format = fInstr->format2;                          // Include subformat depending on op1
-    if (fInstr->tmpl == 0xE && pInstr->a.op2) {
-        // Single format instruction if op2 != 0
+    if (fInstr->tmplate == 0xE && pInstr->a.op2 && !(fInstr->imm2 & 0x100)) {
+        // Single format instruction if op2 != 0 and op2 not used as immediate operand
         form = *fInstr;
-        form.cat = 1;
+        form.category = 1;
         fInstr = &form;
     }
 
@@ -959,14 +945,19 @@ void CCSVFile::parse() {
         record.optypesgp = (uint32_t)interpretNumber(fields[9]);
         record.optypesscalar = (uint32_t)interpretNumber(fields[10]);
         record.optypesvector = (uint32_t)interpretNumber(fields[11]);
-        record.opimmediate = (uint32_t)interpretNumber(fields[12]);
-        // copy strings from fields 0 and 5, convert to upper or lower case
-        for (j = 0; j < sizeof(record.template_variant)-1; j++) {
-            c = fields[5][j];
-            if (c == 0) break;
-            record.template_variant[j] = toupper(c);
+        // interpret immediate operand
+        if (tolower(fields[12][0]) == 'i') {
+            // implicit immediate operand. value is prefixed by 'i'. Get value
+            record.implicit_imm = (uint32_t)interpretNumber(fields[12]+1);
+            record.opimmediate = OPI_IMPLICIT;
         }
-        record.template_variant[j] = 0;
+        else {
+            // immediate operand type
+            record.opimmediate = (uint8_t)interpretNumber(fields[12]);
+        }
+        // interpret template variant
+        record.variant = interpretTemplateVariants(fields[5]);
+        // copy instruction name
         for (j = 0; j < sizeof(record.name)-1; j++) {
             c = fields[0][j];
             if (c == 0) break;
@@ -975,8 +966,7 @@ void CCSVFile::parse() {
         record.name[j] = 0;
 
         // add record to list
-        instructionlist.push(record);
-
+        instructionlist.push(record); 
     }
 }
 

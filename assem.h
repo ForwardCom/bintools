@@ -1,14 +1,14 @@
 /****************************    assem.h    ***********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2020-05-17
-* Version:       1.10
+* Last modified: 2021-05-26
+* Version:       1.11
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.h
 * Description:
 * Header file for assembler
 *
-* Copyright 2017-2020 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2021 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 #pragma once
 
@@ -48,6 +48,7 @@ const int ATT_READ     = ((TOK_ATT << 24) + SHF_READ);
 const int ATT_WRITE    = ((TOK_ATT << 24) + SHF_WRITE);
 const int ATT_EXEC     = ((TOK_ATT << 24) + SHF_EXEC);
 const int ATT_ALIGN    = ((TOK_ATT << 24) + 0x10);
+const int SECTION_LOCAL_VAR = 0xFFFFFFFF;                       // local constant with no section
 
 // Attributes of variables, constants and functions
 const int ATT_WEAK     = ((TOK_ATT << 24) + 0x20);              // weak public or weak external symbol
@@ -75,6 +76,7 @@ const int TYP_FLOAT128 = ((TOK_TYP << 24) + 0x47);
 const int TYP_INT      =                    0x10;    // generic test for int types
 const int TYP_FLOAT    =                    0x40;    // generic test for float types
 const int TYP_STRING   = ((TOK_TYP << 24) + 0x18);
+
 // Options and attributes of instructions
 const int OPT_MASK     = ((TOK_OPT << 24) + 1);
 const int OPT_FALLBACK = ((TOK_OPT << 24) + 2);
@@ -83,17 +85,27 @@ const int OPT_BROADCAST= ((TOK_OPT << 24) + 4);
 const int OPT_LIMIT    = ((TOK_OPT << 24) + 5);
 const int OPT_SCALAR   = ((TOK_OPT << 24) + 6);
 const int OPT_OPTIONS  = ((TOK_OPT << 24) + 7);
-// Registers
-const int REG_R        = 0x20;                     // register name prefixes
-const int REG_V        = 0x40;
-const int REG_THREADP  = ((TOK_REG << 24) + 0x1C);
-const int REG_DATAP    = ((TOK_REG << 24) + 0x1D);
-const int REG_IP       = ((TOK_REG << 24) + 0x1E);
-const int REG_SP       = ((TOK_REG << 24) + 0x1F + REG_R);
-const int REG_SPEC     = 0x60;
-const int REG_CAPAB    = 0x80;
-const int REG_PERF     = 0xA0;
-const int REG_SYS      = 0xC0;
+
+// Register types
+const int REG_R        =  0x20;        // general purpose register
+const int REG_V        =  0x40;        // vector register
+const int REG_SPEC     =  0x60;        // special register, accessed with read_spec and write_spec instructions
+const int REG_CAPAB    =  0x80;        // capabilities register, accessed with read_capabilities
+const int REG_PERF     =  0xA0;        // performance counter, accessed with read_perf
+const int REG_SYS      =  0xC0;        // system register, accessed with read_sys and write_sys
+const int REG_OTHER    = 0x100;        // other register, unclassified
+
+// ID for special registers:
+// bit 0-4   is the id used when reading or writing the register
+// bit 5-7   indicate the type of register
+// bit 16-20 is the id when the register is used as base pointer
+// bit 24-31 is token type
+const int REG_NUMCONTR = ((TOK_REG << 24) +                REG_SPEC + 0);    // numeric control register, default flag
+const int REG_THREADP  = ((TOK_REG << 24) + (0x1C << 16) + REG_SPEC + 1);    // thread data pointer
+const int REG_DATAP    = ((TOK_REG << 24) + (0x1D << 16) + REG_SPEC + 2);    // data section pointer
+const int REG_IP       = ((TOK_REG << 24) + (0x1E << 16) + REG_OTHER   );    // instruction pointer, changed by jump instructions
+const int REG_SP       = ((TOK_REG << 24) + (0x1F << 16) + REG_R + 0x1F);    // stack pointer
+
 // high level language directives
 const int HLL_IF       = ((TOK_HLL << 24) + 1);
 const int HLL_ELSE     = ((TOK_HLL << 24) + 2);
@@ -106,6 +118,10 @@ const int HLL_WHILE    = ((TOK_HLL << 24) + 8);
 const int HLL_DO       = ((TOK_HLL << 24) + 9);
 const int HLL_BREAK    = ((TOK_HLL << 24) + 10);
 const int HLL_CONTINUE = ((TOK_HLL << 24) + 11);
+
+const int HLL_FALSE    = ((TOK_HLL << 24) + 20);
+const int HLL_TRUE     = ((TOK_HLL << 24) + 21);
+
 // push and pop may be replaced by macros later:
 const int HLL_PUSH     = ((TOK_HLL << 24) + 12);
 const int HLL_POP      = ((TOK_HLL << 24) + 13);
@@ -115,6 +131,7 @@ const int LINE_DATADEF =    1;                   // data definition
 const int LINE_CODEDEF =    2;                   // code instruction
 const int LINE_PUBLICDEF =  3;                   // public symbol definition
 const int LINE_METADEF =    4;                   // assemble-time definitions and metaprogramming
+const int LINE_OPTIONS =    5;                   // option setting
 const int LINE_FUNCTION= 0x11;                   // function definition
 const int LINE_SECTION = 0x12;                   // section definition
 const int LINE_ENDDIR  = 0x10;                   // function or section end
@@ -167,74 +184,79 @@ const uint32_t II_SUB            =        9;
 const uint32_t II_SUB_REV        =       10;
 const uint32_t II_MUL            =       11;
 const uint32_t II_MUL_HI         =       12;
-const uint32_t II_MUL_EX         =       14;
-const uint32_t II_DIV            =       16;
-const uint32_t II_DIV_U          =       17;
-const uint32_t II_DIV_REV        =       18;
+const uint32_t II_MUL_EX         =  0x1201A;
+const uint32_t II_DIV            =       14;
+const uint32_t II_DIV_U          =       15; // all unsigned variants must be signed variant | 1
+const uint32_t II_DIV_REV        =       16;
 const uint32_t II_DIV_EX         =  0x12018;
-const uint32_t II_REM            =       20;
-const uint32_t II_REM_U          =       21;
-const uint32_t II_MIN            =       22;
-const uint32_t II_MIN_U          =       23;
-const uint32_t II_MAX            =       24;
-const uint32_t II_MAX_U          =       25;
-const uint32_t II_AND            =       28; // 0x1C
-const uint32_t II_AND_NOT        =       29;
-const uint32_t II_OR             =       30; // 0x1E
-const uint32_t II_XOR            =       31; // 0x1F
+const uint32_t II_REM            =       18;
+const uint32_t II_REM_U          =       19;
+const uint32_t II_MIN            =       20;
+const uint32_t II_MIN_U          =       21;
+const uint32_t II_MAX            =       22;
+const uint32_t II_MAX_U          =       23;
+const uint32_t II_AND            =       26; 
+const uint32_t II_OR             =       27; 
+const uint32_t II_XOR            =       28; 
 const uint32_t II_SHIFT_LEFT     =       32;
 const uint32_t II_MUL_2POW       =       32;
 const uint32_t II_ROTATE         =       33;
 const uint32_t II_SHIFT_RIGHT_S  =       34;
 const uint32_t II_SHIFT_RIGHT_U  =       35;  // must be = II_SHIFT_RIGHT_S | 1
-const uint32_t II_SET_BIT        =       36;
-const uint32_t II_CLEAR_BIT      =       37;
+const uint32_t II_CLEAR_BIT      =       36;
+const uint32_t II_SET_BIT        =       37;
 const uint32_t II_TOGGLE_BIT     =       38;
-const uint32_t II_AND_BIT        =       39; // 0x27
-const uint32_t II_TEST_BIT       =       40; // 0x28
+const uint32_t II_TEST_BIT       =       39;
+const uint32_t II_TEST_BITS_AND  =       40;
+const uint32_t II_TEST_BITS_OR   =       41;
 const uint32_t II_MUL_ADD        =       49;
 const uint32_t II_MUL_ADD2       =       50;
 const uint32_t II_ADD_ADD        =       51;
+const uint32_t II_SELECT_BITS    =       52;
+const uint32_t II_FUNNEL_SHIFT   =       53;
 const uint32_t II_SHIFT_U_ADD    =   0x0101;
+//const uint32_t II_MOVE_U         =   0x11001;
 const uint32_t II_ADD_H          =  0x50008;  // float16
-const uint32_t II_SUB_H          =  0x50009;
-const uint32_t II_MUL_H          =  0x5000B;
-const uint32_t II_DIV_H          =  0x50010;
-const uint32_t II_MUL_ADD_H      =  0x50031;
+const uint32_t II_SUB_H          =  0x50009;  // float16
+const uint32_t II_MUL_H          =  0x5000B;  // float16
+const uint32_t II_DIV_H          =  0x50010;  // float16
+const uint32_t II_MUL_ADD_H      =  0x50031;  // float16
 const uint32_t II_PUSH           =  0x18038;
 const uint32_t II_POP            =  0x18039;
 const uint32_t II_REPLACE        =  0xA0001;
 const uint32_t II_REPLACE_EVEN   =  0x26004;
 const uint32_t II_REPLACE_ODD    =  0x26005;
+const uint32_t II_ADDRESS        =  0x29020;
 
+// constants for jump and branch instrucions. May be combined with II_ADD, II_SUB, II_COMPARE, etc. 
 const uint32_t II_INCREMENT      =   0x0051;  // increment. combine with II_JUMP_POSITIVE
-const uint32_t II_SUB_MAXLEN     =   0x0052;  // sbutract max vector length. combine with II_JUMP_POSITIVE
+const uint32_t II_SUB_MAXLEN     =   0x0052;  // subtract max vector length. combine with II_JUMP_POSITIVE
+const uint32_t II_FP_CATEGORY    =   0x0054;  // fp_category. combine with II_JUMP_TRUE
+
 const uint32_t II_JUMP           = 0x101000;  // jump codes may be combined with II_ADD etc.
 const uint32_t II_JUMP_ZERO      = 0x101200;  // xor with 0x100 for opposite condition
 const uint32_t II_JUMP_NOTZERO   = 0x101300;  // not zero or not equal
-const uint32_t II_JUMP_POSITIVE  = 0x101400;  // positive or signed above
-const uint32_t II_JUMP_NEGATIVE  = 0x101600;  // negative or signed below
+const uint32_t II_JUMP_NEGATIVE  = 0x101400;  // negative or signed below
+const uint32_t II_JUMP_POSITIVE  = 0x101600;  // positive or signed above
 const uint32_t II_JUMP_OVERFLOW  = 0x101800;  // signed overflow
-const uint32_t II_JUMP_CARRY     = 0x102000;  // carry, borrow, unsigned below. Reverse condition if sub n replaced by add (-n)
-const uint32_t II_JUMP_UABOVE    = 0x102200;  // unsigned above
-const uint32_t II_JUMP_ALL1      = 0x102400;
-
-const uint32_t II_JUMP_INFINITE  = 0x102600;
-const uint32_t II_JUMP_ORDERED   = 0x103000;
-
-const uint32_t II_JUMP_INSTR     = 0x100000;  // bit to identify direct jump and call instructions
+const uint32_t II_JUMP_CARRY     = 0x102000;  // carry, borrow, unsigned below, abs below. Reverse condition if 'sub n' replaced by 'add (-n)'
+const uint32_t II_JUMP_UBELOW    = 0x102000;  // carry, borrow, unsigned below, abs below. Reverse condition if 'sub n' replaced by 'add (-n)'
+const uint32_t II_JUMP_UABOVE    = 0x102200;  // unsigned above, abs above
+const uint32_t II_JUMP_TRUE      = 0x102400;  // bit test etc. true
+const uint32_t II_JUMP_FALSE     = 0x102500;  // bit test etc. false
 const uint32_t II_JUMP_INVERT    =   0x0100;  // flip this bit to invert condition
 const uint32_t II_JUMP_UNORDERED =   0x8000;  // flip this bit to jump if unordered
+const uint32_t II_JUMP_INSTR     = 0x100000;  // bit to identify direct jump and call instructions
+const uint32_t II_INCREMENT_COMPARE_JBELOW = 48; // opj for increment_compare_jump_below
+const uint32_t II_CALL           = 0x111000;  // direct call
 
-const uint32_t II_ALIGN          = 0x100000;  // align directive
+const uint32_t II_ALIGN        = 0x10000000;  // align directive
+const uint32_t II_OPTIONS      = 0x20000000;  // options directive
 
-const int MAX_ALIGN         =     4096;  // maximum allowed alignment  (note: if changed, change also in error.cpp at ERR_ALIGNMENT)
+const int MAX_ALIGN              =     4096;  // maximum allowed alignment  (note: if changed, change also in error.cpp at ERR_ALIGNMENT)
 
 // Bit values generated by fitConstant() and stored in SCode::fitNumX
 // Indicates how many bits are needed to contain address offset or immediate constant of an instruction
-//const int IFIT_I4        =        1;  // fits into signed 4-bit integer
-//const int IFIT_J4        =        2;  // (-x) fits into signed 4-bit integer
-//const int IFIT_U4        =        4;  // x fits into unsigned 4-bit integer
 const int IFIT_I8        =     0x10;  // fits into signed 8-bit integer
 const int IFIT_J8        =     0x20;  // (-x) fits into signed 8-bit integer
 const int IFIT_U8        =     0x40;  // x fits into unsigned 8-bit integer
@@ -267,7 +289,6 @@ const int OPI_INT8SH          =   6;  // int8 << i
 const int OPI_INT16SH         =   7;  // int16 << i
 const int OPI_INT16SH16       =   8;  // int16 << 16
 const int OPI_INT32SH32       =   9;  // int32 << 32
-//const int OPI_UINT4           =  17;  // uint4
 const int OPI_UINT8           =  18;  // uint8
 const int OPI_UINT16          =  19;  // uint16
 const int OPI_UINT32          =  20;  // uint32
@@ -278,19 +299,19 @@ const int OPI_2INT16          =  26;  // int16+int16
 const int OPI_INT1632         =  27;  // int16+int32
 const int OPI_2INT32          =  28;  // int32+int32
 const int OPI_INT1688         =  29;  // int16+int8+int8
-//const int OPI_UINT4F          =  33;  // uint4 converted to float
 const int OPI_INT8F           =  34;  // int8 converted to float
 const int OPI_INT16F          =  35;  // int16 converted to float
 const int OPI_FLOAT16         =  64;  // float16
 const int OPI_FLOAT32         =  65;  // float32
 const int OPI_FLOAT64         =  66;  // float64
+const int OPI_IMPLICIT        =  99;  // implicit immediate operand (usually uint8)
 const int OPI_OT              = 100;  // determined by operand type field
 
 
 // struct SLine contains information about each line in the input file
 struct SLine {
     uint16_t type;                // line type: LINE_DATADEF, etc
-    uint16_t sectionType;         // LINE_DATADEF, LINE_CODEDEF
+    uint16_t sectionType;         // section flags
     uint32_t beginPos;            // position in input file
     uint32_t firstToken;          // index to first token
     uint32_t numTokens;           // number of tokens in line
@@ -336,30 +357,34 @@ struct SKeyword {
 // struct SExpression is used during assemble-time evaluation of expressions containing
 // any type of operands: integer, float, string, registers, memory operands, options
 struct SExpression {
-    union {                       // immediate value or addend to memory address
+    union {                       // immediate operand value
         int64_t  i;               // as signed
         uint64_t u;               // as unsigned
         double   d;               // as double
         uint32_t w;               // as unsigned 32 bit integer
     } value;
-    int64_t  offset;              // offset for memory operand or jump
+    int32_t  offset_mem;          // offset for memory operand
+    int32_t  offset_jump;         // offset for jump
     uint32_t etype;               // flags for elements in expression: XPR_...
     uint32_t tokens;              // number of tokens used
-    uint32_t sym1;                // first symbol, indexed by namebuffer offset
-    uint32_t sym2;                // reference symbol, indexed by namebuffer offset
+    uint32_t sym1;                // first symbol of memory operand, indexed by namebuffer offset
+    uint32_t sym2;                // reference symbol of memory operand, indexed by namebuffer offset
+    uint32_t sym3;                // first symbol of immediate operand, indexed by namebuffer offset
+    uint32_t sym4;                // reference symbol of immediate operand, indexed by namebuffer offset
+    uint32_t sym5;                // symbol for jump target, indexed by namebuffer offset
     uint32_t instruction;         // instruction corresponding to operator
     uint8_t  optionbits;          // option bits or sign bits
     uint8_t  base;                // base register of memory operand    
     uint8_t  index;               // index register of memory operand
     uint8_t  length;              // length or broadcast register of memory operand
     int8_t   scale;               // scale factor for index register
-    uint8_t  symscale;            // scale factor for sym1-sym2    
+    uint8_t  symscale1;           // scale factor for sym1-sym2    
+    uint8_t  symscale3;           // scale factor for sym3-sym4
     uint8_t  mask;                // mask register
     uint8_t  reg1;                // first register operand
     uint8_t  reg2;                // second register operand
     uint8_t  reg3;                // third register operand   
     uint8_t  fallback;            // fallback register
-    uint8_t  unused1;             // alignment filler or future extension
 };
 
 
@@ -373,7 +398,8 @@ struct SCode : public SExpression {
     uint32_t dtype;               // data type. (TYP_INT8 etc.)
     uint32_t instr1;              // index to instruction in instructionlist
     uint32_t fitNum;              // indicates if immediate constant fits a certain representation (from fitInteger or fitFloat function)
-    uint32_t fitAddr;             // indicates if relative address or jump offsets fits a certain number of bits
+    uint32_t fitAddr;             // indicates if relative address fits a certain number of bits
+    uint32_t fitJump;             // indicates if relative jump offset fits a certain number of bits
     uint8_t  dest;                // destination register (2 = memory destination)
     uint8_t  numOp;               // number of source operands
     uint8_t  size;                // size of instruction. minimum size if actual size depends on unresolved cross references
@@ -422,11 +448,13 @@ void insertAll(SCode & code, SExpression & expr);
 
 // operator < for sorting keyword list
 static inline bool operator < (SKeyword const & a, SKeyword const & b) {
-    // case insensitive compare
+    // case insensitive compare. This function is not standardized. make my own:
+    return strncasecmp_(a.name, b.name, 1000) < 0;
+
 #if defined (_MSC_VER)
-    return _stricmp(a.name, b.name) < 0;    // microsoft
+    //return _stricmp(a.name, b.name) < 0;    // microsoft
 #else
-    return strcasecmp(a.name, b.name) < 0;  // unix
+    //return strcasecmp(a.name, b.name) < 0;  // unix
 #endif
     
 }
@@ -499,13 +527,16 @@ protected:
     uint32_t iSwitch;                            // index of current 'switch' statement    
     uint32_t numSwitch;                          // total number of 'switch' statements
     bool     lineError;                          // error in current line. stop interpreting
+    uint64_t code_size;                          // codesize option determines code address sizes
+    uint64_t data_size;                          // datasize option determines data address sizes
     STemplate const * pInstr;                    // Pointer to current instruction code
     SInstruction2 const * iRecord;               // Pointer to instruction table entry
     SFormat const * fInstr;                      // Format details of current instruction code
     CELF outFile;                                // Output file
     CDynamicArray<SToken> tokens;                // List of tokens
     CDynamicArray<SLine> lines;                  // Information about each line of the input file
-    CDynamicArray<SInstruction> instructionlist; // List of instruction set, sorted by name
+    CDynamicArray<SInstruction> instructionlist; // List of instruction set, unsorted
+    CDynamicArray<SInstruction> instructionlistNm;// List of instruction set, sorted by name
     CDynamicArray<SInstruction3> instructionlistId; // List of instruction set, sorted by id
     CDynamicArray<SOperator> operators;          // List of operators
     CDynamicArray<SKeyword> keywords;            // List of keywords
@@ -528,6 +559,7 @@ protected:
     void interpretSectionDirective();            // Interpret section directive during pass 2 or 3
     void interpretFunctionDirective();           // Interpret function directive during pass 2 or 3
     void interpretEndDirective();                // Interpret section or function end directive during pass 2 or 3
+    void interpretOptionsLine();                 // Interpret line specifying options
     uint32_t addSymbol(ElfFWC_Sym2 & sym);       // Add a symbol to symbols list
     uint32_t findSymbol(uint32_t name);          // Find symbol by index into symbolNameBuffer
     uint32_t findSymbol(const char * name, uint32_t len); // Find symbol by name with specified length
@@ -570,9 +602,10 @@ protected:
     void pass5();                                // Make binary file
     void copySections();                         // copy sections to outFile
     void copySymbols();                          // copy symbols to outFile
-    //void removePrivateSymbols();                 // remove local symbols and adjust relocation records with new symbol indexes
+    //void removePrivateSymbols();               // remove local symbols and adjust relocation records with new symbol indexes
     void makeListFile();                         // make output listing
-    int64_t calculateMemoryOffset(SCode & code);    // calculate memory address possibly involving symbol. generate relocation if necessary
+    int64_t calculateMemoryOffset(SCode & code); // calculate memory address possibly involving symbol. generate relocation if necessary
+    int64_t calculateJumpOffset(SCode & code);   // calculate jump offset possibly involving symbol. generate relocation if necessary
     int64_t calculateConstantOperand(SExpression & expr, uint64_t address, uint32_t fieldSize); // calculate constant or immediate operand possibly involving symbol. generate relocation if necessary
     void makeBinaryCode();                       // make binary data for code sections
     void makeBinaryData();                       // make binary data for data sections

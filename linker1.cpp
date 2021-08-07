@@ -1,13 +1,13 @@
 /****************************  linker.cpp  ***********************************
 * Author:        Agner Fog
 * date created:  2017-11-14
-* Last modified: 2018-03-30
-* Version:       1.10
+* Last modified: 2021-05-28
+* Version:       1.11
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
 * This module contains the linker.
 *
-* Copyright 2017-2020 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2021 GNU General Public License v. 3 http://www.gnu.org/licenses
 *****************************************************************************/
 
 /*     Overview of data structures used during linking process
@@ -121,8 +121,28 @@ void CLinker::go() {
     outFile.join(&fileHeader);
     if (err.number()) return;
 
-    // write output file
-    outFile.write(cmd.getFilename(cmd.outputFile));
+    // make link map
+    if (cmd.outputListFile) {
+        CELF exefile;
+        exefile.copy(outFile);
+        exefile.parseFile();
+        const char * listfilename = cmd.getFilename(cmd.outputListFile);
+        FILE * fp = fopen(listfilename, "w");
+        fprintf(fp, "\nLink map of %s\n", cmd.getFilename(cmd.outputFile));   
+        exefile.makeLinkMap(fp);
+        fclose(fp);
+    }
+
+    if (cmd.outputType == FILETYPE_FWC_HEX) {
+        // make hexadecimal file
+        CFileBuffer hexfile;
+        outFile.makeHexBuffer() >> hexfile;
+        hexfile.write(cmd.getFilename(cmd.outputFile));
+    }
+    else {
+        // write output file
+        outFile.write(cmd.getFilename(cmd.outputFile));
+    }
 }
 
 CLinker::CLinker() {
@@ -1035,6 +1055,7 @@ void CLinker::makeProgramHeaders() {
             } 
             continue;  // don't put in program header
         }
+
         if ((secOrder & 0xF00000) != (lastSecOrder & 0xF00000)) {
             // new program header. save last program header
             if (pHeader.p_type != 0) {
@@ -1050,12 +1071,8 @@ void CLinker::makeProgramHeaders() {
             pHeader.p_type = PT_LOAD;
             pHeader.p_flags = sections[sec].sh_flags;
             maxAlign = sections[sec].sh_align;
-            if (secOrder >> 1 != lastSecOrder >> 1) {
-                // new pointer base. reset maxAlign. must align by at least 1 << MEMORY_MAP_ALIGN
-                maxAlign = MEMORY_MAP_ALIGN;
-            }
-            else if ((sections[sec].sh_flags ^ lastFlags) & SHF_PERMISSIONS) {
-                // different permissions. must align by at least 1 << MEMORY_MAP_ALIGN
+            if (((sections[sec].sh_flags ^ lastFlags) & SHF_PERMISSIONS) || (secOrder & 0xE) != (lastSecOrder & 0xE)) {
+                // different permissions or different base pointer. must align by at least 1 << MEMORY_MAP_ALIGN
                 if (maxAlign < MEMORY_MAP_ALIGN) maxAlign = MEMORY_MAP_ALIGN;
             }
             // use low 32 bits of p_paddr to store index into sections and 
@@ -1077,6 +1094,28 @@ void CLinker::makeProgramHeaders() {
         }
         // save last program header
         outFile.programHeaders.push(pHeader);
+    }
+
+    // Divide program headers into groups of headers with the same base pointer and align the start of each
+    // group with the maximum alignment for the group
+    maxAlign = 0;
+    uint32_t last_flags = 0;
+    uint32_t group_ph = 0xFFFFFFFF;   // first program header in group og program headers with same base pointer
+
+    // loop through program headers to find maximum alignment for each base pointer
+    for (ph = 0; ph < outFile.programHeaders.numEntries(); ph++) {
+        ElfFwcPhdr & rHeader = outFile.programHeaders[ph];  // reference to current program header
+        if ((rHeader.p_flags ^ last_flags) & SHF_BASEPOINTER) {
+            // new base pointer
+            if (group_ph != 0xFFFFFFFF) {
+                outFile.programHeaders[group_ph].p_align = maxAlign;  // save maximum alignment to first program header in group
+            }
+            // start new header group
+            group_ph = ph;
+            maxAlign = 0;
+            last_flags = rHeader.p_flags;        
+        }
+        if (rHeader.p_align > maxAlign) maxAlign = rHeader.p_align;
     }
 
     // loop through sections covered by each program header and assign addresses
@@ -1185,7 +1224,8 @@ void CLinker::makeProgramHeaders() {
                 }
                 offset += sections[sec].sh_size;
             }
-
+            // align position in ELF file
+            offset = (offset + (1<<FILE_DATA_ALIGN)-1) & -(1<<FILE_DATA_ALIGN);
             if ((rHeader.p_flags & SHF_READ) && ph+1 < outFile.programHeaders.numEntries()
                 && !(outFile.programHeaders[ph+1].p_flags & SHF_READ)
                 && rHeader.p_memsz <= rHeader.p_filesz) {
@@ -1194,7 +1234,9 @@ void CLinker::makeProgramHeaders() {
             }
             // update program header
             rHeader.p_memsz = offset - rHeader.p_vaddr;
-            if (sections[sec].sh_type != SHT_NOBITS) rHeader.p_filesz = rHeader.p_memsz;
+            if (sections[sec].sh_type != SHT_NOBITS) {
+                rHeader.p_filesz = rHeader.p_memsz;
+            }
         }
         lastFlags = rHeader.p_flags;
     }
@@ -1301,7 +1343,7 @@ void CLinker::relocate() {
             }
 
             // check register use
-            checkRegisterUse(targetSym, externTargetSym, modu);
+            checkRegisterUse(targetSym, externTargetSym, targetModule);
 
             // find reference symbol
             if (reloc->r_refsym && (reloc->r_type & R_FORW_RELTYPEMASK) == R_FORW_REFP) {
@@ -1737,7 +1779,8 @@ void CLinker::copySections() {
         lastFlags = header.sh_flags;
 
 #if 0   // testing only: list sections
-        printf("\n%2i %X  %s", outFile.sectionHeaders.numEntries(), header.sh_type, cmd.getFilename(header.sh_name));
+        ElfFwcShdr header3 = outFile.sectionHeaders[sectionx];
+        printf("\n%2i %X os=%X, sz=%X %s", outFile.sectionHeaders.numEntries(), header3.sh_type, header3.sh_offset, header3.sh_size, cmd.getFilename(header.sh_name));
 #endif
     }
 
@@ -1814,7 +1857,7 @@ void CLinker::copySymbols() {
             if (sym.st_section || (sym.st_bind & STB_EXE)) {
                 if ((sym.st_bind & (STB_EXE | STB_IGNORE)) == STB_EXE
                 || ((sym.st_bind & (STB_GLOBAL | STB_WEAK)))
-                || (cmd.debugOptions && sym.st_bind != STB_LOCAL)) {
+                || (cmd.debugOptions && sym.st_bind != STB_IGNORE)) {
                     name = (char*)modules2[modul].stringBuffer.buf() + modules2[modul].symbols[s].st_name;
                     xref.modul = modul;
                     xref.name = symbolNameBuffer.pushString(name);

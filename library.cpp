@@ -131,7 +131,7 @@ void CLibrary::makeMemberList() {
         header = &get<SUNIXLibraryHeader>(offset);
         // Size of member
         memberSize = atoi(header->fileSize);
-        if (memberSize < 0 || memberSize + offset + sizeof(SUNIXLibraryHeader) > dataSize()) {
+        if (int32_t(memberSize) < 0 || memberSize + offset + sizeof(SUNIXLibraryHeader) > dataSize()) {
             err.submit(ERR_LIBRARY_FILE_CORRUPT);  // Points outside file
             return;
         }
@@ -650,7 +650,7 @@ void CLibrary::findLongNames() {
         header = &get<SUNIXLibraryHeader>(offset);
         // Size of member
         memberSize = atoi(header->fileSize);
-        if (memberSize < 0 || memberSize + offset + sizeof(SUNIXLibraryHeader) > dataSize()) {
+        if (int32_t(memberSize) < 0 || memberSize + offset + sizeof(SUNIXLibraryHeader) > dataSize()) {
             err.submit(ERR_LIBRARY_FILE_CORRUPT);  // Points outside file
             return;
         }

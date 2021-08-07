@@ -1,14 +1,14 @@
 /****************************  cmdline.h   ***********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2018-03-30
-* Version:       1.10
+* Last modified: 2021-04-25
+* Version:       1.11
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        cmdline.h
 * Description:
 * Header file for command line interpreter cmdline.cpp
 *
-* Copyright 2006-2020 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2006-2021 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 #pragma once
 
@@ -38,8 +38,9 @@ const int CMDL_VERBOSE_DIAGNOSTICS =    2;     // Output more messages
 
 // Constants for dump options
 const int DUMP_NONE =              0x0000;     // Dump nothing
-const int DUMP_FILEHDR =           0x0001;     // Dump file header
-const int DUMP_SECTHDR =           0x0002;     // Dump section headers
+const int DUMP_LINKMAP =           0x0001;     // Dump link map
+const int DUMP_FILEHDR =           0x0002;     // Dump file header
+const int DUMP_SECTHDR =           0x0004;     // Dump section headers
 const int DUMP_SYMTAB =            0x0010;     // Dump symbol table
 const int DUMP_RELTAB =            0x0020;     // Dump relocation table
 const int DUMP_STRINGTB =          0x0040;     // Dump string table
@@ -97,7 +98,7 @@ public:
     uint32_t inputFile;                       // Input file name. index into fileNameBuffer
     uint32_t outputFile;                      // Output file name. index into fileNameBuffer
     uint32_t instructionListFile;             // File name of instruction list. index into fileNameBuffer
-    uint32_t outputListFile;                  // File name of assembler or emulator output list file. index into fileNameBuffer
+    uint32_t outputListFile;                  // File name of assembler or emulator or linker output list file. index into fileNameBuffer
     int  job;                                 // Job to do: ass, dis, dump, link, lib, emu
     int  inputType;                           // Input file type (detected from file)
     int  outputType;                          // Output type (file type or dump)
@@ -109,7 +110,7 @@ public:
     uint32_t fileOptions;                     // Options for input and output files
     uint32_t libraryOptions;                  // Options for library operations
     uint32_t linkOptions;                     // Options for linking
-    uint32_t debugOptions;                    // Options for debug info in assembly. not supported yet
+    uint32_t debugOptions;                    // Options for debug info in assembly. not fully supported yet
     uint64_t codeSizeOption;                  // Option specifying max code size
     uint64_t dataSizeOption;                  // Option specifying max data size
     const char * programName;                 // Path and name of this program
@@ -135,11 +136,13 @@ protected:
     void interpretMaxErrorsOption(char * string); // Interpret maxerrors option from command line    
     void interpretCodeSizeOption(char * string);  // Interpret codesize option from command line
     void interpretDataSizeOption(char * string);  // Interpret datasize option from command line
+    void interpretDebugOption(char * string); // Interpret debug option from command line
     void interpretIlistOption(char *);        // Interpret instruction list file option
     void interpretListOption(char *);         // Interpret output list file option for assembler
     void interpretOptimizationOption(char *); // Interpret optimization option for assembler
     void interpretStackOption(char *);        // Interpret stack size option for linker
     void interpretHeapOption(char *);         // Interpret heap size option for linker
+    void interpretHexfileOption(char *);      // Interpret hex file option for linker
     void interpretDynlinkOption(char *);      // Interpret dynamic link size option for linker
     void interpretVerboseOption(char * string);// Interpret silent/verbose option from command line
     void interpretDumpOption(char *);         // Interpret dump option from command line

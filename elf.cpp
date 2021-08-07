@@ -1,8 +1,8 @@
 /****************************    elf.cpp    *********************************
 * Author:        Agner Fog
 * Date created:  2006-07-18
-* Last modified: 2018-03-30
-* Version:       1.10
+* Last modified: 2021-05-28
+* Version:       1.11
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        elf.cpp
 * Description:
@@ -16,7 +16,7 @@
 * I have included limited support for x86-64 ELF (e_machine == EM_X86_64) for 
 * testing purposes. This may be removed.
 *
-* Copyright 2006-2020 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2006-2021 GNU General Public License v. 3 http://www.gnu.org/licenses
 *****************************************************************************/
 #include "stdafx.h"
 
@@ -371,7 +371,6 @@ void CELF::parseFile() {
     }
 }
 
-
 // Dump
 void CELF::dump(int options) {
     printf("\nDump of ELF file %s", cmd.getFilename(cmd.inputFile));
@@ -396,6 +395,11 @@ void CELF::dump(int options) {
             fileHeader.e_version);
 
         printf("\nNumber of sections: %2i", nSections);
+
+        if (fileHeader.e_machine == EM_FORWARDCOM) {
+            printf("\nip_base: 0x%X, datap_base: 0x%X, threadp_base: 0x%X, entry_point: 0x%X", 
+                (uint32_t)fileHeader.e_ip_base, (uint32_t)fileHeader.e_datap_base, (uint32_t)fileHeader.e_threadp_base, (uint32_t)fileHeader.e_entry);
+        }
     }
     // Always show flags
     if (fileHeader.e_flags) {
@@ -406,6 +410,11 @@ void CELF::dump(int options) {
             }
         }
     }
+
+    if (options & DUMP_LINKMAP) {
+        fprintf(stdout, "\nLink map:\n");
+        makeLinkMap(stdout);
+    } 
 
     if (options & DUMP_RELINKABLE) {
         // Show names of relinkable modules and libraries
@@ -1069,6 +1078,7 @@ int CELF::join(ElfFwcEhdr * header) {
         }
         // translate dataBuffer offset to file offset
         os = dataSize();
+        os = (os + (1<<FILE_DATA_ALIGN)-1) & -(1<<FILE_DATA_ALIGN);         // align
         for (ph = 0; ph < programHeaders.numEntries(); ph++) {
             if (programHeaders[ph].p_filesz) {
                 //programHeaders[ph].p_offset += dataSize();
@@ -1137,6 +1147,7 @@ int CELF::join(ElfFwcEhdr * header) {
                 err.submit(ERR_ELF_INDEX_RANGE); return ERR_ELF_INDEX_RANGE;
             }
             // Put raw data into file and save the new offset
+            align(1<<FILE_DATA_ALIGN);                               // align file data
             os = push(dataBuffer.buf() + os, size);
             sectionHeader.sh_offset = os;
         }
@@ -1188,6 +1199,8 @@ int CELF::join(ElfFwcEhdr * header) {
                         os += newSectionHeaders[sc2].sh_size;
                     }
                     pHeader.p_filesz = os - pHeader.p_offset;
+
+                    //!! set p_memsz
                 }
             }
         }
@@ -1208,7 +1221,7 @@ int CELF::join(ElfFwcEhdr * header) {
     uint32_t numSections = strtabSection + 1;
 
     // Insert symbol table and make temporary string table
-    align(8);
+    align(1 << FILE_DATA_ALIGN);
     ElfFwcShdr symtabHeader;
     zeroAllMembers(symtabHeader);
     symtabHeader.sh_type = SHT_SYMTAB;
@@ -1263,7 +1276,7 @@ int CELF::join(ElfFwcEhdr * header) {
     strtabHeader.sh_size = dataSize() - strtabHeader.sh_offset;
 
     // Insert section headers
-    align(8);
+    align(1 << FILE_DATA_ALIGN);
     fileheader.e_shoff = dataSize();
     fileheader.e_shentsize = sizeof(ElfFwcShdr);
     fileheader.e_shstrndx = shstrtabSection;
@@ -1288,6 +1301,7 @@ uint32_t CELF::addSection(ElfFwcShdr & section, CMemoryBuffer const & strings, C
     int nul = 0;
     section2.sh_name = stringBuffer.pushString((const char*)strings.buf() + section.sh_name); // copy string
     if (dataBuffer.dataSize() == 0) dataBuffer.push(&nul, 4);     // add a zero to avoid offset beginning at zero
+    dataBuffer.align(1 << FILE_DATA_ALIGN);                       // align in source file
     if (section.sh_type != SHT_NOBITS) {        
         section2.sh_offset = dataBuffer.push(data.buf() + section.sh_offset, (uint32_t)section.sh_size); // copy data
     }
@@ -1311,6 +1325,7 @@ void CELF::extendSection(ElfFwcShdr & section, CMemoryBuffer const & data) {
         return;
     }
     uint32_t pre = sectionHeaders.numEntries() - 1;  // previously added section
+    dataBuffer.align(1 << FILE_DATA_ALIGN);          // align in source file
 
     // insert new data
     if (section.sh_type != SHT_NOBITS) {            
@@ -1433,7 +1448,7 @@ struct SSymbolCleanup {
 };
 
 // remove local symbols and adjust relocation records with new symbol indexes
-void CELF::removePrivateSymbols() {
+void CELF::removePrivateSymbols(int debugOptions) {
     CDynamicArray<SSymbolCleanup> symbolTranslate;         // list for translating symbol indexes
     symbolTranslate.setNum(symbols.numEntries());
     uint32_t symi;                                         // symbol index
@@ -1441,9 +1456,13 @@ void CELF::removePrivateSymbols() {
                                                            // loop through symbols
     for (symi = 1; symi < symbols.numEntries(); symi++) {
         if (symbols[symi].st_bind != STB_LOCAL             // skip local symbols
-            && symbols[symi].st_section                      // skip external symbols
-            && !(symbols[symi].st_other & STV_HIDDEN)) {   // skip hidden symbols
+        && symbols[symi].st_section                        // skip external symbols
+        && !(symbols[symi].st_other & STV_HIDDEN)) {       // skip hidden symbols
             symbolTranslate[symi].preserve = 1;            // mark public symbols
+        }
+        if (debugOptions > 0 && symbols[symi].st_section) {// preserve local symbol names if debugOptions
+            // (external unreferenced symbols are still discarded to avoid linking unused library functions)
+            symbolTranslate[symi].preserve = 1;            
         }
     }
     // loop through relocations. preserve any symbols that relocations refer to
@@ -1457,6 +1476,7 @@ void CELF::removePrivateSymbols() {
             symbolTranslate[symi].preserve = 1;
         }
     }
+
     // make new symbol list
     CDynamicArray<ElfFwcSym> symbols2;
     symbols2.setNum(1);                        // make first symbol empty
@@ -1465,6 +1485,7 @@ void CELF::removePrivateSymbols() {
             symbolTranslate[symi].newIndex = symbols2.push(symbols[symi]);
         }
     }
+
     // update relocations with new symbol indexes
     for (reli = 0; reli < relocations.numEntries(); reli++) {
         if (relocations[reli].r_sym) {
@@ -1476,6 +1497,150 @@ void CELF::removePrivateSymbols() {
     }
     // replace symbol table
     symbols << symbols2;
+}
+
+// make hexadecimal code file
+CFileBuffer & CELF::makeHexBuffer() {
+    CFileBuffer hexbuf;                          // temporary output buffer
+    CMemoryBuffer databuffer;                    // temporary buffer with binary data
+    char string[64];                             // temporary text string
+    // Write date and time. 
+    time_t time1 = time(0);
+    char * timestring = ctime(&time1);
+    if (timestring) {
+        for (char *c = timestring; *c; c++) {    // Remove terminating '\n' in timestring
+            if (*c < ' ') *c = 0;
+        }
+    } 
+    sprintf(string, "// Hexfile %s, date %s\n", cmd.getFilename(cmd.inputFile), timestring);    hexbuf.push(string, (uint32_t)strlen(string));
+    uint32_t wordsPerLine = cmd.maxLines;        // number of 32-bit words per line in hex file
+    int32_t bytesPerLine = wordsPerLine * 4;     // number of bytes per line in hex file
+
+    // Find program headers
+    ElfFwcEhdr fileHeader = get<ElfFwcEhdr>(0);
+    uint32_t nProgramHeaders = fileHeader.e_phnum;
+    uint32_t programHeaderSize = fileHeader.e_phentsize;
+    uint32_t programHeaderOffset = (uint32_t)fileHeader.e_phoff;
+    ElfFwcPhdr pHeader;
+    for (uint32_t ph = 0; ph < nProgramHeaders; ph++) {         // loop through program headers
+        pHeader = get<ElfFwcPhdr>(programHeaderOffset + ph * programHeaderSize); // program header
+        uint32_t sectionSize = uint32_t(pHeader.p_filesz);      // size in file
+        uint32_t sectionMemSize = uint32_t(pHeader.p_memsz);    // size in memory
+        // write comment
+        sprintf(string, "// Section %i, size %i\n// %i words per line\n", ph, sectionMemSize, wordsPerLine);
+        hexbuf.push(string, (uint32_t)strlen(string));
+
+        // get data from section
+        uint32_t os = uint32_t(pHeader.p_offset);                // file offset
+        // round up size to multiple of bytesPerLine
+        sectionMemSize = (sectionMemSize + bytesPerLine - 1) & -bytesPerLine;
+        // copy section data to databuffer
+        databuffer.clear();
+        databuffer.push(buf() + os, sectionMemSize);
+        databuffer.setDataSize(sectionMemSize);
+        // line loop
+        for (uint32_t L = 0; L < sectionSize; L += bytesPerLine) {
+            // word loop backwords for big endian order
+            for (int32_t W = wordsPerLine-1; W >= 0; W--) {
+                uint32_t data = databuffer.get<uint32_t>(L + W * 4);
+                sprintf(string, "%08X", data);
+                hexbuf.push(string, (uint32_t)strlen(string));
+            }
+            hexbuf.push("\n", 1); // end of line
+        }
+    }
+    hexbuf >> *this;  // replace parent buffer (ELF file is lost)
+    return *this;
+}
+
+// Write a link map
+void CELF::makeLinkMap(FILE * stream) {
+    // Find program headers
+    //fprintf(stream, "\n\nLink map:");
+    uint32_t nProgramHeaders = fileHeader.e_phnum;
+    uint32_t programHeaderSize = fileHeader.e_phentsize;
+    if (nProgramHeaders && programHeaderSize <= 0) err.submit(ERR_ELF_RECORD_SIZE);
+    uint32_t programHeaderOffset = (uint32_t)fileHeader.e_phoff;
+    ElfFwcPhdr pHeader;           // program header
+    ElfFwcShdr sheader;           // section header
+    const char * basename = "";   // name of base pointer
+    const char * secname = "";    // name of section
+    const char * modname = "";    // name of module
+    uint64_t codesize = 0;        // size of code and const data
+    uint64_t datasize = 0;        // max distance of data from datap
+
+    // print table header
+    fprintf(stream, "\n%-9s %-20s %-20s %-10s %-10s %-8s %s", "base", "section", "module", "start", "size", "align", "attributes");
+
+    for (uint32_t i = 0; i < nProgramHeaders; i++) {
+        pHeader = get<ElfFwcPhdr>(programHeaderOffset);
+        if (pHeader.p_type & PT_LOAD) {
+            // get base pointer
+            switch (pHeader.p_flags & SHF_BASEPOINTER) {
+            case SHF_IP: basename = "ip"; break;
+            case SHF_DATAP: basename = "datap"; break;
+            case SHF_THREADP: basename = "threadp"; break;
+            default: basename = "?"; break;
+            }
+            // get name of first section
+            secname = "";
+            uint32_t sc = (uint32_t)pHeader.p_paddr;
+            if (sc < nSections) {
+                sheader = sectionHeaders[sc];
+                if (sheader.sh_flags == pHeader.p_flags && sheader.sh_name < secStringTableLen) {
+                    secname = secStringTable + sheader.sh_name;
+                }
+            }
+            // loop through sections under this program header
+            for (; sc < nSections; sc++) {
+                sheader = sectionHeaders[sc];
+                if (sheader.sh_flags != pHeader.p_flags) break; // stop when section does not belong to this program header
+
+                // section name
+                if (sheader.sh_name < secStringTableLen) secname = secStringTable + sheader.sh_name;
+                else secname = "";
+
+                // module name
+                if (sheader.sh_module < secStringTableLen) modname = secStringTable + sheader.sh_module;
+                else modname = ""; 
+                // write line for section header
+                fprintf(stream, "\n%-9s %-20s %-20s 0x%-8X 0x%-8X 0x%-6X ", basename, secname, modname, (uint32_t)sheader.sh_addr, (uint32_t)sheader.sh_size, 1 << sheader.sh_align);
+                if (pHeader.p_flags & SHF_READ)  fprintf(stream, "read ");
+                if (pHeader.p_flags & SHF_WRITE) fprintf(stream, "write ");
+                if (pHeader.p_flags & SHF_EXEC)  fprintf(stream, "execute "); 
+                if (sheader.sh_type == SHT_NOBITS) fprintf(stream, "uninititalized");
+            }
+            // write total
+            fprintf(stream, "\n%-9s %-20s %-20s 0x%-8X 0x%-8X 0x%-6X ", basename, "total:", "", 
+                (uint32_t)pHeader.p_vaddr, (uint32_t)pHeader.p_memsz, 1 << pHeader.p_align);
+            if (pHeader.p_flags & SHF_READ)  fprintf(stream, "read ");
+            if (pHeader.p_flags & SHF_WRITE) fprintf(stream, "write ");
+            if (pHeader.p_flags & SHF_EXEC)  fprintf(stream, "execute "); 
+            fprintf(stream, "\n");
+
+            // find required codesize and datasize
+            if (pHeader.p_flags & SHF_IP) {
+                uint64_t s = pHeader.p_vaddr + pHeader.p_memsz;
+                if (s > codesize) codesize = s;
+            }
+            else if (pHeader.p_flags & SHF_DATAP) {
+                int64_t t = fileHeader.e_datap_base - pHeader.p_vaddr;
+                if (t > (int64_t)datasize) datasize = t;
+                int64_t u = pHeader.p_vaddr + pHeader.p_memsz - fileHeader.e_datap_base;
+                if (u > (int64_t)datasize) datasize = u;
+            }
+            else if (pHeader.p_flags & SHF_THREADP) {
+                int64_t t = fileHeader.e_threadp_base - pHeader.p_vaddr;
+                if (t > (int64_t)datasize) datasize = t;
+                int64_t u = pHeader.p_vaddr + pHeader.p_memsz - fileHeader.e_threadp_base;
+                if (u > (int64_t)datasize) datasize = u;
+            }
+        }
+        programHeaderOffset += programHeaderSize;
+    }
+    fprintf(stream, "\nip_base:  0x%X, datap_base: 0x%X, threadp_base: 0x%X, entry_point: 0x%X", 
+        (uint32_t)fileHeader.e_ip_base, (uint32_t)fileHeader.e_datap_base, (uint32_t)fileHeader.e_threadp_base, (uint32_t)fileHeader.e_entry);
+    fprintf(stream, "\ncodesize: 0x%llX, datasize: 0x%llX", codesize, datasize);
 }
 
 // Reset everything

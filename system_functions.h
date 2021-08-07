@@ -1,8 +1,8 @@
 /*************************    system_functions.h    ***************************
 * Author:        Agner Fog
 * Date created:  2018-03-20
-* Last modified: 2018-03-26
-* Version:       1.10
+* Last modified: 2020-11-25
+* Version:       1.11
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        system_functions.h
 * Description:
@@ -10,7 +10,7 @@
 *
 * Note: id values are preliminary, they may change
 *
-* Copyright 2018 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2018-2020 GNU General Public License http://www.gnu.org/licenses
 ******************************************************************************/
 
 // Event ID's. System-specific and user-defined ID numbers may be added
@@ -27,20 +27,25 @@
 #define EVT_MESSAGE                0x31     // keyboard or mouse message or inter-process message
 #define EVT_CALL                   0x32     // call to an add-on module
 
-// Interrupt ID's. ID numbers for interrupts and software traps
-#define INT_OVERFL_UNSIGN          0x81     // integer overflow, unsigned
-#define INT_OVERFL_SIGN            0x82     // integer overflow, signed
-#define INT_OVERFL_FLOAT           0x83     // floating point overflow
-#define INT_FLOAT_INVALID          0x84     // floating point invalid operation
-#define INT_FLOAT_UNDERFL          0x85     // floating point underflow or precision loss
-#define INT_FLOAT_NAN_LOSS         0x86     // floating point nan propagation loss (nan input to compare or conversion to integer)
-#define INT_UNKNOWN_INST           0x90     // unknown instruction
-#define INT_INST_ILLEGAL           0x91     // illegal or unsupported parameters for instruction
-#define INT_ACCESS_READ            0x92     // memory access violation, read
-#define INT_ACCESS_WRITE           0x93     // memory access violation, write
-#define INT_ACCESS_EXE             0x94     // memory access violation, execute
-#define INT_CALL_STACK             0x95     // call stack overflow or underflow
-#define INT_ARRAY_BOUNDS           0x98     // array bounds overflow, unsigned
+// Interrupt ID's. ID numbers for error interrupts
+#define INT_BREAKPOINT             0x01     // debug breakpoint
+#define INT_UNKNOWN_INST           0x80     // unknown instruction
+#define INT_WRONG_PARAMETERS       0x81     // illegal or unsupported parameters for instruction
+#define INT_ACCESS_READ            0x82     // memory access violation, read
+#define INT_ACCESS_WRITE           0x83     // memory access violation, write
+#define INT_ACCESS_EXE             0x84     // memory access violation, execute
+#define INT_CALL_STACK             0x85     // call stack overflow or underflow
+#define INT_ARRAY_BOUNDS           0x88     // array bounds overflow, unsigned
+#define INT_MISALIGNED_MEM         0x89     // misaligned memory access
+#define INT_MISALIGNED_JUMP        0x8A     // jump to an address not divisible by 4
+
+// Interrupt ID's for software traps. Note that software traps are not necessarily supported
+#define INT_OVERFL_UNSIGN          0x101     // integer overflow, unsigned
+#define INT_OVERFL_SIGN            0x102     // integer overflow, signed
+#define INT_OVERFL_FLOAT           0x103     // floating point overflow
+#define INT_FLOAT_INVALID          0x104     // floating point invalid operation
+#define INT_FLOAT_UNDERFL          0x105     // floating point underflow or precision loss
+#define INT_FLOAT_NAN_LOSS         0x106     // floating point nan propagation loss (nan input to compare or conversion to integer)
 
 // module ID
 #define SYSM_SYSTEM               0x001  // system module id

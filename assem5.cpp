@@ -1,7 +1,7 @@
 /****************************    assem5.cpp    ********************************
 * Author:        Agner Fog
 * Date created:  2017-09-19
-* Last modified: 2020-09-18
+* Last modified: 2021-05-21
 * Version:       1.11
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.cpp
@@ -10,7 +10,7 @@
 * This module contains functions for interpreting high level language constructs:
 * functions, branches, and loops
 *
-* Copyright 2017-2020 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2021 GNU General Public License http://www.gnu.org/licenses
 ******************************************************************************/
 #include "stdafx.h"
 
@@ -197,10 +197,6 @@ void CAssembler::codeIf() {
         errors.reportLine(ERR_UNFINISHED_INSTRUCTION);
         return;
     } 
-    if (code.etype & (XPR_MEM | XPR_OPTION)) {
-        errors.reportLine(ERR_MEM_NOT_ALLOWED);
-        code.etype = XPR_INT | XPR_JUMPOS;
-    } 
 
     // get next line
     if (linei == lines.numEntries()-1) {    // no more lines
@@ -233,8 +229,10 @@ void CAssembler::codeIf() {
             if (tokens[tok].type == TOK_OPR && tokens[tok].id == '}') {
                 // the {} block contains a jump and nothing else
                 // make conditional jump to target2 instead
-                code.sym1 = target2;
+                code.sym5 = target2;
                 linei += 2;                          // finished processing these two lines
+                // check if it can be merged with previous instruction
+                mergeJump(code);
                 // finish code and fit it
                 checkCode1(code);
                 if (lineError) return;    
@@ -265,6 +263,10 @@ void CAssembler::codeIf() {
     }
     invertCondition(code);  // invert condition. jump to else block if logical expression false
 
+    if (code.instruction == (II_JUMP | II_JUMP_INVERT)) {
+        // constant: don't jump
+        code.instruction = 0;
+    }
     // make block record with label name
     block.blockNumber = ++iIf;
     block.startBracket = tokenB;
@@ -277,7 +279,7 @@ void CAssembler::codeIf() {
     hllBlocks.push(block);
 
     // store jump instruction
-    code.sym1 = block.jumpLabel;
+    code.sym5 = block.jumpLabel;
 
     // check if it can be merged with previous instruction
     mergeJump(code);
@@ -311,11 +313,10 @@ void CAssembler::codeIf2() {
         }
         // make block record for jump to label b
         block.blockType = HL_ELSE;           // if-else block
-        block.blockNumber = iIf;
         block.startBracket = tokenB;
         // make label name
         char name[32];
-        sprintf(name, "@if_%u_b", iIf);
+        sprintf(name, "@if_%u_b", block.blockNumber);
         uint32_t symi = makeLabelSymbol(name);
         block.jumpLabel = symbols[symi].st_name;
         hllBlocks.push(block);     // store block in hllBlocks stack. will be retrieved at matching '}'
@@ -324,7 +325,7 @@ void CAssembler::codeIf2() {
         code.section = section;
         code.instruction = II_JUMP;
         code.etype = XPR_JUMPOS | XPR_SYM1;
-        code.sym1 = block.jumpLabel;
+        code.sym5 = block.jumpLabel;
 
         // check if it can be merged with previous instruction
         mergeJump(code);
@@ -421,10 +422,6 @@ void CAssembler::codeWhile() {
         errors.reportLine(ERR_UNFINISHED_INSTRUCTION);
         return;
     } 
-    if (code.etype & (XPR_MEM | XPR_OPTION)) {
-        errors.reportLine(ERR_MEM_NOT_ALLOWED);
-        code.etype = XPR_INT | XPR_JUMPOS;
-    } 
 
     // get next line
     // get next line
@@ -469,7 +466,11 @@ void CAssembler::codeWhile() {
     SCode code1 = code;
     invertCondition(code1); // invert condition to jump if false
 
-    code1.sym1 = block.breakLabel;
+    if (code1.instruction == (II_JUMP | II_JUMP_INVERT)) {
+        // constant: don't jump
+        code1.instruction = 0;
+    } 
+    code1.sym5 = block.breakLabel;
     // check if it can be merged with previous instruction
     mergeJump(code1);
     // finish code and store it
@@ -486,7 +487,7 @@ void CAssembler::codeWhile() {
     codeBuffer.push(code1);// save code structure
 
     // make instruction to place at end of loop
-    code.sym1 = block.jumpLabel;
+    code.sym5 = block.jumpLabel;
     checkCode1(code);
     // store in codeBuffer2 for later insertion at the end of the loop
     block.codeBuffer2index = codeBuffer2.push(code);
@@ -512,6 +513,11 @@ void CAssembler::codeWhile2() {
     if (block.codeBuffer2num && block.codeBuffer2index < codebuf2num) {
         // retrieve jumpback instruction
         code = codeBuffer2[block.codeBuffer2index];
+
+        if (code.instruction == (II_JUMP | II_JUMP_INVERT)) {
+            // constant: don't jump
+            code.instruction = 0;
+        } 
         // check if it can be merged with previous instruction
         mergeJump(code);
         // finish code and store it
@@ -658,16 +664,16 @@ void CAssembler::codeDo2() {
     if (state != 6) errors.report(token);
     if (lineError) return;
 
-    if (code.etype & (XPR_MEM | XPR_OPTION)) {
-        errors.reportLine(ERR_MEM_NOT_ALLOWED);
-        code.etype = XPR_INT | XPR_JUMPOS;
-    }
-
     // make instruction with condition
     interpretCondition(code);
     code.etype |= XPR_JUMPOS | XPR_SYM1;
     code.section = section;
-    code.sym1 = block.jumpLabel;
+    code.sym5 = block.jumpLabel;
+
+    if (code.instruction == (II_JUMP | II_JUMP_INVERT)) {
+        // constant: don't jump
+        code.instruction = 0;
+    } 
     // check if it can be merged with previous instruction
     mergeJump(code);
     // finish code and fit it
@@ -767,8 +773,9 @@ void CAssembler::codeFor() {
     if (dataType == 0) {
         errors.reportLine(ERR_TYPE_MISSING);  return;
     }
-    // extend type to int64 if allowed. this allows various optimizations, and int64 is required for array indexes anyway
-    if ((dataType & TYP_PLUS) && !(dataType & TYP_FLOAT)) dataType = TYP_INT64 | (dataType & TYP_UNS);
+    // extend type to int32 if allowed. this allows various optimizations
+    // (unsigned types not allowed, even if start and end values are known to be positive, because loop counter may become negative inside loop in rare cases)
+    if ((dataType & TYP_PLUS) && ((dataType & 0xFF) < (TYP_INT32 & 0xFF))) dataType = TYP_INT32;
 
     // remake token sequence for generating initial instruction
     uint32_t tokensRestorePoint = tokens.numEntries();
@@ -821,40 +828,49 @@ void CAssembler::codeFor() {
         insertAll(conditionCode, expr);  // insert logical expression into block
         conditionCode.dtype = dataType;
         interpretCondition(conditionCode);  // convert expression to conditional jump
-        conditionCode.etype |= XPR_JUMPOS | XPR_SYM1;
-        conditionCode.section = section;
-        tok = tokenB + expr.tokens;       // expect ';' after expression
-        if (tokens[tok].type != TOK_OPR || tokens[tok].id != ';') {
-            errors.report(tokens[tok]);
+        if (conditionCode.etype == XPR_INT) { // always true or always false
+            conditionFirst = 2 + (conditionCode.value.w & 1);
+            conditionCode.instruction = II_JUMP;
+            conditionCode.etype = XPR_JUMPOS;
+            conditionCode.value.i = 0;
+            conditionCode.dtype = 0;
         }
-        //uint32_t counterRegister = 0;
-        uint64_t counterStart = 0;
-        // are start and end values known constants?
-        if (initializationCode.instruction == II_MOVE && (initializationCode.etype & XPR_INT) && initializationCode.dest
-            && !(initializationCode.etype & (XPR_REG1 | XPR_MEM | XPR_OPTION))) {
-            //counterRegister = initializationCode.dest;
-            counterStart = initializationCode.value.i;
-            if ((expr.etype & XPR_INT) && (expr.etype & XPR_REG1) && !(expr.etype & (XPR_REG2 | XPR_MEM | XPR_OPTION))) {
-                // start and end values are integer constants
-                if ((expr.instruction & 0xFF) == II_COMPARE) {
-                    // compare instruction. condition is in option bits
-                    switch ((expr.optionbits >> 1) & 3) {
-                    case 0:  // ==
-                        conditionFirst = 2 + (counterStart == expr.value.u);  break;
-                    case 1:  // <
-                        if (dataType & TYP_UNS) conditionFirst = 2 + (counterStart < expr.value.u);
-                        else conditionFirst = 2 + ((int64_t)counterStart < expr.value.i);
-                        break;
-                    case 2:  // >
-                        if (dataType & TYP_UNS) conditionFirst = 2 + (counterStart > expr.value.u);
-                        else conditionFirst = 2 + ((int64_t)counterStart > expr.value.i);
-                        break;
+        else {
+            conditionCode.etype |= XPR_JUMPOS | XPR_SYM1;
+            conditionCode.section = section;
+            tok = tokenB + expr.tokens;       // expect ';' after expression
+            if (tokens[tok].type != TOK_OPR || tokens[tok].id != ';') {
+                errors.report(tokens[tok]);
+            }
+            //uint32_t counterRegister = 0;
+            uint64_t counterStart = 0;
+            // are start and end values known constants?
+            if (initializationCode.instruction == II_MOVE && (initializationCode.etype & XPR_INT) && initializationCode.dest
+                && !(initializationCode.etype & (XPR_REG1 | XPR_MEM | XPR_OPTION))) {
+                //counterRegister = initializationCode.dest;
+                counterStart = initializationCode.value.i;
+                if ((expr.etype & XPR_INT) && (expr.etype & XPR_REG1) && !(expr.etype & (XPR_REG2 | XPR_MEM | XPR_OPTION))) {
+                    // start and end values are integer constants
+                    if ((expr.instruction & 0xFF) == II_COMPARE) {
+                        // compare instruction. condition is in option bits
+                        switch ((expr.optionbits >> 1) & 3) {
+                        case 0:  // ==
+                            conditionFirst = 2 + (counterStart == expr.value.u);  break;
+                        case 1:  // <
+                            if (dataType & TYP_UNS) conditionFirst = 2 + (counterStart < expr.value.u);
+                            else conditionFirst = 2 + ((int64_t)counterStart < expr.value.i);
+                            break;
+                        case 2:  // >
+                            if (dataType & TYP_UNS) conditionFirst = 2 + (counterStart > expr.value.u);
+                            else conditionFirst = 2 + ((int64_t)counterStart > expr.value.i);
+                            break;
+                        }
+                        if (expr.optionbits & 1) conditionFirst ^= 1; // invert if bit 0    
                     }
-                    if (expr.optionbits & 1) conditionFirst ^= 1; // invert if bit 0    
-                }
-                else if ((expr.instruction & 0xFF) == II_AND) {
-                    // bit test. if (r1 & 1 << n)
-                    conditionFirst = 2 + (counterStart & ((uint64_t)1 << expr.value.u)) != 0;
+                    else if ((expr.instruction & 0xFF) == II_AND) {
+                        // bit test. if (r1 & 1 << n)
+                        conditionFirst = 2 + ((counterStart & ((uint64_t)1 << expr.value.u)) != 0);
+                    }
                 }
             }
         }
@@ -869,7 +885,7 @@ void CAssembler::codeFor() {
         sprintf(name, "@for_%u_b", iLoop);
         symi = makeLabelSymbol(name);
         block.breakLabel = symbols[symi].st_name;
-        conditionCode.sym1 = block.breakLabel;
+        conditionCode.sym5 = block.breakLabel;
         // check if it can be merged with previous instruction
         mergeJump(conditionCode);
         checkCode1(conditionCode);               // finish code and fit it
@@ -889,7 +905,7 @@ void CAssembler::codeFor() {
         sprintf(name, "@for_%u_goes_zero_times", iLoop);
         symi = makeLabelSymbol(name);
         block.breakLabel = symbols[symi].st_name;
-        jumpAlways.sym1 = block.breakLabel;
+        jumpAlways.sym5 = block.breakLabel;
         // check if it can be merged with previous instruction
         mergeJump(jumpAlways);
         checkCode1(jumpAlways);                  // finish code and fit it
@@ -907,7 +923,7 @@ void CAssembler::codeFor() {
     }
     symi = makeLabelSymbol(name);
     block.jumpLabel = symbols[symi].st_name;
-    conditionCode.sym1 = block.jumpLabel;
+    conditionCode.sym5 = block.jumpLabel;
     SCode codeLabel;
     zeroAllMembers(codeLabel);
     codeLabel.label = block.jumpLabel;
@@ -1186,7 +1202,7 @@ void CAssembler::codeForIn() {
         startCheck.section = section;
         startCheck.instruction = II_COMPARE | II_JUMP_POSITIVE | II_JUMP_INVERT;
         startCheck.reg1 = indexReg;
-        startCheck.sym1 = block.breakLabel;
+        startCheck.sym5 = block.breakLabel;
         startCheck.etype = XPR_INT | XPR_REG | XPR_REG1 | XPR_JUMPOS;
         startCheck.line = linei;
         startCheck.dtype = TYP_INT64;        
@@ -1233,7 +1249,7 @@ void CAssembler::codeForIn2() {
     code.reg1 = code.dest = block.codeBuffer2num;
     code.value.u = block.codeBuffer2index & 0xF;  // element type in vector
     code.dtype = TYP_INT64;
-    code.sym1 = block.jumpLabel;
+    code.sym5 = block.jumpLabel;
     code.etype = XPR_INT | XPR_REG | XPR_REG1 | XPR_JUMPOS;
     // fit code and save it
     checkCode1(code);
@@ -1281,7 +1297,7 @@ void CAssembler::codeBreak() {
     code.section = section;
     code.instruction = II_JUMP;
     code.etype = XPR_JUMPOS | XPR_SYM1;
-    code.sym1 = symi;
+    code.sym5 = symi;
 
     // check if it can be merged with previous instruction
     mergeJump(code);
@@ -1384,13 +1400,14 @@ bool CAssembler::mergeJump(SCode & code2) {
 
     if (code1.section != code2.section) return false; // must be in same section
     SCode code3 = code1 | code2;  // combined code
+    code3.reg1 = code1.reg1;
+    code3.dest = code1.dest;
     uint32_t type = code1.dtype;
     // first instruction cannot have memory operand or other special options
     if (code1.etype & (XPR_MEM | XPR_SYM1 | XPR_MASK | XPR_OPTION | XPR_OPTIONS | XPR_JUMPOS | XPR_ERROR)) return false;
     if (!(code2.etype & XPR_JUMPOS)) return false;
-    if (code1.dest != code1.reg1 && !(code1.etype & XPR_INT)) return false;  // cannot have 3 registers
 
-    if (code2.instruction == II_JUMP) {
+    /*if (code2.instruction == II_JUMP) {
         // combine unconditional jump with add/sub
         if (code2.etype & (XPR_MEM | XPR_OPTION | XPR_REG)) return false;
         if ((code1.instruction & ~1) != II_ADD) return false;  // only add and sub
@@ -1399,7 +1416,7 @@ bool CAssembler::mergeJump(SCode & code2) {
         codeBuffer.pop();        // remove previous code from buffer
         code2 = code3;
         return true;
-    }
+    } */
 
     // second instruction must test the result of the first instruction
     if (code1.dest != code2.reg1) return false;
@@ -1422,9 +1439,10 @@ bool CAssembler::mergeJump(SCode & code2) {
     switch (code1.instruction) {
     case II_ADD: case II_SUB:
         if (type & TYP_FLOAT) return false;
-        if (code1.instruction == II_ADD && code1.value.u == 1 && code1.dest == code1.reg1 && !(type & TYP_UNS)) {
-            // check if it fits increment_compare/jump above
+        if (code1.instruction == II_ADD && code1.value.u == 1 && !(type & TYP_UNS)) {
+            // check if it fits increment_compare/jump below/above
             code3.value.u = code2.value.u;
+            /*
             uint32_t nbits = (1 << (type & 7)) * 8;  // number of bits in constant
             if ((code2.instruction & 0xFFFE00) == II_JUMP_NEGATIVE && (code2.etype & XPR_INT) 
             && (code3.value.u & (((uint64_t)1 << nbits) - 1)) != (uint64_t)1 << (nbits - 1)) { // check for overflow
@@ -1432,9 +1450,9 @@ bool CAssembler::mergeJump(SCode & code2) {
                 // or jump_saboveeq n to jump sabove n-1
                 code3.value.u--;
                 code3.instruction ^= II_JUMP_NEGATIVE ^ II_JUMP_POSITIVE ^ II_JUMP_INVERT;
-            }            
-            if ((code3.instruction & 0xFFFE00) == II_JUMP_POSITIVE) {
-                // successful combination of add 1 and jump_sbeloweq
+            }*/            
+            if ((code3.instruction & 0xFFFE00) == II_JUMP_POSITIVE || (code3.instruction & 0xFFFE00) == II_JUMP_NEGATIVE) {
+                // successful combination of add 1 and jump_sbelow/above
                 code3.instruction = (code3.instruction & 0xFFFF00) | II_INCREMENT;
                 code3.etype = (code1.etype & ~XPR_IMMEDIATE) | code2.etype;
                 codeBuffer.pop();        // remove previous code from buffer
@@ -1444,6 +1462,8 @@ bool CAssembler::mergeJump(SCode & code2) {
         }
         // add/sub + compare
         if (!(code2.etype & XPR_INT) || code2.value.i != 0 || (code2.instruction & 0xFF) != II_COMPARE) return false; // must compare against zero
+
+        //??:
         if ((type & TYP_UNS) && (code3.instruction & 0xFFFE00) != II_JUMP_ZERO) return false;  // unsigned works only for == and !=
         // successful combination of add/sub and signed compare with zero
         code3.instruction = code1.instruction | (code2.instruction & 0xFFFF00);
@@ -1453,7 +1473,7 @@ bool CAssembler::mergeJump(SCode & code2) {
         return true;
 
     case II_AND: case II_OR: case II_XOR:
-    case II_SHIFT_LEFT:  case II_SHIFT_RIGHT_U:
+    //case II_SHIFT_LEFT:  case II_SHIFT_RIGHT_U:
         // must compare for equal to zero
         if (!(code2.etype & XPR_INT) || code2.value.i != 0) return false;
         //if ((code2.instruction & 0xFFFE00) != II_JUMP_ZERO) return false;
@@ -1506,18 +1526,36 @@ void CAssembler::interpretCondition(SCode & code) {
             errors.reportLine(ERR_EXPECT_LOGICAL); // should not occur
         }
         if (code.optionbits & 1) code.instruction ^= II_JUMP_INVERT; // invert if bit 0    
-        if ((code.optionbits & 8) && (code.dtype & TYP_FLOAT) && (code.instruction & 0x7F00) - 0x1000 < 0x2000) {
-            code.instruction ^= II_JUMP_UNORDERED; // unordered bit
+        if (code.dtype & TYP_FLOAT) { // floating point. resolve ordered/unordered
+            //if ((code.instruction & 0x7F00) == (II_JUMP_NOTZERO & 0x7F00)) code.optionbits |= 8;  // a != b is unordered. This has already been done in CAssembler::op2Registers
+            if ((code.optionbits & 8) && (code.instruction & 0x7F00) - 0x1000 < 0x2000) {
+                code.instruction ^= II_JUMP_UNORDERED; // unordered bit
+            }        
         }
     }
     else if ((code.instruction & 0xFF) == II_AND && (code.etype & XPR_INT)) {
-        // bit test. if (r1 & 1 << n)
-        if (code.value.u == 0 || (code.value.u & (code.value.u-1))) {
-            errors.reportLine(ERR_MUST_BE_POW2);
+        // if (r1 & )
+        if (code.value.u != 0 && (code.value.u & (code.value.u-1)) == 0) {
+            // n is a power of 2. test_bit
+            code.instruction = II_TEST_BIT | II_JUMP_TRUE;
+            code.value.u = bitScanReverse(code.value.u);
         }
-        code.instruction = II_TEST_BIT | II_JUMP_NOTZERO;
-        code.value.u = bitScanReverse(code.value.u);
+        else {
+            code.instruction = II_TEST_BITS_OR | II_JUMP_TRUE;
+        }
         if (code.optionbits & 4) code.instruction ^= II_JUMP_INVERT;
+    }
+    else if ((code.instruction & 0xFF) == II_TEST_BITS_AND && (code.etype & XPR_INT)) {
+        code.instruction |= II_JUMP_TRUE;
+        if (code.optionbits & 1) code.instruction ^= II_JUMP_INVERT;
+    }
+    else if (code.instruction == 0 && code.etype == XPR_INT) {
+        // constant condition. always true or always false
+        code.instruction = II_JUMP;
+        if (code.value.i == 0) code.instruction |= II_JUMP_INVERT;
+
+        //!!
+        code.etype = 0;
     }
     else {  // unrecognized expression
         errors.reportLine(ERR_EXPECT_LOGICAL);
@@ -1624,7 +1662,7 @@ void CAssembler::codePush() {
     if (reg2 == -1) {  // stack pointer not specified. use default stack pointer
         reg2 = reg1;  reg1 = 0x1F | REG_R;
     }
-    if (imm == -1) {  // no immediate operand. push only one register
+    if (int32_t(imm) == -1) {  // no immediate operand. push only one register
         imm = reg2 & 0x1F;
     }
     if ((imm & 0x1F) < uint32_t(reg2 & 0x1F)) {
@@ -1748,7 +1786,7 @@ void CAssembler::codePop() {
     if (reg2 == -1) {  // stack pointer not specified. use default stack pointer
         reg2 = reg1;  reg1 = 0x1F | REG_R;
     }
-    if (imm == -1) {  // no immediate operand. push only one register
+    if (int32_t(imm) == -1) {  // no immediate operand. push only one register
         imm = reg2 & 0x1F;
     }
     if ((imm & 0x1F) < uint32_t(reg2 & 0x1F)) {

@@ -1,14 +1,14 @@
 /****************************  emulator.h   **********************************
 * Author:        Agner Fog
 * date created:  2018-02-18
-* Last modified: 2020-05-17
-* Version:       1.10
+* Last modified: 2021-04-02
+* Version:       1.11
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        emulator.h
 * Description:
 * Header file for emulator
 *
-* Copyright 2018-2020 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2018-2021 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 // structure for memory map
@@ -32,6 +32,31 @@ union SNum {
     float f;                                     // single precision float
 };
 
+// Indexes into perfCounters array
+const int perf_cpu_clock_cycles = 1;
+const int perf_instructions = 2;
+const int perf_2size_instructions = 3;
+const int perf_3size_instructions = 4;
+const int perf_gp_instructions = 5;
+const int perf_gp_instructions_mask0 = 6;
+const int perf_vector_instructions = 7;
+const int perf_control_transfer_instructions = 8;
+const int perf_direct_jumps = 9;
+const int perf_indirect_jumps = 10;
+const int perf_cond_jumps = 11;
+const int perf_unknown_instruction = 12;
+const int perf_wrong_operands = 13;
+const int perf_array_overflow = 14;
+const int perf_read_violation = 15;
+const int perf_write_violation = 16;
+const int perf_misaligned = 17;
+const int perf_address_of_first_error = 18;
+const int perf_type_of_first_error = 19;
+const int number_of_perf_counters = 20;          // number of performance counter registers
+
+// Indexes into capabilities registers array
+const int disable_errors_capability_register = 2;// register for disabling errors
+const int number_of_capability_registers = 16;   // number of capability registers
 class CEmulator;                                 // preliminary declaration
 
 // Class for a thread or CPU core in the emulator
@@ -64,7 +89,6 @@ public:
                                                  // operands[2] is fallback register
                                                  // two-operand instructions use operands[4-5]
                                                  // three-operand instructions use operands[3-5]
-    //uint8_t  rs;                                 // register rs (stored here because the number is lost on tiny instruction memory operands)
     uint8_t  op;                                 // operation code
     uint8_t  operandType;                        // operand type for current instruction
     uint8_t  nOperands;                          // number of source operands for current instruction
@@ -77,6 +101,7 @@ public:
     bool     dontRead;                           // don't read source operand before execution
     bool     unchangedRd;                        // store instruction: RD is not destination
     bool     terminate;                          // stop execution
+    bool     memory_error;                       // memory address error
     CMemoryBuffer vectors;                       // vector register i is at offset i*MaxVectorLength
     uint64_t registers[32];                      // value of register r0 - r31
     uint32_t vectorLength[32];                   // length of vector registers v0 - v31
@@ -104,6 +129,8 @@ public:
     CDynamicArray<uint64_t> callStack;           // stack of return addresses
     uint32_t callDept;                           // maximum number of entries observed in callStack
     uint64_t entry_point;                        // program entry point
+    uint64_t perfCounters[number_of_perf_counters];// performance counters
+    uint64_t capabilyReg[number_of_capability_registers];// capability registers
 protected:
     uint32_t mapIndex1;                          // last memory map index for code
     uint32_t mapIndex2;                          // last memory map index for read-only data
@@ -120,6 +147,7 @@ protected:
     void listInstruction(uint64_t address);      // write current instruction to debug list
 public:
     void listResult(uint64_t result);            // write result of current instruction to debug list
+    void performanceCounters();                  // update performance counters
     uint64_t readRegister(uint8_t reg) {         // read register value
         if (vect) {                              // this function is inlined for performance reasons
             uint64_t val = vectors.get<uint64_t>(reg*MaxVectorLength);
@@ -215,7 +243,8 @@ uint64_t insert_(CThread * t);
 uint64_t extract_(CThread * t);
 uint64_t bitscan_(CThread * t);
 uint64_t popcount_(CThread * t);
-
+int64_t  mul64_128s(uint64_t * low, int64_t a, int64_t b);
+uint64_t mul64_128u(uint64_t * low, uint64_t a, uint64_t b);
 
 // constants and functions for detecting NAN and infinity
 const uint16_t inf_h   = 0x7C00;                 // float16 infinity
@@ -242,3 +271,4 @@ static inline bool isnan_or_inf_h(uint16_t x) {return uint16_t(x << 1) >= inf2h;
 static inline bool isnan_or_inf_f(uint32_t x) {return (x << 1) >= inf2f;}
 static inline bool isnan_or_inf_d(uint64_t x) {return (x << 1) >= inf2d;}
 static inline bool is_zero_or_subnormal_h(uint16_t x) {return (x & 0x7C00) == 0;}
+

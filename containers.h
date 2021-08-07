@@ -244,9 +244,11 @@ public:
         while (a < b) {                                    // Binary search loop:
             c = (a + b) / 2;
             if ((*this)[c] < x) {
-                a = c + 1;}
+                a = c + 1;
+            }
             else {
-                b = c;}
+                b = c;
+            }
         }
         if (a == num_entries || x < (*this)[a]) a |= 0x80000000; // Not found
         return (int32_t)a;

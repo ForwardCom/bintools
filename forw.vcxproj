@@ -99,7 +99,7 @@
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <EnableEnhancedInstructionSet>AdvancedVectorExtensions2</EnableEnhancedInstructionSet>
+      <EnableEnhancedInstructionSet>NotSet</EnableEnhancedInstructionSet>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -131,7 +131,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
-      <EnableEnhancedInstructionSet>AdvancedVectorExtensions2</EnableEnhancedInstructionSet>
+      <EnableEnhancedInstructionSet>NotSet</EnableEnhancedInstructionSet>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -169,12 +169,12 @@
     <ClCompile Include="disasm2.cpp" />
     <ClCompile Include="elf.cpp" />
     <ClCompile Include="emulator1.cpp" />
+    <ClCompile Include="format_tables.cpp" />
     <ClCompile Include="emulator2.cpp" />
     <ClCompile Include="emulator3.cpp" />
     <ClCompile Include="emulator4.cpp" />
     <ClCompile Include="emulator5.cpp" />
     <ClCompile Include="emulator6.cpp" />
-    <ClCompile Include="emulator7.cpp" />
     <ClCompile Include="error.cpp" />
     <ClCompile Include="library.cpp" />
     <ClCompile Include="linker1.cpp" />

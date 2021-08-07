@@ -1,8 +1,8 @@
 /****************************    assem6.cpp    ********************************
 * Author:        Agner Fog
 * Date created:  2017-08-07
-* Last modified: 2020-05-19
-* Version:       1.10
+* Last modified: 2021-02-23
+* Version:       1.11
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.cpp
 * Description:
@@ -10,7 +10,7 @@
 * This module contains:
 * - pass4(): Resolve internal cross references, optimize forward references
 * - pass5(): Make binary file
-* Copyright 2017-2020 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2021 GNU General Public License http://www.gnu.org/licenses
 ******************************************************************************/
 #include "stdafx.h"
 
@@ -30,6 +30,9 @@ void CAssembler::pass4() {
 
     // multiple optimization passes until size is certain or no changes
     for (optiPass = 1; optiPass <= maxOptiPass; optiPass++) {
+        code_size = cmd.codeSizeOption;    // initialize options in case they have been changed during pass 3 or 4
+        data_size = cmd.dataSizeOption;
+
         if (changes == 0 && (totUncertain == 0 || optiPass > 2)) break;
         changes = 0;                   // count instructions with changed size
         section = 0;
@@ -71,7 +74,8 @@ void CAssembler::pass4() {
                 if (codeBuffer[i].instr1) {  // update normal instruction
                     if (optiPass >= maxOptiPass - 1) {
                         // rare case. optimization has slow convergence. choose larger instruction size if uncertain
-                        codeBuffer[i].fitAddr |= IFIT_LARGE;
+                        if (codeBuffer[i].fitAddr) codeBuffer[i].fitAddr |= IFIT_LARGE;
+                        if (codeBuffer[i].fitJump) codeBuffer[i].fitJump |= IFIT_LARGE;
                     }
                     sectionHeaders[section].sh_link = numUncertain;
                     fitConstant(codeBuffer[i]);                     // recalculate necessary size of immediate constant
@@ -89,6 +93,18 @@ void CAssembler::pass4() {
                         if (numUncertain) numUncertain += (ali >> 2) - 1 - codeBuffer[i].size; // maximum additional size if size of previous instructions change
                         if (section && sectionHeaders[section].sh_align < ali) {
                             sectionHeaders[section].sh_align = ali; // adjust alignment of this section
+                        }
+                    }
+                    else if (codeBuffer[i].instruction == II_OPTIONS) {
+                        // options directive. change option
+                        // This code object was created by CAssembler::interpretOptionsLine()
+                        switch (codeBuffer[i].fitNum) {
+                        case 1:
+                            code_size = codeBuffer[i].value.u; 
+                            break;
+                        case 2:
+                            data_size = codeBuffer[i].value.u; 
+                            break;                        
                         }
                     }
                 }
@@ -286,11 +302,10 @@ void CAssembler::pass5() {
     // make output list file
     if (cmd.outputListFile) makeListFile();
 
-    if (cmd.debugOptions == 0) {
-        // remove local and external symbols if not debug output and no relocation reference to them, 
-        // and adjust relocation records with new symbol indexes, after making list file
-        outFile.removePrivateSymbols();
-    }
+    // remove local and external symbols if there is no relocation reference to them, 
+    // and adjust relocation records with new symbol indexes, after making list file.
+    // Preserve local symbols if debugOptions > 0
+    outFile.removePrivateSymbols(cmd.debugOptions);
 
     // write assembly output file
     outFile.join(0);                             // make ELF file from sections, etc.
@@ -354,6 +369,7 @@ void CAssembler::makeBinaryCode() {
                     asize -= 2;
                 }
             }
+            // else if (codeBuffer[i].instruction == II_OPTIONS) {} // II_OPTIONS can be ignored here 
             continue;  // skip the rest
         }
         section = codeBuffer[i].section;
@@ -361,14 +377,16 @@ void CAssembler::makeBinaryCode() {
 
         instr.q = 0;           // reset template
         formatp = codeBuffer[i].formatp;
-        templ = formatp->tmpl;
+        templ = formatp->tmplate;
         format = formatp->format2;
 
         // assign registers
         uint8_t opAvail = formatp->opAvail;  // registers available in this format
 
         int nOp = instructionlistId[instructId].sourceoperands;
-        if (nOp > 3 && instructionlistId[instructId].opimmediate) opAvail |= 1;  // special case: 3 registers and an immediate
+        if (nOp > 3 && instructionlistId[instructId].opimmediate) {
+            opAvail |= 1;  // 3 registers and an immediate currently used only in truth_tab3 instruction
+        }
 
         if (templ == 0xA || templ == 0xE) nOp++;  // make one more register for fallback, even if it is unused
 
@@ -444,10 +462,9 @@ void CAssembler::makeBinaryCode() {
         uint8_t * instr_b = instr.b;  // avoid pedantic warnings from Gnu compiler
         // memory operand
         if (formatp->mem) {
-            if (formatp->mem & 1) instr.a.rt = codeBuffer[i].base & 0x1F;      // base in rt
-            else if (formatp->mem & 2) instr.a.rs = codeBuffer[i].base & 0x1F; // base in rs
-            if (formatp->mem & 4) instr.a.rs = codeBuffer[i].index & 0x1F;     // index in rs
-            uint8_t oldBase = codeBuffer[i].base;                  // save base pointer
+            if (formatp->mem & 2) instr.a.rs = codeBuffer[i].base  & 0x1F;     // base in rs
+            if (formatp->mem & 4) instr.a.rt = codeBuffer[i].index & 0x1F;     // index in rt
+            uint8_t oldBase = codeBuffer[i].base;                              // save base pointer
 
             // calculate offset, possibly involving symbols. make relocation if necessary
             int64_t offset = calculateMemoryOffset(codeBuffer[i]);
@@ -455,15 +472,46 @@ void CAssembler::makeBinaryCode() {
             if (codeBuffer[i].base != oldBase) {
                 // base pointer changed by calculateMemoryOffset
                 switch (codeBuffer[i].formatp->mem & 3) {
-                case 1:  // base in RT
+                case 1:  // base in RT. obsolete
                     instr.a.rt = codeBuffer[i].base;  break;
                 case 2:  // base in RS
                     instr.a.rs = codeBuffer[i].base;  break;
                 }
             }
 
+            // insert limit
+            if (codeBuffer[i].etype & XPR_LIMIT) offset = codeBuffer[i].value.i;
+
             uint32_t addrPos = formatp->addrPos;  // position of offset field
             switch (formatp->addrSize) { // size of offset
+            case 0:    // no offset
+                break;
+            case 1:    // 8 bits offset
+                instr.b[addrPos] = uint8_t(offset);
+                break;
+            case 2:    // 16 bits offset
+                *(int16_t *)(instr_b + addrPos) = int16_t(offset);
+                break;
+            case 4:    // 32 bits offset
+                *(int32_t *)(instr_b + addrPos) = int32_t(offset);
+                break;
+            case 8:    // 64 bits offset
+                *(int64_t *)(instr_b + addrPos) = offset;
+            }
+            // memory length or broadcast
+            if (formatp->vect & 6) instr.a.rt = codeBuffer[i].length;
+        }
+
+        // jump offset
+        if (formatp->jumpSize) {
+
+            // calculate offset, possibly involving symbols. make relocation if necessary
+            int64_t offset = calculateJumpOffset(codeBuffer[i]);
+
+            uint32_t addrSize = formatp->jumpSize;    // size of offset field
+            uint32_t addrPos  = formatp->jumpPos;  // position of offset field
+
+            switch (addrSize) { // size of offset
             case 0:    // no offset
                 break;
             case 1:    // 8 bits offset
@@ -482,14 +530,12 @@ void CAssembler::makeBinaryCode() {
             case 8:    // 64 bits offset
                 *(int64_t *)(instr_b + addrPos) = offset;
             }
-            // memory length or broadcast
-            if (formatp->vect & 6) instr.a.rs = codeBuffer[i].length;
         }
 
         // immediate operand
         if (formatp->immSize) {
-            int64_t value = codeBuffer[i].value.i;  //value of operand
-            if (codeBuffer[i].sym1 && !(codeBuffer[i].etype & XPR_JUMPOS)) { // assume that symbol applies to jump address, not immediate constant, if instruction has both                
+            int64_t value = codeBuffer[i].value.i;  // value of operand
+            if (codeBuffer[i].sym3) {             
                 // calculation of symbol address. add relocation if needed
                 value = calculateConstantOperand(codeBuffer[i], codeBuffer[i].address + codeBuffer[i].formatp->immPos, codeBuffer[i].formatp->immSize);
                 if (codeBuffer[i].etype & XPR_ERROR) {
@@ -547,31 +593,36 @@ void CAssembler::makeBinaryCode() {
             int64_t value = calculateConstantOperand(codeBuffer[i], codeBuffer[i].address + codeBuffer[i].formatp->immPos, codeBuffer[i].formatp->immSize);
             *(int16_t *)(instr_b + 4) = int16_t(value);
         }
-
-        if (formatp->imm2 & 0x80) {
-            if (!(formatp->imm2 & 0x40)) {
-                instr.b[0] = instructionlistId[instructId].op1; // no OPJ
+        else if (formatp->tmplate == 0xC && instructionlistId[instructId].opimmediate == OPI_IMPLICIT) {
+            // insert implicit operand
+            instr.i[0] |= instructionlistId[instructId].implicit_imm;
+        }
+        if (formatp->imm2 & 0x80) {  // various placements of OPJ
+            if (formatp->imm2 & 0x10) {
+                instr.b[7] = instructionlistId[instructId].op1; // OPJ in high part of IM2
             }
-            instr.a.op1 = format & 7;                // OPJ is in IM1
+            else if (formatp->imm2 & 0x40) {    // no OPJ
+            }
+            else  {
+                instr.b[0] = instructionlistId[instructId].op1;    // OPJ is in IM1
+            }
+            instr.a.op1 = format & 7;     // op1 is part of format       
         }
         if (formatp->imm2 & 0x40) {
             // insert constant
             if (formatp->format2 == 0x155) {
                 instr.i[0] = fillerInstruction;  // filler instruction
             }
-        }
-
+        } 
         // additional fields for format E
         if (templ == 0xE) {
-            instr.a.im3 = codeBuffer[i].optionbits;
             instr.a.mode2 = format & 7;
-            instr.a.op2 = instructionlistId[instructId].op2;
-            // variant M1 has immediate operand in IM3
-            uint64_t variant = interpretTemplateVariants(instructionlistId[instructId].template_variant);  // instruction-specific variants
-            if ((variant & VARIANT_M1) && formatp->mem) instr.a.im3 = codeBuffer[i].value.w & 0x3F;
+            if (formatp->imm2 & 2) instr.a.im3 = codeBuffer[i].optionbits;
+            if (!(formatp->imm2 & 0x100)) 
+                instr.a.op2 = instructionlistId[instructId].op2;
         }
 
-        if (formatp->cat == 3 && instr.a.op1 == 0) {
+        if (formatp->category == 3 && instr.a.op1 == 0 && instr.a.op2 == 0) {
             // simplify NOP instruction. Remove all unnecessary bits
             instr.a.mask = 0;
             instr.a.ot = 0;
@@ -686,15 +737,14 @@ int64_t CAssembler::calculateMemoryOffset(SCode & code) {
     int32_t symi1 = 0, symi2 = 0;
     if (code.sym1) symi1 = findSymbol(code.sym1); // target symbol, if any
     if (code.sym2) symi2 = findSymbol(code.sym2); // reference symbol, if any
-    ElfFwcReloc relocation;                      // relocation, if needed
+    ElfFwcReloc relocation;                       // relocation, if needed
     bool needsRelocation = false;                 // relocation needed
 
-    uint8_t fieldPos = code.formatp -> addrPos;          // position of address or immediate field
-    uint8_t fieldSize = code.formatp -> addrSize;         // size of address or immediate field
+    uint8_t fieldPos = code.formatp->addrPos;          // position of address or immediate field
+    uint8_t fieldSize = code.formatp->addrSize;         // size of address or immediate field
 
     uint32_t scale = 0;                           // log2 scale factor to address, not including explicit symbol scale
-    if (code.etype & XPR_JUMPOS) scale = 2;       // jumps always scaled by 1 << 2 = 4
-    else if (fieldSize == 1) {
+    if (fieldSize == 1) {
         // scale factor determined by type
         uint32_t type = code.dtype;
         scale = type & 0xF;
@@ -705,19 +755,19 @@ int64_t CAssembler::calculateMemoryOffset(SCode & code) {
     if (symi1) {
         if (symi2) {
             // difference between two symbols
-            if (code.symscale == 0) code.symscale = 1;
+            if (code.symscale1 == 0) code.symscale1 = 1;
             if (symbols[symi1].st_section == symbols[symi2].st_section && symbols[symi1].st_bind == STB_LOCAL && symbols[symi2].st_bind == STB_LOCAL) {
                 // both symbols are local in same section. final value can be calculated
-                value = (int64_t)(symbols[symi1].st_value - symbols[symi2].st_value) / code.symscale;
-                value = (value + code.offset) >> scale;
+                value = (int64_t)(symbols[symi1].st_value - symbols[symi2].st_value) / code.symscale1;
+                value = (value + code.offset_mem) >> scale;
             }
             else {
                 // symbols are in different section or external. relocation needed
                 relocation.r_type = R_FORW_REFP;          // relative to arbitrary reference point
-                relocation.r_type |= bitScanReverse(code.symscale) + scale;  // scale factor
+                relocation.r_type |= bitScanReverse(code.symscale1) + scale;  // scale factor
                 relocation.r_sym = code.sym1;              // Symbol index
                 relocation.r_refsym = code.sym2;           // Reference symbol
-                relocation.r_addend = uint32_t(code.offset);      // Addend
+                relocation.r_addend = uint32_t(code.offset_mem);      // Addend
                 needsRelocation = true;
             }
         }
@@ -731,7 +781,7 @@ int64_t CAssembler::calculateMemoryOffset(SCode & code) {
                 relocation.r_type = R_FORW_ABS | scale;
                 relocation.r_sym = code.sym1;              // Symbol index
                 relocation.r_refsym = 0;           // Reference symbol
-                relocation.r_addend = uint32_t(code.offset);      // Addend
+                relocation.r_addend = uint32_t(code.offset_mem);      // Addend
                 needsRelocation = true;
             }
             else if (symsection > 0 && symsection < sectionHeaders.numEntries()) {  
@@ -739,37 +789,36 @@ int64_t CAssembler::calculateMemoryOffset(SCode & code) {
                 if (sectionHeaders[symsection].sh_flags & (SHF_IP | SHF_EXEC)) {
                     if (symsection == section) {
                         // symbol in same section relative to IP. calculate address
-                        code.base = 30;
-                        value = (int64_t)(symbols[symi1].st_value - (code.address + code.size * 4));
-                        value = (value + code.offset) >> scale;    // scale jump offset by 4                          
-                        // address size must be at least 2
+                        code.base = uint8_t(REG_IP >> 16);
+                        value = (int64_t)(symbols[symi1].st_value - uint64_t(code.address + code.size * 4));
+                        value = (value + code.offset_mem) >> scale;    // scale offset
                     }
                     else {
                         // local symbol in different IP section. needs relocation
-                        code.base = 30;
+                        code.base = uint8_t(REG_IP >> 16);
                         relocation.r_type = R_FORW_SELFREL;     // self-relative
-                        if (code.instruction & II_JUMP_INSTR) relocation.r_type |= R_FORW_SCALE4; // jump instruction scaled by 4
+                        //if (code.instruction & II_JUMP_INSTR) relocation.r_type |= R_FORW_SCALE4; // jump instruction scaled by 4
                         relocation.r_addend = fieldPos - code.size * 4;  // position of relocated field relative to instruction end
                         relocation.r_sym = code.sym1;          // temporary symbol index. resolve when symbol table created
                         relocation.r_refsym = 0;
-                        relocation.r_addend += (int32_t)code.offset;
+                        relocation.r_addend += (int32_t)code.offset_mem;
                         needsRelocation = true;
                     }
                 }
                 else {
-                    // relative to DATAP or TRHEADP. needs relocation
+                    // relative to DATAP or THREADP. needs relocation
                     if (sectionHeaders[symsection].sh_flags & SHF_THREADP) {
-                        code.base = (uint8_t)REG_THREADP;
+                        code.base = uint8_t(REG_THREADP >> 16);
                         relocation.r_type = R_FORW_THREADP;   // relocation relative to THREADP
                     }
                     else {
-                        code.base = (uint8_t)REG_DATAP;                    
+                        code.base = uint8_t(REG_DATAP >> 16);
                         relocation.r_type = R_FORW_DATAP;     // relocation relative to DATAP
                     }
                     relocation.r_type |= scale;         // scale factor only if 8-bit offset allowed
                     relocation.r_sym = code.sym1;       // temporary symbol index. resolve when symbol table created
                     relocation.r_refsym = 0;
-                    relocation.r_addend = uint32_t(code.offset);
+                    relocation.r_addend = uint32_t(code.offset_mem);
                     needsRelocation = true;
                 }
             }
@@ -777,26 +826,26 @@ int64_t CAssembler::calculateMemoryOffset(SCode & code) {
                 // remote symbol relative to IP or DATAP
                 if (symbols[symi1].st_other & (STV_IP | STV_EXEC)) {
                     // relative to IP
-                    code.base = (uint8_t)REG_IP;
+                    code.base = uint8_t(REG_IP >> 16);
                     relocation.r_type = R_FORW_SELFREL;
-                    if (code.instruction & II_JUMP_INSTR) relocation.r_type |= R_FORW_SCALE4;
+                    //if (code.instruction & II_JUMP_INSTR) relocation.r_type |= R_FORW_SCALE4;
                     relocation.r_addend = fieldPos - code.size * 4;  // position of relocated field relative to instruction end
                 }
                 else if (symbols[symi1].st_other & STV_THREADP) {
                     // relative to THREADP
-                    code.base = (uint8_t)REG_THREADP;
+                    code.base = uint8_t(REG_THREADP >> 16);
                     relocation.r_type = R_FORW_THREADP;
                     relocation.r_addend = 0;
                 }
                 else {
                     // relative to DATAP
-                    code.base = (uint8_t)REG_DATAP;
+                    code.base = uint8_t(REG_DATAP >> 16);
                     relocation.r_type = R_FORW_DATAP;
                     relocation.r_addend = 0;
                 }
                 relocation.r_sym = code.sym1;          // temporary symbol index. resolve when symbol table created
                 relocation.r_refsym = 0;
-                relocation.r_addend += (int32_t)code.offset;
+                relocation.r_addend += (int32_t)code.offset_mem;
                 if (code.formatp->addrSize == 1 && !(relocation.r_type & R_FORW_RELSCALEMASK)) {
                     relocation.r_type |= scale;
                 }
@@ -806,7 +855,7 @@ int64_t CAssembler::calculateMemoryOffset(SCode & code) {
     }
     else {
         // no symbol
-        value = code.offset >> scale;
+        value = code.offset_mem >> scale;
     }
 
     if (needsRelocation) {
@@ -820,49 +869,114 @@ int64_t CAssembler::calculateMemoryOffset(SCode & code) {
     return value;
 }
 
+int64_t CAssembler::calculateJumpOffset(SCode & code) {   // calculate jump offset possibly involving symbol. generate relocation if necessary
+    int64_t value = 0;
+    int32_t symi5 = 0;
+    if (code.sym5) symi5 = findSymbol(code.sym5); // target symbol, if any
+    ElfFwcReloc relocation;                      // relocation, if needed
+    bool needsRelocation = false;                 // relocation needed
+
+    uint8_t fieldSize = code.formatp->jumpSize;       // size of jump offset field
+    uint8_t fieldPos  = code.formatp->jumpPos;     // position of jump offset field
+    
+    uint32_t scale = 2;                      // jumps always scaled by 1 << 2 = 4
+
+    // check target symbol
+    if (symi5) {
+        uint32_t symsection = symbols[symi5].st_section;
+
+        if (symsection > 0 && symsection < sectionHeaders.numEntries()) {
+            // local symbol relative to IP
+            if (sectionHeaders[symsection].sh_flags & (SHF_IP | SHF_EXEC)) {
+                if (symsection == section) {
+                    // symbol in same section relative to IP. calculate address
+                    value = (int64_t)(symbols[symi5].st_value - uint64_t(code.address + code.size * 4));
+                    value = (value + code.offset_jump) >> scale;    // scale jump offset by 4                          
+                                                                   // address size must be at least 2
+                }
+                else {
+                    // local symbol in different IP section. needs relocation
+                    relocation.r_type = R_FORW_SELFREL;     // self-relative
+                    relocation.r_type |= R_FORW_SCALE4; // jump instruction scaled by 4
+                    relocation.r_addend = fieldPos - code.size * 4;  // position of relocated field relative to instruction end
+                    relocation.r_sym = code.sym5;          // temporary symbol index. resolve when symbol table created
+                    relocation.r_refsym = 0;
+                    relocation.r_addend += (int32_t)code.offset_jump;
+                    needsRelocation = true;
+                }
+            }
+        }
+        else {
+            // remote symbol relative to IP
+            relocation.r_type = R_FORW_SELFREL;
+            relocation.r_type |= R_FORW_SCALE4;
+            relocation.r_addend = fieldPos - code.size * 4;  // position of relocated field relative to instruction end
+            relocation.r_sym = code.sym5;          // temporary symbol index. resolve when symbol table created
+            relocation.r_refsym = 0;
+            relocation.r_addend += (int32_t)code.offset_jump;
+            needsRelocation = true;
+        }
+    }
+    else {
+        // no symbol
+        value = code.offset_jump >> scale;
+    }
+
+    if (needsRelocation) {
+        // relocation needed. insert source address
+        relocation.r_type |= fieldSize << 8;      // relocation size
+        relocation.r_offset = (uint64_t)code.address + fieldPos;
+        relocation.r_section = code.section;
+        value = 0;   // value included in relocation addend
+        relocations.push(relocation);  // save relocation
+    }
+    return value;
+}
+
+
 // calculate constant or immediate operand possibly involving symbol. generate relocation if necessary
 int64_t CAssembler::calculateConstantOperand(SExpression & expr, uint64_t address, uint32_t fieldSize) {
     int64_t value = 0;
-    int32_t symi1 = 0, symi2 = 0;
-    if (expr.sym1) {
-        symi1 = findSymbol(expr.sym1); // target symbol, if any
-        if (symi1 < 1) {errors.reportLine(ERR_SYMBOL_UNDEFINED);  return 0;}
+    int32_t symi3 = 0, symi4 = 0;
+    if (expr.sym3) {
+        symi3 = findSymbol(expr.sym3); // target symbol, if any
+        if (symi3 < 1) {errors.reportLine(ERR_SYMBOL_UNDEFINED);  return 0;}
     }
-    if (expr.sym2) {
-        symi2 = findSymbol(expr.sym2); // reference symbol, if any
-        if (symi2 < 1) {errors.reportLine(ERR_SYMBOL_UNDEFINED);  return 0;}
+    if (expr.sym4) {
+        symi4 = findSymbol(expr.sym4); // reference symbol, if any
+        if (symi4 < 1) {errors.reportLine(ERR_SYMBOL_UNDEFINED);  return 0;}
     }
 
     ElfFwcReloc relocation;                       // relocation, if needed
     bool needsRelocation = false;           
     // relocation needed
 
-    if (symi1) {
+    if (symi3) {
         // there is a symbol
-        if (symi2) {
+        if (symi4) {
             // difference between two symbols
-            if (symbols[symi1].st_section == symbols[symi2].st_section && symbols[symi1].st_bind == STB_LOCAL && symbols[symi2].st_bind == STB_LOCAL) {
+            if (symbols[symi3].st_section == symbols[symi4].st_section && symbols[symi3].st_bind == STB_LOCAL && symbols[symi4].st_bind == STB_LOCAL) {
                 // both symbols are local in same section. final value can be calculated
-                value = (int64_t)(symbols[symi1].st_value - symbols[symi2].st_value);
-                if (expr.symscale > 1) value /= expr.symscale;
+                value = (int64_t)(symbols[symi3].st_value - symbols[symi4].st_value);
+                if (expr.symscale1 > 1) value /= expr.symscale1;
             }
             else {
                 // symbols are in different section or external. relocation needed
                 relocation.r_type = R_FORW_REFP;          // relative to arbitrary reference point
-                if (expr.symscale > 1) relocation.r_type |= bitScanReverse(expr.symscale);  // scale factor
-                relocation.r_sym = expr.sym1;              // Symbol index
-                relocation.r_refsym = expr.sym2;           // Reference symbol
+                if (expr.symscale1 > 1) relocation.r_type |= bitScanReverse(expr.symscale1);  // scale factor
+                relocation.r_sym = expr.sym3;              // Symbol index
+                relocation.r_refsym = expr.sym4;           // Reference symbol
                 relocation.r_addend = int32_t(expr.value.w);      // Addend
                 needsRelocation = true;
             }
         }
         else {
             // single symbol
-            if (symbols[symi1].st_type & STT_CONSTANT) {
+            if (symbols[symi3].st_type & STT_CONSTANT) {
                 // symbol is an external constant
                 relocation.r_type = R_FORW_ABS;          // absolute value
-                if (expr.symscale > 1) relocation.r_type |= bitScanReverse(expr.symscale);  // scale factor
-                relocation.r_sym = expr.sym1;              // Symbol index
+                if (expr.symscale1 > 1) relocation.r_type |= bitScanReverse(expr.symscale1);  // scale factor
+                relocation.r_sym = expr.sym3;              // Symbol index
                 relocation.r_refsym = 0;           // Reference symbol
                 relocation.r_addend = int32_t(expr.value.w);      // Addend
                 needsRelocation = true;
@@ -870,14 +984,16 @@ int64_t CAssembler::calculateConstantOperand(SExpression & expr, uint64_t addres
             else if ((sectionHeaders[section].sh_flags & (SHF_WRITE | SHF_DATAP)) && fieldSize >= 4) {
                 // other symbol. absolute address allowed only in writeable data section
                 relocation.r_type = R_FORW_ABS;            // absolute value, 64 bits, no scale
-                relocation.r_sym = expr.sym1;              // Symbol index
+                relocation.r_sym = expr.sym3;              // Symbol index
                 relocation.r_refsym = 0;           // Reference symbol
-                if (expr.symscale > 1) relocation.r_type |= bitScanReverse(expr.symscale);  // scale factor
+                if (expr.symscale1 > 1) relocation.r_type |= bitScanReverse(expr.symscale1);  // scale factor
                 relocation.r_addend = int32_t(expr.value.w);      // Addend
-                if (symbols[symi1].st_section && fieldSize < 4) {
+                if (symbols[symi3].st_section && fieldSize < 4) {
                     expr.etype = XPR_ERROR;
                     value = ERR_ABS_RELOCATION;
                 }
+                // warn if absolute address
+                err.submit(ERR_ABS_RELOCATION_WARN, lines[linei].linenum, (char*)symbolNameBuffer.buf() + symbols[symi3].st_name);
                 needsRelocation = true;
             }
             else {

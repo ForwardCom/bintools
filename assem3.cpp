@@ -43,7 +43,10 @@ void CAssembler::replaceKnownNames() {
                     if ((symbols[symi].st_type & ~1) == STT_CONSTANT) {
                         // save value of meta variable in token in case it changes later
                         tokens[tok].value.u = symbols[symi].st_value;
-                        tokens[tok].vartype = symbols[symi].st_reguse1;
+                        tokens[tok].vartype = 3;
+                        if (symbols[symi].st_other & STV_FLOAT) {
+                            tokens[tok].vartype = 5;
+                        }
                     }
                 }
             }
@@ -175,7 +178,7 @@ void CAssembler::interpretMetaDefinition() {
             sym.st_name = symbolNameBuffer.putStringN((char*)buf() + tokens[tok].pos, tokens[tok].stringLength);
             symi = symbols.addUnique(sym);
             symbols[symi].st_type = 0;  // remember that symbol has no value yet
-            symbols[symi].st_section = 0xFFFFFFFF;  // remember symbol is not external. use arbitrary section
+            symbols[symi].st_section = SECTION_LOCAL_VAR;  // remember symbol is not external. use arbitrary section
             symbols[symi].st_unitsize = 8;
             symbols[symi].st_unitnum = 1;
             tokens[tok].type = TOK_SYM;  // change token type
@@ -244,7 +247,6 @@ void CAssembler::assignMetaVariable(uint32_t symi, SExpression & expr, uint32_t 
             return;
         }
     }
-
     // check if type matches
     if (typetoken == 0 || type == (tokens[typetoken].id & 0xF)) return;       // type matches
     if ((tokens[typetoken].id & 0xF) == XPR_FLT && type == XPR_INT) {
@@ -254,5 +256,6 @@ void CAssembler::assignMetaVariable(uint32_t symi, SExpression & expr, uint32_t 
         symbols[symi].st_other = STV_FLOAT;
         return;
     }
+
     errors.reportLine(ERR_WRONG_TYPE_VAR);
 }

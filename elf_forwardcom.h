@@ -1,9 +1,9 @@
 /****************************    elf_forwardcom.h    **************************
 * Author:              Agner Fog
 * Date created:        2016-06-25
-* Last modified:       2020-05-21
-* ForwardCom version:  1.10
-* Program version:     1.10
+* Last modified:       2021-05-28
+* ForwardCom version:  1.11
+* Program version:     1.11
 * Project:             ForwardCom binary tools
 * Description:         Definition of ELF file format. See below
 *
@@ -13,7 +13,7 @@
 * To do: define formats for debug information
 * To do: define access rights of executable file or device driver
 *
-* Copyright 2016-2020 GNU General Public License v. 3
+* Copyright 2016-2021 GNU General Public License v. 3
 * http://www.gnu.org/licenses/gpl.html
 *******************************************************************************
 
@@ -24,7 +24,7 @@ The latest version is stored at https://github.com/ForwardCom/bintools
 An executable file contains the following elements:
 1. ELF file header with the structure ElfFwcEhdr 
 2. Any number of program headers with the structure ElfFwcPhdr
-3. Raw data
+3. Raw data. Each section aligned by 8
 4. Any number of section headers with the structure ElfFwcShdr
    The sections can have different types as defined by sh_type, including
    code, data, symbol tables, string tables, and relocation records.
@@ -33,6 +33,19 @@ The program headers and section headers may point to the same raw data. The
 program headers are used by the loader and the section headers are used by the
 linker. An object file has the same format, but with no program headers.
 
+The program headers in an executable file must come in the following order:
+* const (ip)
+* code (ip)
+* data (datap)
+* bss (datap)
+* data (threadp)
+* bss (threadp)
+There may be any number of headers in each category.
+The raw data in an executable file must come in the same order as the headers 
+that point to them. 
+These rules are intended to simplify boot loader code in small devices.
+
+
 ForwardCom library files have the standard UNIX archive format with a sorted
 symbol table. The details are described below. Dynamic link libraries and 
 shared objects are not used in the ForwardCom system.
@@ -40,7 +53,7 @@ shared objects are not used in the ForwardCom system.
 ******************************************************************************/
 
 #ifndef ELF_FORW_H
-#define ELF_FORW_H  110    // version number
+#define ELF_FORW_H  111    // version number
 
 
 //--------------------------------------------------------------------------
@@ -287,7 +300,7 @@ struct Elf64_Sym {
     uint8_t   st_type: 4,    // Symbol type
               st_bind: 4;    // Symbol binding
     uint8_t   st_other;      // Symbol visibility
-    uint16_t  st_section;      // Section index
+    uint16_t  st_section;    // Section index
     uint64_t  st_value;      // Symbol value
     uint64_t  st_size;       // Symbol size
 };
@@ -440,8 +453,8 @@ struct ElfFwcReloc {
 // target address. 
 
 // ForwardCom relocation types
-#define R_FORW_ABS           0x000000       // Absolute address. No scale factor allowed
-#define R_FORW_SELFREL       0x010000       // Self relative. Usually scale by 4.
+#define R_FORW_ABS           0x000000       // Absolute address. Scaling is possible, but rarely used
+#define R_FORW_SELFREL       0x010000       // Self relative. Scale by 4 for code address
 #define R_FORW_IP_BASE       0x040000       // Relative to __ip_base. Any scale
 #define R_FORW_DATAP         0x050000       // Relative to __datap_base. Any scale
 #define R_FORW_THREADP       0x060000       // Relative to __threadp_base. Any scale
@@ -536,7 +549,6 @@ struct ElfFwcPhdr {
 #define NT_VERSION  1       // Contains a version string.
 
 
-
 // Note section contents.  Each entry in the note section begins with a header of a fixed form.
 
 struct Elf64_Nhdr {
@@ -561,9 +573,11 @@ struct Elf64_Nhdr {
 #define ELF_NOTE_OS_GNU           1
 #define ELF_NOTE_OS_SOLARIS2      2
 
+#define FILE_DATA_ALIGN           3  // section data must be aligned by (1 << FILE_DATA_ALIGN) in ELF file
+
 // Memory map definitions
-#define MEMORY_MAP_ALIGN          3  // align memory map entries by 1 << MEMORY_MAP_ALIGN
-#define DATA_EXTRA_SPACE      0x100  // extra space after const data section and last data section
+#define MEMORY_MAP_ALIGN          3  // align memory map entries by (1 << MEMORY_MAP_ALIGN)
+#define DATA_EXTRA_SPACE       0x10  // extra space after const data section and last data section
 
 
 //--------------------------------------------------------------------------
@@ -610,21 +624,22 @@ struct ElfFwcStacksize {
 //--------------------------------------------------------------------------
 // Masks are used for conditional execution and for setting options
 
-// Mask bits. These bits are used in instruction masks and NUMCONTR to specify various options
-#define MSK_ENABLE                    1     // the instruction is not executed if this bit is 0
-#define MSKI_OPTIONS                 18     // bit number 18-23 contain instruction-specific options
+// Mask bit numbers. These bits are used in instruction masks and NUMCONTR to specify various options
+
+#define MSK_ENABLE                    0     // the instruction is not executed if bit number 0 is 0
+#define MSKI_OPTIONS                 18     // bit number 18-23 contain instruction-specific options. currently unused
 #define MSKI_ROUNDING                10     // bit number 10-11 indicate rounding mode:
                                             // 00: round to nearest or even
                                             // 01: round down
                                             // 10: round up
                                             // 11: truncate towards zero
 #define MSKI_EXCEPTIONS               2     // bit number 2-5 enable exceptions for division by zero, overflow, underflow, inexact
-#define MSK_DIVZERO             (1 << 2)    // enable NAN exception for floating point division by zero
-#define MSK_OVERFLOW            (1 << 3)    // enable NAN exception for floating point overflow
-#define MSK_UNDERFLOW           (1 << 4)    // enable NAN exception for floating point underflow
-#define MSK_INEXACT             (1 << 5)    // enable NAN exception for floating point inexact
-#define MSK_SUBNORMAL          (1 << 13)    // enable subnormal numbers for float32 and float64
-#define MSK_CONST_TIME         (1 << 31)    // constant execution time, independent of data (for cryptographic security)
+#define MSK_DIVZERO                   2     // enable NAN exception for floating point division by zero
+#define MSK_OVERFLOW                  3     // enable NAN exception for floating point overflow
+#define MSK_UNDERFLOW                 4     // enable NAN exception for floating point underflow
+#define MSK_INEXACT                   5     // enable NAN exception for floating point inexact
+#define MSK_SUBNORMAL                13     // enable subnormal numbers for float32 and float64
+#define MSK_CONST_TIME               31     // constant execution time, independent of data (for cryptographic security)
 
 
 //--------------------------------------------------------------------------

@@ -1,14 +1,14 @@
 /****************************  disassem.h   **********************************
 * Author:        Agner Fog
 * Date created:  2017-04-26
-* Last modified: 2020-05-17
-* Version:       1.10
+* Last modified: 2021-04-11
+* Version:       1.11
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        disassem.h
 * Description:
 * Header file for disassembler
 *
-* Copyright 2006-2020 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2006-2021 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 
@@ -36,10 +36,10 @@ union STemplate {
         uint32_t mode:  3;   // Mode in all formats
         uint32_t il:    2;   // Instruction length in all formats
         uint32_t im2:  16;   // IM2 in format E
-        uint32_t ru:    5;   // Source register RU in format E
         uint32_t im3:   6;   // IM3 in format E
-        uint32_t mode2: 3;   // Mode2 in format E
         uint32_t op2:   2;   // OP2 in format E
+        uint32_t ru:    5;   // Source register RU in format E
+        uint32_t mode2: 3;   // Mode2 in format E
     } a;
     struct {
         int32_t  im2:  24;   // IM2 in format D
@@ -64,11 +64,10 @@ struct SFormatIndex {
 }; 
 
 // Record in list of formats (formatList) 
-// The size of SFormat is a power of 2 for fast table lookup
-struct SFormat {
+struct SFormat { 
     uint16_t format2;        // 0x0XYZ, where X = il, Y = mode, Z = subformat (mode2 or OP1) or variant within format
-    uint8_t  cat;            // Category: 1 = single format,  3 = multi-format, 4 = jump instruction                         
-    uint8_t  tmpl;           // Template: 0xA, 0xB, 0xC, 0xD, 0xE.
+    uint8_t  category;       // Category: 1 = single format,  3 = multi-format, 4 = jump instruction                         
+    uint8_t  tmplate;        // Template: 0xA, 0xB, 0xC, 0xD, 0xE.
 
     uint8_t  opAvail;        // Operands available: 1 = immediate, 2 = memory,
                              // 0x10 = RT, 0x20 = RS, 0x40 = RU, 0x80 = RD
@@ -77,12 +76,14 @@ struct SFormat {
                              // 0x32: int32 for even OP1, int64 for odd OP1
                              // 0x35: float for even OP1, double for odd OP1
 
-    uint8_t  addrSize;       // Size of address/offset field (bytes)
-    uint8_t  addrPos;        // Position of address/offset field (bytes)
-    uint8_t  immSize;        // Size of first immediate operand, if any (bytes)
+    uint8_t  jumpSize;       // Size of jump offset field (bytes)
+    uint8_t  jumpPos;        // Position of jump offset field (bytes)
+    uint8_t  addrSize;       // Size of address offset field (bytes)
+    uint8_t  addrPos;        // Position of address offset field (bytes)
+    uint8_t  immSize;        // Size of first immediate operand (bytes)
     uint8_t  immPos;         // Position of first immediate operand (bytes)
 
-    uint8_t  imm2;           // Size and position of second immediate operand:
+    uint16_t imm2;           // Size and position of extra immediate operands:
                              // 1 = IM2 in template C, 
                              // 2 = IM3 in template E may contain options, 
                              // 4 = IM3 is shift count for IM2 if no options, 
@@ -90,14 +91,15 @@ struct SFormat {
                              // 0x10 = IM3 in template A3 or B3, 
                              // 0x40 = has fixed values
                              // 0x80 = jump OPJ in IM1
+                             // 0x90 = jump OPJ is in high part of IM2 in format A2
                              // 0xC0 = jump with no OPJ
+                             // 0x100 = OP2 is used for immediate operand as extension of IM3
 
-    uint8_t  vect;           // 1 = vector registers used, 2 = vector length in RS, 4 = broadcast length in RS
+    uint8_t  vect;           // 1 = vector registers used, 2 = vector length in RT, 4 = broadcast length in RT
                              // 0x10 = vector registers used if M bit
 
-    uint8_t  mem;            // 1 = base in RT, 2 = base in RS, 4 = index in RS, 
+    uint8_t  mem;            // 1 (unused), 2 = base in RS, 4 = index in RT, 
                              // 0x10 = has offset, 0x20 = has limit,
-                             // 0x80 = self-relative jump address
 
     uint8_t  scale;          // 1 = offset is scaled, 2 = index is scaled by OS, 4 = scale factor is -1
     uint8_t  formatIndex;    // Bit index into format in instruction list
@@ -146,7 +148,7 @@ const int VARIANT_D1 = (1 << 1);                 // no destination, but operant 
 const int VARIANT_D2 = (1 << 2);                 // operant type ignored
 const int VARIANT_D3 = (1 << 3);                 // register RD used for other purpose
 const int VARIANT_M0 = (1 << 4);                 // memory operand destination
-const int VARIANT_M1 = (1 << 5);                 // IM3 used as extra immediate operand in E formats with a memory operand
+//const int VARIANT_M1 = (1 << 5);                 // IM3 used as extra immediate operand in E formats with a memory operand. obsolote
 const int VARIANT_R0 = (1 << 8);                 // destination is general purpose register
 const int VARIANT_R1B =       9;                 // bit index to VARIANT_R1
 const int VARIANT_R1 = (1 << VARIANT_R1B);       // first source operand is general purpose register
@@ -155,10 +157,12 @@ const int VARIANT_R3 = (1 << (VARIANT_R1B+2));   // third source operand is gene
 const int VARIANT_R123 = (VARIANT_R1|VARIANT_R2|VARIANT_R3);  // source operand is general purpose register
 const int VARIANT_D3R0 = VARIANT_D3 | VARIANT_R0; // RD is general purpose register
 const int VARIANT_RL = (1 << 12);                // RS is a general purpose register specifying length
+const int VARIANT_F0 = (1 << 14);                // can have mask register, but not fallback register
 const int VARIANT_F1 = (1 << 15);                // can have fallback register without mask register
 const int VARIANT_I2 = (1 << 16);                // immediate operand is integer
 const int VARIANT_U0 = (1 << 18);                // integer operands are unsigned
 const int VARIANT_U3 = (1 << 19);                // integer operands are unsigned if bit 3 in IM3 (format 2.4.x, 2.8.x) is set.
+//const int VARIANT_Kn = (1 << 20);                // integer operand is implicit
 const int VARIANT_On = (7 << 24);                // n IM3 bits used for options
 const int VARIANT_H0 = (1 << 28);                // half precision floating point operands
 const int VARIANT_SPECB = 32;                    // bit index to special register type
@@ -169,6 +173,8 @@ const uint64_t VARIANT_SPECD = 0x2000000000;     // Special register type for de
 
 struct SInstruction2;                            // defined below
 struct SLineRef;                                 // defined below
+
+uint8_t findFallback(SFormat const * fInstr, STemplate const * pInstr, int nOperands); // find fallback register in instruction code
 
 // class CDisassembler handles disassembly of ForwardCom ELF file
 class CDisassembler : public CELF {
@@ -226,7 +232,7 @@ protected:
     void pass1();                                // Pass 1 of disassembly. Resolves cross references and adds symbol labels
     void pass2();                                // Pass 2 of disassembly. Writes output file
     void sortSymbolsAndRelocations();            // Sort symbols and relocations by address
-    void symbolExeAddress(ElfFwcSym & sym);     // Translate symbol address from section:offset to pointerbase:address
+    void symbolExeAddress(ElfFwcSym & sym);      // Translate symbol address from section:offset to pointerbase:address
     void updateSymbols();                        // Make missing symbols for jump targets and data references
     void joinSymbolTables();                     // Join the tables: symbols and newSymbols
     void assignSymbolNames();                    // Make names for unnamed symbols
@@ -242,6 +248,7 @@ protected:
     void writeDataItems();                       // Write data to disassembly file
     void writeLabels();                          // Find and write any labels at current position
     void writeRelocationTarget(uint32_t src, uint32_t size); // Write relocation target for this source position
+    void writeJumpTarget(uint32_t src, uint32_t size); // Write jump relocation target for this source position
     void writeWarning(const char * w);           // Write warning message to output file
     void writeError(const char * w);             // Write error message to output file
     void finalErrorCheck();                      // Check for wrong entries in symbol table and relocations table
@@ -264,18 +271,20 @@ const int numInstructionColumns = 13;  // Number of columns in csv file to read.
 
 // Record structure for instruction definition
 struct SInstruction {
-    uint32_t id;                       // id number
-    uint32_t category;                 // 1: single format, 3: multiformat, 4: jump
-    uint64_t format;                   // Formats supported. See table in manual
-    uint32_t templt;                   // Format template. 0xA - 0xE, 0 for multiple templates
-    uint32_t sourceoperands;           // Number of source operands, including register, memory and immediate operands
-    uint32_t op1;                      // Operation code
-    uint32_t op2;                      // Additional operation code
+    uint64_t format;                   // Instruction format for single format instructions,
+                                       // or one bit for each allowed format for multi format instructions. See table in manual.
+    uint64_t variant;                  // Template variant 
+    uint32_t id;                       // Instruction id number
+    uint8_t  category;                 // 1: single format, 3: multiformat, 4: jump
+    uint8_t  templt;                   // Format template. 0xA - 0xE, 0 for multiple templates
+    uint8_t  sourceoperands;           // Number of source operands, including register, memory and immediate operands
+    uint8_t  op1;                      // Operation code
+    uint8_t  op2;                      // Additional operation code
+    uint8_t  opimmediate;              // Type of immediate operand for single-format instructions
+    uint32_t implicit_imm;             // Value of implicit immediate operand
     uint32_t optypesgp;                // Operand types supported for general purpose registers
     uint32_t optypesscalar;            // Operand types supported for scalars in vector registers
     uint32_t optypesvector;            // Operand types supported for vectors
-    uint32_t opimmediate;              // Type of immediate operand for single-format instructions
-    char     template_variant[8];      // Template variant
     char     name[maxINameLen+1];      // Name of instruction. Lower case
 };
 
@@ -289,7 +298,11 @@ struct SInstruction3 : public SInstruction {
 
 // Operator for sorting instructions by name. Used by assembler
 static inline bool operator < (SInstruction const & a, SInstruction const & b) {
-    return strcmp(a.name, b.name) < 0;
+#ifdef _MSC_VER     // case insensitive compare. name depends on compiler
+    return _strcmpi(a.name, b.name) < 0;
+#else
+    return strcasecmp(a.name, b.name) < 0;
+#endif
 }
 
 // Operator for sorting instructions by category, format, and operation codes. Used by disassembler
@@ -297,7 +310,7 @@ static inline bool operator < (SInstruction2 const & a, SInstruction2 const & b)
     // first sort criterion is category
     if (a.category < b.category) return true;
     if (a.category > b.category) return false;
-    // sort by format only for single-format instructions
+    // sort by format for single-format instructions
     if (a.category == 1) {
         if (a.format < b.format) return true;
         if (a.format > b.format) return false;
@@ -306,7 +319,7 @@ static inline bool operator < (SInstruction2 const & a, SInstruction2 const & b)
     if (a.op1 < b.op1) return true;
     if (a.op1 > b.op1) return false;
     // last sort criterion is op2
-    return (a.op2 < b.op2);
+    return a.op2 < b.op2;
 }
 
 // Operator for sorting instructions by id

@@ -194,7 +194,7 @@ void CFileBuffer::read(const char * filename, int ignoreError) {
     // InoreError: 0: abort on error, CMDL_FILE_IN_IF_EXISTS: ignore error, CMDL_FILE_SEARCH_PATH: search for file also in exe directory
     uint32_t status;                             // Error status
 
-    const int MAXPATHL = 1024;  //!!                 // Buffer for constructing file path
+    const int MAXPATHL = 1024;  //!                 // Buffer for constructing file path
     char name[MAXPATHL];
 #if defined (_WIN32) || defined (__WINDOWS__)
     const char slash[2] = "\\";  // path separator depends on operating system
@@ -351,7 +351,7 @@ int CFileBuffer::getFileType() {
         // Unknown file type
         int utype = get<uint32_t>(0);        
        // err.submit(ERR_UNKNOWN_FILE_TYPE, utype, fileName); 
-        err.submit(ERR_UNKNOWN_FILE_TYPE, utype, "!!"); 
+        err.submit(ERR_UNKNOWN_FILE_TYPE, utype, "!"); 
         fileType = 0;
     }
     return fileType;

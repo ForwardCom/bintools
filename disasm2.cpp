@@ -1,14 +1,14 @@
 /****************************  disasm2.cpp   ********************************
 * Author:        Agner Fog
 * Date created:  2017-04-26
-* Last modified: 2020-05-17
-* Version:       1.10
+* Last modified: 2021-07-16
+* Version:       1.11
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        disassem.h
 * Description:
 * Disassembler for ForwardCom
 *
-* Copyright 2007-2020 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2007-2021 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 #include "stdafx.h"
 
@@ -59,7 +59,7 @@ void CDisassembler::writeLabels() {
         outFile.newLine();
         currentFunction = 0; currentFunctionEnd = 0;
     }
-    bool isFunction = false;
+    //bool isFunction = false;
 
     // Make dummy symbol to search for
     ElfFwcSym currentPosition;
@@ -95,14 +95,13 @@ void CDisassembler::writeLabels() {
                 }
             }
             writeSymbolName(nextSymbol);
-
             if (symbols[nextSymbol].st_type == STT_FUNC && symbols[nextSymbol].st_bind != STB_LOCAL) {
                 // This is a function            
                 if (debugMode) {
                     outFile.put(": ");
                 }
                 else outFile.put(": function");
-                isFunction = true;
+                //isFunction = true;
                 currentFunction = nextSymbol;                  // Remember which function we are in
                 if (symbols[nextSymbol].st_unitsize) {         // Calculate end of current function
                     if (symbols[nextSymbol].st_unitnum == 0) symbols[nextSymbol].st_unitnum = 1;
@@ -110,8 +109,8 @@ void CDisassembler::writeLabels() {
                 }
                 else currentFunctionEnd = 0;                   // Function size is not known
             }
-            else { // local label        
-                ;
+            else if (codeMode & 1) { // local label        
+                outFile.put(": ");
             }
             symbols[nextSymbol].st_other |= 0x80000000;        // Remember symbol has been written
         }
@@ -119,7 +118,7 @@ void CDisassembler::writeLabels() {
     }
     if (numSymbols) {
         if (codeMode == 1) {
-            if (!isFunction) outFile.put(':'); 
+            // if (!isFunction) outFile.put(':');          // has already been written
             if (!debugMode) outFile.newLine();             // Code. Put label on separate line
         }
         else {
@@ -329,9 +328,15 @@ void CDisassembler::writeDataItems() {
             // Write data comment
             outFile.put(' '); outFile.tabulate(asmTab3);
             outFile.put(commentSeparator); outFile.put(' '); 
+
             // write address
-            if (sectionEnd + sectionAddress > 0xFFFF) outFile.putHex(uint32_t(lineBegin + sectionAddress), 2); 
-            else outFile.putHex(uint16_t(lineBegin + sectionAddress), 2);
+            uint64_t address = lineBegin + sectionAddress;
+            if (sectionHeaders[section].sh_flags & SHF_IP) {
+                // IP based section. subtract ip_base for continuity with code section
+                address -= fileHeader.e_ip_base;
+            }
+            if (sectionEnd + sectionAddress > 0xFFFF) outFile.putHex(uint32_t(address), 2); 
+            else outFile.putHex(uint16_t(address), 2);
 
             if (sectionHeaders[section].sh_type != SHT_NOBITS) { // skip data if BSS section
                 outFile.put(" _ ");
@@ -403,7 +408,7 @@ void CDisassembler::writeRelocationTarget(uint32_t src, uint32_t size) {
     relocation++;    // add 1 to avoid zero
     relocations[relocation-1].r_refsym |= 0x80000000;              // Remember relocation has been used OK
     // write scale factor if scale factor != 1 and not a jump target
-    bool writeScale = ((relocations[relocation-1].r_type & R_FORW_RELSCALEMASK) && !(fInstr && fInstr->cat == 4 && fInstr->mem & 0x80));
+    bool writeScale = relocations[relocation-1].r_type & R_FORW_RELSCALEMASK;
     if (writeScale || codeMode > 1) outFile.put('(');
     uint32_t isym = relocations[relocation-1].r_sym;
     writeSymbolName(isym);
@@ -434,20 +439,6 @@ void CDisassembler::writeRelocationTarget(uint32_t src, uint32_t size) {
     }
 
     // Check size of relocation
-    uint32_t expectedRelSize = size;                              // Expected size of relocation
-    if (fInstr) {
-        if (fInstr->addrSize) {                            // Jump instruction or memory operand
-            expectedRelSize = fInstr->addrSize;
-        }
-        else {                                             // Relocation of immediate operand
-            expectedRelSize = fInstr->immSize;
-        }
-    }
-    /*
-    else {                                                 // Not an instruction
-        expectedRelSize = dataSizeTableMax8[operandType];  // operand type not known
-    }*/
-
     if (addend > 0) {
         outFile.put('+'); outFile.putHex((uint32_t)addend);
     }
@@ -459,9 +450,57 @@ void CDisassembler::writeRelocationTarget(uint32_t src, uint32_t size) {
     // Check for errors
     if (n > 1) writeError("Overlapping relocations here");
     uint32_t relSize = relocationSizes[relocations[relocation-1].r_type >> 8 & 0x0F];
+    if (relSize < size) writeWarning("Relocation size less than data field");
+    if (relSize > size) writeError("Relocation size bigger than data field");
+}
+
+void CDisassembler::writeJumpTarget(uint32_t src, uint32_t size) {
+    // Write relocation jump target for this source position
+    // Find relocation
+    ElfFwcReloc rel;
+    rel.r_offset = src;
+    rel.r_section = section;
+    //uint32_t irel;  // index to relocation record
+    uint32_t n = relocations.findAll(&relocation, rel);
+    if (n == 0) return;
+    if (n > 1) {
+        writeWarning(n ? "Overlapping relocations" : "No relocation found here");
+        return;
+    }
+    relocation++;    // add 1 to avoid zero
+    relocations[relocation-1].r_refsym |= 0x80000000;              // Remember relocation has been used OK
+                                                                   // write scale factor if scale factor != 1 and not a jump target
+    if (codeMode > 1) outFile.put('(');
+    uint32_t isym = relocations[relocation-1].r_sym;
+    writeSymbolName(isym);
+    // Find any addend
+    int32_t expectedAddend = 0;
+    int32_t addend = relocations[relocation-1].r_addend;
+    if ((relocations[relocation-1].r_type & R_FORW_RELTYPEMASK) == R_FORW_SELFREL && fInstr) {
+        expectedAddend = fInstr->jumpPos - instrLength * 4;
+    }
+    addend -= expectedAddend;
+
+    // Check size of relocation
+    uint32_t expectedRelSize = size;                              // Expected size of relocation
+    if (fInstr) {
+        expectedRelSize = fInstr->jumpSize;
+    }
+    if (addend > 0) {
+        outFile.put('+'); outFile.putHex((uint32_t)addend);
+    }
+    else if (addend < 0) {
+        outFile.put('-'); outFile.putHex(uint32_t(-addend));
+    }
+    if (codeMode > 1) outFile.put(')');
+
+    // Check for errors
+    if (n > 1) writeError("Overlapping relocations here");
+    uint32_t relSize = relocationSizes[relocations[relocation-1].r_type >> 8 & 0x0F];
     if (relSize < expectedRelSize) writeWarning("Relocation size less than data field");
     if (relSize > expectedRelSize) writeError("Relocation size bigger than data field");
 }
+
 
 /*
 int CDisassembler::writeFillers() {
@@ -671,8 +710,14 @@ void CDisassembler::writeSectionBegin() {
     // tabulate to comment
     outFile.put(" ");  outFile.tabulate(asmTab3);
     outFile.put(commentSeparator);
+    if (codeMode == 1) {  // code section
+        outFile.put(" address/4. ");
+    }
+    else {
+        outFile.put(" address.   ");
+    }
     // Write section number
-    outFile.put(" section ");  
+    outFile.put("section ");  
     outFile.putDecimal(section);
     // Write library and module, if available
     if (sectionHeaders[section].sh_module && sectionHeaders[section].sh_module < secStringTableLen) {
@@ -709,7 +754,7 @@ void CDisassembler::writeInstruction() {
     SInstruction2 iRecSearch;
 
     iRecSearch.format = format;
-    iRecSearch.category = fInstr->cat;
+    iRecSearch.category = fInstr->category;
     iRecSearch.op1 = pInstr->a.op1;
     relocation = 0;
 
@@ -718,13 +763,16 @@ void CDisassembler::writeInstruction() {
         if (fInstr->imm2 & 0x80) {
             iRecSearch.op1 = pInstr->b[0];                 // OPJ is in IM1
             if (fInstr->imm2 & 0x40) iRecSearch.op1 = 63;  // OPJ has fixed value
+            if (fInstr->imm2 & 0x10) iRecSearch.op1 = pInstr->b[7];  // OPJ is in upper part of IM2
         }
         // Set op1 for template D
-        if (fInstr->tmpl == 0xD) iRecSearch.op1 &= 0xF8;
+        if (fInstr->tmplate == 0xD) iRecSearch.op1 &= 0xF8;
     }
 
     // Insert op2 only if template E
-    if (instrLength > 1 && fInstr->tmpl == 0xE) iRecSearch.op2 = pInstr->a.op2;
+    if (instrLength > 1 && fInstr->tmplate == 0xE && !(fInstr->imm2 & 0x100)) {
+        iRecSearch.op2 = pInstr->a.op2;
+    }
     else iRecSearch.op2 = 0;
 
     uint32_t index, n, i;
@@ -749,9 +797,26 @@ void CDisassembler::writeInstruction() {
         else { // vector register
             otFits = ((instructionlist[index + i].optypesscalar | instructionlist[index + i].optypesvector) & otMask) != 0;
         }
-        if (fInstr->cat >= 3) {
+        if (fInstr->category >= 3) {
             // Multi format or jump instruction. Check if format allowed
             formatFits = (instructionlist[index+i].format & ((uint64_t)1 << fInstr->formatIndex)) != 0;
+        }
+        if (instructionlist[index+i].opimmediate == OPI_IMPLICIT) {
+            // check if implicit operand fits
+            const uint8_t * bb = pInstr->b;
+            uint32_t x = 0; // get value of immediate operand
+            switch (fInstr->immSize) {
+            case 1:   // 8 bits
+                x = *(int8_t*)(bb + fInstr->immPos);
+                break;
+            case 2:    // 16 bits
+                x = *(int16_t*)(bb + fInstr->immPos);
+                break;
+            case 4: default:  // 32 bits
+                x = *(int32_t*)(bb + fInstr->immPos);
+                break;
+            }
+            if (instructionlist[index+i].implicit_imm != x) formatFits = false;            
         }
         if (otFits && formatFits) {
             index += i;          // match found
@@ -762,7 +827,7 @@ void CDisassembler::writeInstruction() {
         writeWarning("No instruction fits the operand type");
     }
     else if (!formatFits) {
-        writeWarning("No instruction fits the format");
+        writeWarning("Error in instruction format");
     }
     // Save pointer to record
     iRecord = &instructionlist[index];
@@ -777,10 +842,10 @@ void CDisassembler::writeInstruction() {
         operandType = i & 7;
     }
     // Get variant and options
-    variant = interpretTemplateVariants(iRecord->template_variant);
+    variant = iRecord->variant;
 
     // Write jump instruction or normal instruction
-    if (fInstr->cat == 4 && fInstr->mem & 0x80) {
+    if (fInstr->category == 4 && fInstr->jumpSize) {
         writeJumpInstruction();
     }
     else {
@@ -806,6 +871,53 @@ uint8_t getRegister(const STemplate * pInstr, int i) {
     return r;
 }
 
+uint8_t findFallback(SFormat const * fInstr, STemplate const * pInstr, int nOperands) {
+    // Find the fallback register for an instruction code.
+    // The return value is the register that is used for fallback
+    // The return value is 0xFF if the fallback is zero or there is no fallback
+    if (fInstr->tmplate != 0xA && fInstr->tmplate != 0xE) {
+        return 0xFF;                                       // cannot have fallback
+    }
+
+    uint8_t operands[6] = {0,0,0,0,0,0};                   // Make list of operands
+
+    int j = 5;
+    if (fInstr->opAvail & 0x01) operands[j--] = 1;         // immediate operand
+    if (fInstr->opAvail & 0x02) operands[j--] = 2;         // memory operand
+    if (fInstr->opAvail & 0x10) operands[j--] = 5;         // register RT
+    if (fInstr->opAvail & 0x20) operands[j--] = 6;         // register RS
+    if (fInstr->opAvail & 0x40) operands[j--] = 7;         // register RU
+    //if (fInstr->opAvail & 0x80) operands[j--] = 8;       // don't include register RD yet
+    uint8_t fallback;                                      // fallback register
+    bool fallbackSeparate = false;                         // fallback register is not first source register
+
+    if (nOperands >= 3 && j < 3) {
+        fallback = operands[3];                            // first of three source operands
+    }
+    else if (5-j-nOperands > 1) {                          // more than one vacant register field
+        fallback = operands[3];                            // first of three possible source operands
+        fallbackSeparate = true;
+    }
+    else if (5-j-nOperands == 1) {                         // one vacant register field used for fallback
+        fallback = operands[j+1];
+        fallbackSeparate = true;
+    }
+    else if (5-j-nOperands == 0) {                         // no vacant register field. RD not used for source operand
+        fallback = operands[j+1];                          // first source operand
+    }
+    else if (fInstr->opAvail & 0x80) {                     // RD is first source operand
+        fallback = 8;                                      // fallback is RD
+    }
+    else {
+        fallback = 0xFF;
+    }
+    fallback = getRegister(pInstr, fallback);              // find register in specified register field
+    if (fallback == 0x1F && fallbackSeparate) {
+        return 0xFF;                                       // fallback is zero if register 31 is specified and not also a source register
+    }
+    return fallback;
+}
+
 
 void CDisassembler::writeNormalInstruction() {
     // Write operand type
@@ -814,7 +926,7 @@ void CDisassembler::writeNormalInstruction() {
         else if (variant & VARIANT_U3 && operandType < 5) {                
             // Unsigned if option bit 5 is set. 
             // Option bit is in IM3 in E formats
-            if (fInstr->tmpl == 0xE && (pInstr->a.im3 & 0x8) && !debugMode) {
+            if (fInstr->tmplate == 0xE && (fInstr->imm2 & 2) && (pInstr->a.im3 & 0x8) && !debugMode) {
                 outFile.put('u');
             }
         }
@@ -829,7 +941,7 @@ void CDisassembler::writeNormalInstruction() {
             writeMemoryOperand();                          // Memory destination operand
         }
         else {
-            if (variant  & VARIANT_SPECD) writeSpecialRegister(pInstr->a.rd, variant >> VARIANT_SPECB);
+            if (variant & VARIANT_SPECD) writeSpecialRegister(pInstr->a.rd, variant >> VARIANT_SPECB);
             else if (fInstr->vect == 0 || (variant & VARIANT_R0)) writeGPRegister(pInstr->a.rd);
             else writeVectorRegister(pInstr->a.rd);
         }
@@ -846,45 +958,41 @@ void CDisassembler::writeNormalInstruction() {
         If one in the list is not available, go to the next
     3.  The selected operands are used as source operands in the reversed order
     */
-    int nOp = (int)iRecord->sourceoperands;                // Number of source operands
+    int nOperands = (int)iRecord->sourceoperands;                // Number of source operands
 
     // Make list of operands from available operands. 0=none, 1=immediate, 2=memory, 5=RT, 6=RS, 7=RU, 8=RD
-    uint8_t opAvail = fInstr->opAvail;                     // Bit index of available operands
-    if (fInstr->cat != 3) {                                // Single format instruction. Immediate operand determined by instruction table
+    uint8_t opAvail = fInstr->opAvail;    // Bit index of available operands
+                                          // opAvail bits: 1 = immediate, 2 = memory,
+                                          // 0x10 = RT, 0x20 = RS, 0x40 = RU, 0x80 = RD 
+    if (fInstr->category != 3) {                           // Single format instruction. Immediate operand determined by instruction table
         if (iRecord->opimmediate) opAvail |= 1;
         else opAvail &= ~1;
     }
     if (variant & VARIANT_M0) opAvail &= ~2;               // Memory operand already written as destination
 
-    if ((variant & VARIANT_M1) && fInstr->tmpl == 0xE && nOp > 1 && (opAvail & 2)) {
-        opAvail |= 1;  // VARIANT_M1 makes IM3 an immediate if there is a memory operand
-    }
+    // (simular to emulator1.cpp:)
+    // Make list of operands from available operands.
+    // The operands[] array must have 6 elements to avoid overflow here,
+    // even if some elements are later overwritten and used for other purposes
+    uint8_t operands[6] = {0,0,0,0,0,0};                   // Make list of operands
 
-    uint8_t operands[4] = {0,0,0,0};                       // Make list of operands
-    uint32_t a = 0;                                        // Index to opAvail
-    int      j = nOp - 1;                                  // Index into operands
-    uint8_t fallback;                                      // fallback register
-
-    // Loop through the bits in opAvail to pick operands according to priority
-    while (j >= 0 && a < 8) {     
-        if (opAvail & (1 << a)) {
-            opAvail &= ~(1 << a);
-            operands[j--] = a + 1;
-        }
-        a++;
-    }
-    // First source register or last remaining register used as fallback
-    if (opAvail & 0x40) fallback = 7;                      // RU
-    else if (opAvail & 0x20) fallback = 6;                 // RS
-    else if (operands[0] > 2) fallback = operands[0];      // first source register operand
-    else fallback = 0x1F;                                  // zero
+    int j = 5;
+    if (opAvail & 0x01) operands[j--] = 1;                 // immediate operand
+    if (opAvail & 0x02) operands[j--] = 2;                 // memory operand
+    if (opAvail & 0x10) operands[j--] = 5;                 // register RT
+    if (opAvail & 0x20) operands[j--] = 6;                 // register RS
+    if (opAvail & 0x40) operands[j--] = 7;                 // register RU
+    if (opAvail & 0x80) operands[j--] = 8;                 // register RD
+    operands[0] = 8;                                       // destination
 
     // Write source operands
-    if (nOp) {                                             // Skip if no source operands
+    if (nOperands) {                                   // Skip if no source operands
         outFile.put("(");
         // Loop through operands
-        for (j = 0; j < nOp; j++) {
+        int iop = 0;                                      // operand number
+        for (j = 6 - nOperands; j < 6; j++, iop++) {
             uint8_t reg = getRegister(pInstr, operands[j]);// select register
+            //uint8_t reg = operands[j];// select register
             switch (operands[j]) {
             case 1:  // Immediate operand
                 writeImmediateOperand();
@@ -892,46 +1000,55 @@ void CDisassembler::writeNormalInstruction() {
             case 2:  // Memory operand
                 writeMemoryOperand();
                 break;
-            case 6:  // RS
+            case 5:  // RT
                 if (variant & VARIANT_SPECS) writeSpecialRegister(reg, variant >> VARIANT_SPECB);
-                else if (fInstr->vect == 0 || (variant & VARIANT_RL) || ((uint32_t)variant & VARIANT_R123 & (1 << (VARIANT_R1B + j)))) writeGPRegister(reg);
+                else if (fInstr->vect == 0 || (variant & VARIANT_RL) || ((uint32_t)variant & VARIANT_R123 & (1 << (VARIANT_R1B + iop)))) writeGPRegister(reg);
                 else writeVectorRegister(reg);
                 break;
-            case 5:  // RT
+            case 6:  // RS
             case 7:  // RU
+                if (variant & VARIANT_SPECS) writeSpecialRegister(reg, variant >> VARIANT_SPECB);
+                else if (fInstr->vect == 0 || ((uint32_t)variant & VARIANT_R123 & (1 << (VARIANT_R1B + iop)))) writeGPRegister(reg);
+                else writeVectorRegister(reg);
+                break;
             case 8:  // RD
                 if (variant & VARIANT_SPECS) writeSpecialRegister(reg, variant >> VARIANT_SPECB);
-                else if (fInstr->vect == 0 || ((uint32_t)variant & VARIANT_R123 & (1 << (VARIANT_R1B + j))) || (variant & VARIANT_D3R0) == VARIANT_D3R0) {
+                else if (fInstr->vect == 0 || ((uint32_t)variant & VARIANT_R123 & (1 << (VARIANT_R1B + iop))) || (variant & VARIANT_D3R0) == VARIANT_D3R0) {
                     writeGPRegister(reg);
                 }
                 else writeVectorRegister(reg);
                 break;
             }
-            if (operands[j] && j+1 < nOp) outFile.put(", ");              // Comma if not the last operand
+            if (operands[j] && j < 5 &&
+            (iRecord->opimmediate != OPI_IMPLICIT || operands[j+1] != 1)) {
+                outFile.put(", ");              // Comma if not the last operand
+            }
         }
         // end parameter list
         outFile.put(")");    // we prefer to end the parenthesis before the mask and options
 
         // write mask register
-        if ((fInstr->tmpl == 0xA || fInstr->tmpl == 0xE) && (pInstr->a.mask != 7 || (variant & VARIANT_F1))) {
+        if ((fInstr->tmplate == 0xA || fInstr->tmplate == 0xE) && (pInstr->a.mask != 7 || (variant & VARIANT_F1))) {
             if (pInstr->a.mask != 7) {
                 outFile.put(", mask=");
                 if (fInstr->vect) writeVectorRegister(pInstr->a.mask); else writeGPRegister(pInstr->a.mask);
             }
-            // write fallback 
-            uint8_t fallbackreg = getRegister(pInstr, fallback); 
-            if ((fallbackreg & 0x1F) == 0x1F) {
-                outFile.put(", fallback=0"); 
-            }
-            else {
-                outFile.put(", fallback="); 
-                if (fInstr->vect) writeVectorRegister(fallbackreg); else writeGPRegister(fallbackreg);
+            // write fallback
+            if (!(variant & VARIANT_F0)) {
+                uint8_t fb = findFallback(fInstr, pInstr, nOperands);       // find fallback register
+                if (fb == 0xFF) {
+                    outFile.put(", fallback=0");
+                }
+                else if (!(variant & VARIANT_F1) || getRegister(pInstr, operands[6-nOperands]) != fb)  {
+                    outFile.put(", fallback=");
+                    if (fInstr->vect) writeVectorRegister(fb & 0x1F); else writeGPRegister(fb & 0x1F);
+                }
             }
         }
         // write options = IM3, if IM3 is used and not already written by writeImmediateOperand
         if ((variant & VARIANT_On) && (fInstr->imm2 & 2) 
-        && (fInstr->cat == 3 || (iRecord->opimmediate != 0 && iRecord->opimmediate != OPI_INT886))
-        && !((variant & VARIANT_M1) && (fInstr->opAvail & 2))) {
+        && (fInstr->category == 3 || (iRecord->opimmediate != 0 && iRecord->opimmediate != OPI_INT886))
+            ) {
             outFile.put(", options="); 
             outFile.putHex(pInstr->a.im3); 
         }
@@ -973,17 +1090,29 @@ void CDisassembler::writeJumpInstruction(){
 
         // Write arithmetic operands
         if (iRecord->sourceoperands > 2) {
-            uint32_t r1 = pInstr->a.rd;                              // First source operand
-            if ((fInstr->opAvail & 0x21) == 0x21) r1 = pInstr->a.rs; // Two registers and an immediate operand        
-            writeRegister(r1, operandType);                          // Write operand
-            outFile.put(", ");
-
-            // Second source operand
-            if (fInstr->opAvail & 1) {
-                writeImmediateOperand();
+            if ((fInstr->opAvail & 0x30) == 0x30) {  // RS and RT
+                writeRegister(pInstr->a.rs, operandType); outFile.put(", ");
+                writeRegister(pInstr->a.rt, operandType);             
             }
             else {
-                writeRegister(pInstr->a.rs, operandType);
+                uint32_t r1 = pInstr->a.rd;                              // First source operand
+                if ((fInstr->opAvail & 0x21) == 0x21) r1 = pInstr->a.rs; // Two registers and an immediate operand        
+                writeRegister(r1, operandType);                          // Write operand
+                outFile.put(", ");
+
+                // Second source operand
+                if (fInstr->opAvail & 2) {
+                    writeMemoryOperand();
+                    if (fInstr->opAvail & 1) {
+                        outFile.put(", "); writeImmediateOperand();
+                    }
+                }
+                else if (fInstr->opAvail & 1) {
+                    writeImmediateOperand();
+                }
+                else {
+                    writeRegister(pInstr->a.rs, operandType);
+                }
             }
         }
         else {
@@ -999,7 +1128,7 @@ void CDisassembler::writeJumpInstruction(){
 
     // Write jump target
     outFile.put(' ');
-    writeRelocationTarget(iInstr + fInstr->addrPos, fInstr->addrSize);
+    writeJumpTarget(iInstr + fInstr->jumpPos, fInstr->jumpSize);
 }
 
 void CDisassembler::writeCodeComment() {
@@ -1025,12 +1154,14 @@ void CDisassembler::writeCodeComment() {
         outFile.put(" | ");
     }
 
-    if (fInstr->tmpl == 0xE && instrLength > 1) {                       // format E
+    if (fInstr->tmplate == 0xE && instrLength > 1) {                       // format E
         // Write format_template op1.op2 ot rd.rs.rt.ru mask IM2 IM3
         outFile.putHex((format >> 8) & 0xF, 0); outFile.putHex(uint8_t(format), 2); outFile.put('_'); // format
-        outFile.putHex(fInstr->tmpl, 0); outFile.put(' '); 
+        outFile.putHex(uint8_t(fInstr->tmplate), 0); outFile.put(' '); 
         outFile.putHex(uint8_t(pInstr->a.op1), 2); outFile.put('.'); // op1.op2
-        outFile.putHex(uint8_t(pInstr->a.op2), 0); outFile.put(' '); 
+        if (!(fInstr->imm2 & 0x100)) {
+            outFile.putHex(uint8_t(pInstr->a.op2), 0); outFile.put(' '); 
+        }
         outFile.putHex(operandType, 0); outFile.put(' ');
         outFile.putHex(uint8_t(pInstr->a.rd), 2);  outFile.put('.'); // registers rd,rs,rt,ru
         outFile.putHex(uint8_t(pInstr->a.rs), 2);  outFile.put('.');
@@ -1046,19 +1177,19 @@ void CDisassembler::writeCodeComment() {
             outFile.putHex(pInstr->i[2], 2);                 // IM4
         }
     }
-    else if (fInstr->tmpl == 0xD) {
+    else if (fInstr->tmplate == 0xD) {
         // Write format_template op1 data
         outFile.putHex((format >> 8) & 0xF, 0); outFile.putHex(uint8_t(format), 2); outFile.put('_');
-        outFile.putHex(fInstr->tmpl, 0); outFile.put(' ');
+        outFile.putHex(uint8_t(fInstr->tmplate), 0); outFile.put(' ');
         outFile.putHex(uint8_t(pInstr->a.op1), 2); outFile.put(' ');
         outFile.putHex(uint32_t(pInstr->d.im2 & 0xFFFFFF), 0);
     }
     else {
         // Write format_template op1 ot rd.rs.rt mask
         outFile.putHex((format >> 8) & 0xF, 0); outFile.putHex(uint8_t(format), 2); outFile.put('_');
-        outFile.putHex(fInstr->tmpl, 0); outFile.put(' ');
+        outFile.putHex(uint8_t(fInstr->tmplate), 0); outFile.put(' ');
         outFile.putHex(uint8_t(pInstr->a.op1), 2); outFile.put(' ');
-        if (fInstr->tmpl == 0xC) {                           // Format C has 16 bit immediate
+        if (fInstr->tmplate == 0xC) {                           // Format C has 16 bit immediate
             outFile.putHex(uint8_t(pInstr->a.rd), 2); outFile.put(' ');
             outFile.putHex(pInstr->s[0], 2);
         }
@@ -1066,7 +1197,7 @@ void CDisassembler::writeCodeComment() {
             outFile.putHex(operandType, 0); outFile.put(' ');
             outFile.putHex(uint8_t(pInstr->a.rd), 2); outFile.put('.');
             outFile.putHex(uint8_t(pInstr->a.rs), 2);
-            if (fInstr->tmpl == 0xB) {                       // Format B has 8 bit immediate
+            if (fInstr->tmplate == 0xB) {                       // Format B has 8 bit immediate
                 outFile.put(' '); outFile.putHex(pInstr->b[0], 2);
             }
             else {                                             // format A or E
@@ -1165,6 +1296,7 @@ void CDisassembler::writeMemoryOperand() {
         return;
     }
     int itemsWritten = 0;                 // items inside []
+    bool symbolFound = false;             // address corresponds to symbol
 
     // Check if there is a relocation here
     relocation = 0;  // index to relocation record
@@ -1177,31 +1309,85 @@ void CDisassembler::writeMemoryOperand() {
     }
     // Enclose in square bracket
     outFile.put('[');
+    uint32_t baseP = pInstr->a.rs;       // Base pointer is RS
 
-    if ((fInstr->mem & 0x10) && relocation) {   // has relocated symbol
-        writeRelocationTarget(iInstr + fInstr->addrPos, fInstr->addrSize);
-        itemsWritten++;
-    }
+    if (fInstr->mem & 0x10) {   // has relocated symbol
+        if (relocation) {        
+            writeRelocationTarget(iInstr + fInstr->addrPos, fInstr->addrSize);
+            itemsWritten++;
+        }
+        else if (isExecutable) {
+            // executable file has no relocation record. Find nearest symbol
+            ElfFwcSym needle;  // symbol address to search for
+            needle.st_section = 0;
+            needle.st_value = 0;
+            if (fInstr->addrSize > 1 && baseP >= 28 && baseP <= 30) {
+                needle.st_section = 31 - baseP; // 1: IP, 2: datap, 3: threadp
 
-    uint32_t baseP = pInstr->a.rt;       // Base pointer is RT or RS
-    if (fInstr->mem & 2) baseP = pInstr->a.rs;
-    if (fInstr->addrSize > 1 && baseP >= 28) {  // Special pointers used if at least 16 bit offset
-        if (baseP == 31 || !relocation) {  // Do not write base pointer if implicit in relocated symbol
-            if (itemsWritten) outFile.put('+');
-            outFile.put(baseRegisterNames[baseP - 28]);  itemsWritten++;
+                int64_t offset = 0;
+                switch (fInstr->addrSize) {  // Read offset of correct size
+                case 2:
+                    offset = *(int16_t*)(sectionBuffer + iInstr + fInstr->addrPos);
+                    break;
+                case 4:
+                    offset = *(int32_t*)(sectionBuffer + iInstr + fInstr->addrPos);
+                    break;
+                }
+                switch (baseP) {
+                case 28: // threadp
+                    offset += fileHeader.e_threadp_base;
+                    break;
+
+                case 29: // datap
+                    offset += fileHeader.e_datap_base;
+                    break;
+
+                case 30: // ip, self-relative
+                    offset += sectionAddress + int64_t(iInstr) + instrLength * 4;
+                    break;
+                }
+                needle.st_value = offset;     // Symbol position
+                int32_t isym = symbols.findFirst(needle);
+                if (isym >= 0) {   // symbol found at target address
+                    writeSymbolName(isym);
+                    symbolFound = true; itemsWritten++;
+                }
+                else { // find nearest preceding symbol
+                    isym &= 0x7FFFFFFF;  // remove not-found bit
+                    if (uint32_t(isym) < symbols.numEntries()) {  // near symbol found                    
+                        if (isym > 0 && symbols[isym-1].st_section == needle.st_section) {
+                            isym--;  // use nearest preceding symbol if in same section
+                        }
+                        if (symbols[isym].st_section == needle.st_section) { // write nearest symbol
+                            writeSymbolName(isym);  outFile.put('+');
+                            outFile.putHex((uint32_t)(offset - symbols[isym].st_value), 1); // write offset relative to symbol
+                            symbolFound = true;  itemsWritten++;
+                        }
+                    }
+                }
+            }
         }
     }
-    else {
-        if (itemsWritten) outFile.put('+');
-        writeGPRegister(baseP);  itemsWritten++;
+    if (!symbolFound) {
+        if (fInstr->addrSize > 1 && baseP >= 28 && !(fInstr->mem & 0x20)) {  // Special pointers used if at least 16 bit offset
+            if (baseP == 31 || !relocation) {  // Do not write base pointer if implicit in relocated symbol
+                if (itemsWritten) outFile.put('+');
+                outFile.put(baseRegisterNames[baseP - 28]);  itemsWritten++;
+            }
+        }
+        else {
+            if (itemsWritten) outFile.put('+');
+            writeGPRegister(baseP);  itemsWritten++;
+        }
     }
-    if ((fInstr->mem & 4) && pInstr->a.rs != 31) { // Has index in RS
+
+    if ((fInstr->mem & 4) && pInstr->a.rt != 31) { // Has index in RT
         if (fInstr->scale & 4) { // Negative index
-            outFile.put('-');  writeGPRegister(pInstr->a.rs);
+            outFile.put('-');  writeGPRegister(pInstr->a.rt);
         }
         else {  // Positive, scaled index
             if (itemsWritten) outFile.put('+');
-            writeGPRegister(pInstr->a.rs);
+            writeGPRegister(pInstr->a.rt);
             if ((fInstr->scale & 2) && operandType > 0) { // Index is scaled
                 outFile.put('*');
                 outFile.putDecimal(dataSizeTable[operandType & 7]);
@@ -1210,7 +1396,7 @@ void CDisassembler::writeMemoryOperand() {
         itemsWritten++;
     }
     if (fInstr->mem & 0x10) { // Has offset
-        if (relocation) {   // has relocated symbol
+        if (relocation || symbolFound) {   // has relocated symbol
             // has been written above
             //writeRelocationTarget(iInstr + fInstr->addrPos, fInstr->addrSize);
         }
@@ -1251,15 +1437,15 @@ void CDisassembler::writeMemoryOperand() {
             outFile.putHex(*(uint16_t*)(sectionBuffer + iInstr + fInstr->addrPos));
         }
     }
-    if ((fInstr->vect & 2) && pInstr->a.rs != 31) {  // Has vector length
+    if ((fInstr->vect & 2) && pInstr->a.rt != 31) {  // Has vector length
         outFile.put(", length=");
-        writeGPRegister(pInstr->a.rs);
+        writeGPRegister(pInstr->a.rt);
     }
-    else if ((fInstr->vect & 4) && pInstr->a.rs != 31) {  // Has broadcast
+    else if ((fInstr->vect & 4) && pInstr->a.rt != 31) {  // Has broadcast
         outFile.put(", broadcast=");
-        writeGPRegister(pInstr->a.rs);
+        writeGPRegister(pInstr->a.rt);
     }
-    else if (fInstr->vect) {  //  Scalar
+    else if (fInstr->vect & 7 || ((fInstr->vect & 0x10) && (pInstr->a.ot & 4))) {  //  Scalar
         outFile.put(", scalar");        
     }
 
@@ -1281,11 +1467,11 @@ void CDisassembler::writeImmediateOperand() {
     }
     // Value is not relocated
     
-    if ((variant & VARIANT_M1) && fInstr->tmpl == 0xE && (fInstr->opAvail & 2)) {
+    /*if ((variant & VARIANT_M1) && (fInstr->tmplate) == 0xE && (fInstr->opAvail & 2)) {
         // VARIANT_M1: immediate operand is in IM3
         outFile.putDecimal(pInstr->a.im3);
         return;
-    }
+    } */
     const uint8_t * bb = pInstr->b;  // use this for avoiding pedantic warnings from Gnu compiler when type casting
     if (operandType == 1 && (variant & VARIANT_H0)) operandType = 8;  // half precision float
     if (operandType < 5 || iRecord->opimmediate || (variant & VARIANT_I2)) { 
@@ -1309,7 +1495,7 @@ void CDisassembler::writeImmediateOperand() {
             x = *(int64_t*)(bb + fInstr->immPos);
             break;
         case 0:
-            if (fInstr->tmpl == 0xE) {
+            if (fInstr->tmplate == 0xE) {
                 x = (pInstr->s[2]);
             }
             break;
@@ -1321,7 +1507,7 @@ void CDisassembler::writeImmediateOperand() {
         switch (iRecord->opimmediate) {
         case 0:   // No form specified
         case OPI_OT:  // same as operand type
-            if (fInstr->cat == 1 && iRecord->opimmediate == 0 && x != 0) instructionWarning |= 2; // Immediate field not used in this instruction. Write nothing
+            if (fInstr->category == 1 && iRecord->opimmediate == 0 && x != 0) instructionWarning |= 2; // Immediate field not used in this instruction. Write nothing
             switch (fInstr->immSize) {  // Output as hexadecimal
             case 1:  
                 if (operandType > 0) outFile.putDecimal((int32_t)x, 1);  // sign extend to larger size
@@ -1363,7 +1549,8 @@ void CDisassembler::writeImmediateOperand() {
                 break;
             case 8:
                 if (operandType == 6) outFile.putFloat(*(double*)(bb + fInstr->immPos));
-                else outFile.putHex(uint64_t(x), 1);  break;
+                else outFile.putHex(uint64_t(x), 1);  
+                break;
             }
             break;
         case OPI_INT8:
@@ -1437,6 +1624,12 @@ void CDisassembler::writeImmediateOperand() {
         case OPI_FLOAT16:                     // Half precision float
             outFile.putFloat(half2float(uint16_t(x)));
             break;
+        case OPI_IMPLICIT:
+            if (x != iRecord->implicit_imm) { // Does not match implicit value. Make value explicit
+                if (iRecord->sourceoperands > 1) outFile.put(", ");
+                outFile.putHex(uint8_t(x), 1);
+            }
+            break;
         default:
             writeWarning("Unknown immediate operand type");
         }        
@@ -1491,18 +1684,29 @@ void CDisassembler::writeVectorRegister(uint32_t v) {
     outFile.put("v");  outFile.putDecimal(v);
 }
 
-static const char * specialRegNames[8] = {"?", "spec", "capab", "perf", "sys", "?", "?", "?"};
+// Special register types according to Xn and Yn in 'variant' field in instruction list
+static const char * specialRegNamesPrefix[8] = {"?", "spec", "capab", "perf", "sys", "?", "?", "?"};
 static const char * pointerRegNames[4] = {"threadp", "datap", "ip", "sp"};
+static const char * specialRegNames[] = {"numcontr", "threadp", "datap", "?", "?", "?"};
 void CDisassembler::writeSpecialRegister(uint32_t r, uint32_t type) {
     // Write name of other type of register
     if ((type & 0xF) == 0) {
         // May be special pointer
-        if (r < 28) writeGPRegister(r);
-        else outFile.put(pointerRegNames[(r-28) & 3]);
-        return;
+        if (r < 28) {
+            writeGPRegister(r);
+        }
+        else {
+            outFile.put(pointerRegNames[(r-28) & 3]);
+        }
     }
-    outFile.put(specialRegNames[type & 7]);
-    outFile.putDecimal(r);
+    else if ((type & 0xF) == 1 && r <= 2) {
+        // special registers with unique names
+        outFile.put(specialRegNames[r]);
+    }
+    else {    
+        outFile.put(specialRegNamesPrefix[type & 7]);    
+        outFile.putDecimal(r);
+    }
 }
 
 
@@ -1581,14 +1785,16 @@ void CDisassembler::finalErrorCheck() {
 }
 
 void CDisassembler::writeAddress() {
-    // write code address >> 2
-    if (sectionEnd + sectionAddress > 0xFFFF * 4) {
+    // write code address >> 2. Subtract ip_base to put code section at address 0
+    uint64_t address = (iInstr + sectionAddress - fileHeader.e_ip_base) >> 2;
+
+    if (fileHeader.e_ip_base + sectionEnd + sectionAddress > 0xFFFF * 4) {
         // Write 32 bit address
-        outFile.putHex((iInstr + sectionAddress) >> 2, 2);
+        outFile.putHex(uint32_t(address), 2);
     }
     else {
         // Write 16 bit address
-        outFile.putHex((uint16_t)((iInstr + sectionAddress) >> 2), 2);
+        outFile.putHex(uint16_t(address), 2);
     }
     if (debugMode) outFile.put(" ");
     else outFile.put(" _ ");    // Space after address

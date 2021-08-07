@@ -1,14 +1,14 @@
 /****************************  cmdline.cpp  **********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2020-05-12
-* Version:       1.10
+* Last modified: 2021-04-25
+* Version:       1.11
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
 * This module is for interpretation of command line options
 * Also contains symbol change function
 *
-* Copyright 2017-2020 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2021 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 #include "stdafx.h"
@@ -268,7 +268,7 @@ void CCommandLineInterpreter::interpretCommandOption(char * string) {
         break;
 
 
-    case 'd':   // datasize, disassemble or dump option
+    case 'd':   // disassemble, dump, debug or datasize option
         if (strncasecmp_(string, "dis", 3) == 0) {
             if (job) err.submit(ERR_MULTIPLE_COMMANDS, string);     // More than one job specified
             job = CMDL_JOB_DIS;
@@ -283,6 +283,11 @@ void CCommandLineInterpreter::interpretCommandOption(char * string) {
             interpretDataSizeOption(string+8);
             break;
         }
+        if (strncasecmp_(string, "debug", 5) == 0) {
+            interpretDebugOption(string+5);
+            break;
+        } 
+
         err.submit(ERR_UNKNOWN_OPTION, string);     // Unknown option
         break;
 
@@ -375,7 +380,9 @@ void CCommandLineInterpreter::interpretDumpOption(char * string) {
     }
     char * s1 = string;
     while (*s1) {
-        switch (*(s1++)) {
+        switch (*(s1++) | 0x20) {
+        case 'l':   // dump link map
+            dumpOptions |= DUMP_LINKMAP;  break;
         case 'f':   // dump file header
             dumpOptions |= DUMP_FILEHDR;  break;
         case 'h':   // dump section headers
@@ -529,7 +536,12 @@ void CCommandLineInterpreter::interpretLinkOption(char * string) {
         if (string[1] > ' ') verbose = atoi(string+1);
         return;
 
-    case 'm':      // Explicitly add specified module from previously specified library
+    case 'm':
+        if (strncasecmp_(string, "map=", 4) == 0) { // map option
+            outputListFile = fileNameBuffer.pushString(string+4);
+            return;
+        } 
+        // Explicitly add specified module from previously specified library
         linkmode = CMDL_LINK_ADDLIBMODULE;
         linkOptions = CMDL_LINK_ADDLIBMODULE | (linkOptions & CMDL_LINK_RELINKABLE);
         break;
@@ -568,9 +580,17 @@ void CCommandLineInterpreter::interpretLinkOption(char * string) {
             interpretHeapOption(string+5);
             return;
         }
+        else if (strncasecmp_(string, "hex", 3) == 0) {
+            interpretHexfileOption(string+3);
+            return;
+        }
         break;
 
     case 'd':
+        if (strncasecmp_(string, "debug", 5) == 0) {
+            interpretDebugOption(string+5);
+            return;
+        }            
         if (strncasecmp_(string, "dynlink=", 8) == 0) {
             interpretDynlinkOption(string+8);  // space for dynamic linking
             return;
@@ -646,6 +666,15 @@ void CCommandLineInterpreter::interpretHeapOption(char * string) {
     lcommands.push(linkcmd);
 }
 
+void CCommandLineInterpreter::interpretHexfileOption(char * string) {
+    // Interpret hexfile option for linker
+    cmd.outputType = FILETYPE_FWC_HEX;
+    uint32_t e;              // return code from interpretNumber
+    cmd.maxLines = (uint32_t)interpretNumber(string, 32, &e);   // get first number = call stack size
+    if (e) {err.submit(ERR_UNKNOWN_OPTION, string);  return;}
+}
+
+
 void CCommandLineInterpreter::interpretDynlinkOption(char * string) {
 // Interpret dynamic link size option for linker
 // dynlink=number1,number2,number3
@@ -709,6 +738,17 @@ void CCommandLineInterpreter::interpretDataSizeOption(char * string) {
     if (error) err.submit(ERR_UNKNOWN_OPTION, string);
 }
 
+void CCommandLineInterpreter::interpretDebugOption(char * string) {
+    // Interpret debug option from command line
+    uint32_t error = 0;
+    if (string[0] == 0) {
+        debugOptions = 1;
+        return;
+    }
+    debugOptions = (uint32_t)interpretNumber(string+1, 99, &error);
+    if (error) err.submit(ERR_UNKNOWN_OPTION, string);
+}
+
 void CCommandLineInterpreter::interpretErrorOption(char * string) {
     // Interpret warning/error option from command line
     if (strlen(string) < 3) {
@@ -768,7 +808,7 @@ void CCommandLineInterpreter::reportStatistics() {
 
 void CCommandLineInterpreter::checkExtractSuccess() {
     // Check if library members to extract were found
-    //!!
+    //!
 }
 
 
@@ -814,6 +854,8 @@ uint32_t CCommandLineInterpreter::setFileNameExtension(uint32_t fn, int filetype
         defaultExtension = ".ex"; break;
     case FILETYPE_FWC_LIB:
         defaultExtension = ".li"; break;
+    case FILETYPE_FWC_HEX:
+        defaultExtension = ".hex"; break;
     default:
         defaultExtension = ".txt";
     }
@@ -832,8 +874,8 @@ const char * CCommandLineInterpreter::getFilename(uint32_t n) {
 
 void CCommandLineInterpreter::help() {
     // Print help message
-    printf("\nBinary tools version %i.%02i beta for ForwardCom instruction set.", FORWARDCOM_VERSION, FORWARDCOM_SUBVERSION);
-    printf("\nCopyright (c) 2020 by Agner Fog. Gnu General Public License.");
+    printf("\nBinary tools version %i.%02i for ForwardCom instruction set.", FORWARDCOM_VERSION, FORWARDCOM_SUBVERSION);
+    printf("\nCopyright (c) 2021 by Agner Fog. Gnu General Public License.");
     printf("\n\nUsage: forw command [options] inputfile [outputfile] [options]");
     printf("\n\nCommand:");
     printf("\n-ass       Assemble\n");
@@ -862,7 +904,8 @@ void CCommandLineInterpreter::help() {
     printf("\n\nExample:");
     printf("\nforw -ass test.as test.ob");
     printf("\nforw -link test.ex test.ob libc.li");
-    printf("\nforw -emu test.ex -list=debugout.txt\n\n");
+    printf("\nforw -emu test.ex -list=debugout.txt");
+    printf("\n\nSee the manual for more options.\n");
 }
 
 // compare strings, ignore case for a-z

@@ -1,13 +1,13 @@
 /****************************  emulator1.cpp  ********************************
 * Author:        Agner Fog
 * date created:  2018-02-18
-* Last modified: 2020-05-17
-* Version:       1.10
+* Last modified: 2021-07-14
+* Version:       1.11
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
 * Basic functionality of the emulator
 *
-* Copyright 2018-2020 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2018-2021 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 #include "stdafx.h"
@@ -235,37 +235,37 @@ void CEmulator::relocate() {
             if (targetAddress >= memsize) {
                 err.submit(ERR_ELF_INDEX_RANGE);  continue;
             }
-            // scale (this is probably never used, but allowed in theory)
+            // scale (scaling of absolute addresses is rarely used, but allowed)
             targetAddress >>= (relocations[r].r_type & R_FORW_RELSCALEMASK);
             // insert relocation of desired size
             switch (relocations[r].r_type & R_FORW_RELSIZEMASK) {
             case R_FORW_8:     // 8  bit relocation size
                 if (targetAddress >> 8) goto OVERFLW;
-                *(memory + targetAddress) = int8_t(targetAddress);
+                *(memory + sourceAddress) = int8_t(targetAddress);
                 break;
             case R_FORW_16:    // 16 bit relocation size
                 if (targetAddress >> 16) goto OVERFLW;
-                *(uint16_t*)(memory + targetAddress) = uint16_t(targetAddress);
+                *(uint16_t*)(memory + sourceAddress) = uint16_t(targetAddress);
                 break;
             case R_FORW_32:    // 32 bit relocation size
                 if (targetAddress >> 32) goto OVERFLW;
-                *(uint32_t*)(memory + targetAddress) = uint32_t(targetAddress);
+                *(uint32_t*)(memory + sourceAddress) = uint32_t(targetAddress);
                 break;
             case R_FORW_32LO:  // Low  16 of 32 bits relocation
-                *(uint16_t*)(memory + targetAddress) = uint16_t(targetAddress);
+                *(uint16_t*)(memory + sourceAddress) = uint16_t(targetAddress);
                 break;
             case R_FORW_32HI:  // High 16 of 32 bits relocation
                 if (targetAddress >> 32) goto OVERFLW;
-                *(uint16_t*)(memory + targetAddress) = uint16_t(targetAddress >> 16);
+                *(uint16_t*)(memory + sourceAddress) = uint16_t(targetAddress >> 16);
                 break;
             case R_FORW_64:    // 64 bit relocation size
-                *(uint64_t*)(memory + targetAddress) = uint64_t(targetAddress);
+                *(uint64_t*)(memory + sourceAddress) = uint64_t(targetAddress);
                 break;
             case R_FORW_64LO:  // Low  32 of 64 bits relocation
-                *(uint32_t*)(memory + targetAddress) = uint32_t(targetAddress);
+                *(uint32_t*)(memory + sourceAddress) = uint32_t(targetAddress);
                 break;
             case R_FORW_64HI:  // High 32 of 64 bits relocation
-                *(uint32_t*)(memory + targetAddress) = uint32_t(targetAddress >> 32);
+                *(uint32_t*)(memory + sourceAddress) = uint32_t(targetAddress >> 32);
                 break;
             default:
             OVERFLW:
@@ -303,8 +303,8 @@ void CEmulator::disassemble() {              // make disassembly listing for deb
 
 // constructor
 CThread::CThread() {
-    numContr = 1 | MSK_SUBNORMAL;                          // default numContr. Bit 0 must be 1;
-    enableSubnormals (numContr & MSK_SUBNORMAL);           // enable or disable subnormal numbers
+    numContr = 1 | (1<<MSK_SUBNORMAL);                          // default numContr. Bit 0 must be 1;
+    enableSubnormals (numContr & (1<<MSK_SUBNORMAL));           // enable or disable subnormal numbers
     lastMask = numContr;
     ninstructions = 0;
     mapIndex1 = mapIndex2 = mapIndex3 = 0;                 // indexes into memory map
@@ -331,13 +331,23 @@ void CThread::setRegisters(CEmulator * emulator) {
     threadp = emulator->threadp0 + emulator->fileHeader.e_threadp_base; // base pointer for thread-local data
     ip = entry_point = emulator->fileHeader.e_entry + ip0; // start value of instruction pointer
     MaxVectorLength = emulator->MaxVectorLength;
-    tempBuffer = new int8_t[MaxVectorLength];              // temporary buffer for vector operands
+    tempBuffer = new int8_t[MaxVectorLength * 2];          // temporary buffer for vector operands
     memset(registers, 0, sizeof(registers));               // clear all registers
     memset(vectorLength, 0, sizeof(vectorLength));
     vectors.setDataSize(32*MaxVectorLength);
     registers[31] = emulator->stackp;                      // stack pointer
-    // to do: add thread number to list file name if multiple threads!
-    listFileName = cmd.outputListFile;                     // name for output list file
+    memset(perfCounters, 0, sizeof(perfCounters));         // reset performance counters
+    // initialize capability registers
+    memset(capabilyReg, 0, sizeof(capabilyReg));           // reset capability registers
+    capabilyReg[0] = 'E';                                  // brand ID. E = emulator
+    capabilyReg[1] = FORWARDCOM_VERSION * 0x10000 + FORWARDCOM_SUBVERSION * 0x100; // ForwardCom version
+    capabilyReg[8] = 0b1111;                               // support for operand sizes in g.p. registers
+    capabilyReg[9] = 0b101101111;                          // support for operand sizes in vector registers
+    capabilyReg[12] = MaxVectorLength;                     // maximum vector length
+    capabilyReg[13] = MaxVectorLength;                     // maximum vector length for permute
+    capabilyReg[14] = MaxVectorLength;                     // maximum block size for permute??
+    capabilyReg[15] = MaxVectorLength;                     // maximum vector length compress_sparse and expand_sparse    
+    listFileName = cmd.outputListFile;                     // name for output list file. to do: add thread number to list file name if multiple threads
 }
 
 // start running
@@ -395,37 +405,46 @@ void CThread::decode() {
 
     // Get submode
     switch (format) {
-    case 0x200: case 0x220:  // submode in mode2
+    case 0x200: case 0x220: case 0x300: case 0x320:        // submode in mode2
         format += pInstr->a.mode2;
         break;
-    case 0x250: case 0x310:  // Submode for jump instructions etc.
+    case 0x250: case 0x310:                                // Submode for jump instructions etc.
         if (op < 8) {
-            format += op;  
-            if (format == 0x254) op = 63;                  // format 254 has no OPJ
-            else op = pInstr->b[0] & 0x3F;
+            format += op;                                  // op1 defines sub-format
+            op = pInstr->b[0] & 0x3F;                      // OPJ is in IM1 (other positions for opj fixed below
         }
         else {
             format += 8;
         }
         break;
     }
-
     // Look up format details (lookupFormat() is in emulator2.cpp)
     fInstr = &formatList[lookupFormat(pInstr->q)];
     format = fInstr->format2;                              // Include subformat depending on op1
-    if (fInstr->tmpl == 0xE && pInstr->a.op2) {
-        // Single format instruction if op2 != 0 in E template
+
+    if (fInstr->imm2 & 0x80) {                             // alternative position of opj
+        if (fInstr->imm2 & 0x40) {                         // no opj
+            op = 63;
+        }
+        else if (fInstr->imm2 & 0x10) {
+            op = pInstr->b[7] & 0x3F;                      // OPJ is in high part of IM2 in format A2
+        }
+    }
+    if (fInstr->tmplate == 0xE && pInstr->a.op2 && !(fInstr->imm2 & 0x100)) {
+        // Single format instruction if op2 != 0 in E template and op2 not used as immediate operand
         static SFormat form;                               // don't initialize static object.
         form = *fInstr;                                    // copy format record
-        form.cat = 1;                                      // change category
+        form.category = 1;                                 // change category
         fInstr = &form;                                    // point to static object
+        // operand tables for single-format instructions
         if (format == 0x207 && pInstr->a.op2 == 1) nOperands = numOperands2071[op]; // table for format 2.0.7
         else if (format == 0x226 && pInstr->a.op2 == 1) nOperands = numOperands2261[op]; // table for format 2.2.6
         else if (format == 0x227 && pInstr->a.op2 == 1) nOperands = numOperands2271[op]; // table for format 2.2.7
         else nOperands = 0xB;                              // default value when there is no table
     }
     else {    
-        nOperands = numOperands[fInstr->exeTable][op];     // number of source operands (see bit definitions in emulator2.cpp)
+        // operand tables for multi-format instructions
+        nOperands = numOperands[fInstr->exeTable][op];     // number of source operands (see bit definitions in format_tables.cpp)
     }
 
     ignoreMask     = (nOperands & 0x08) != 0;              // bit 3: ignore mask
@@ -462,17 +481,17 @@ void CThread::decode() {
     ip += instrLength * 4;  // next ip
 
     // get address of memory operand
-    if (fInstr->mem & 0x7F) memAddress = getMemoryAddress();
+    if (fInstr->mem) memAddress = getMemoryAddress();
 
     // find operands
-    if (fInstr->cat == 4 && (fInstr->mem & 0x80)) {
+    if (fInstr->category == 4 && fInstr->jumpSize) { 
         // jump instruction with self-relative jump address
         // check if it uses vector registers
-        vect = (fInstr->vect & 0x10) && (pInstr->a.ot & 4);
+        vect = (fInstr->vect & 0x10) && fInstr->tmplate != 0xC && (pInstr->a.ot & 4);
         // pointer to address field
-        const uint8_t * pa = &pInstr->b[0] + fInstr->addrPos;
+        const uint8_t * pa = &pInstr->b[0] + fInstr->jumpPos;
         // store relative address in addrOperand
-        switch (fInstr->addrSize) {
+        switch (fInstr->jumpSize) {
         case 1:    // sign extend 8-bit offset
             addrOperand = *(int8_t*)pa;
             break;
@@ -522,11 +541,24 @@ void CThread::decode() {
             if (fInstr->opAvail & 0x20) operands[4] = pInstr->a.rs;
             else operands[4] = pInstr->a.rd;
         }
+        else if (fInstr->opAvail & 2) {
+            // last operand is memory
+            parm[2].q = readMemoryOperand(memAddress);
+            operands[5] = 0x40;
+            // first source operand
+            if (fInstr->opAvail & 0x20) operands[4] = pInstr->a.rs;
+            else operands[4] = pInstr->a.rd;
+        }
         else {
             // last source operand is a register
-            if (fInstr->opAvail & 0x20) operands[5] = pInstr->a.rs;
-            else operands[5] = pInstr->a.rd;
             operands[4] = pInstr->a.rd;
+            if ((fInstr->opAvail & 0x30) == 0x30) {
+                // three registers
+                operands[4] = pInstr->a.rs;
+                operands[5] = pInstr->a.rt;
+            }
+            else if (fInstr->opAvail & 0x20) operands[5] = pInstr->a.rs;
+            else operands[5] = pInstr->a.rd;
             // read register containing last operand
             parm[2].q = readRegister(operands[5]);
         }
@@ -538,6 +570,7 @@ void CThread::decode() {
         returnType = operandType | 0x1010;
         return;
     }
+
     // single format, multi-format, and indirect jump instructions:
 
     // Make list of operands from available operands.
@@ -547,21 +580,20 @@ void CThread::decode() {
     // opAvail bits: 1 = immediate, 2 = memory,
     // 0x10 = RT, 0x20 = RS, 0x40 = RU, 0x80 = RD 
     int j = 5;
-    if (opAvail & 0x01) operands[j--] = 0x20;           // immediate operand
-    if (opAvail & 0x02) operands[j--] = 0x40;           // memory operand
-    if (opAvail & 0x10) operands[j--] = pInstr->a.rt;   // register RT
-    if (opAvail & 0x20) operands[j--] = pInstr->a.rs;   // register RS
-    if (opAvail & 0x40) operands[j--] = pInstr->a.ru;   // register RU
-    if (opAvail & 0x80) operands[j--] = pInstr->a.rd;   // register RD
-    operands[0] = pInstr->a.rd;                         // destination
+    if (opAvail & 0x01) operands[j--] = 0x20;              // immediate operand
+    if (opAvail & 0x02) operands[j--] = 0x40;              // memory operand
+    if (opAvail & 0x10) operands[j--] = pInstr->a.rt;      // register RT
+    if (opAvail & 0x20) operands[j--] = pInstr->a.rs;      // register RS
+    if (opAvail & 0x40) operands[j--] = pInstr->a.ru;      // register RU
+    if (opAvail & 0x80) operands[j--] = pInstr->a.rd;      // register RD
+    operands[0] = pInstr->a.rd;                            // destination
 
     // find mask register
-    if (fInstr->tmpl == 0xA || fInstr->tmpl == 0xE) {
+    if (fInstr->tmplate == 0xA || fInstr->tmplate == 0xE) {
         operands[1] = pInstr->a.mask;
         // find fallback register
-        if (nOperands >= 3) operands[2] = operands[3];     // three operands: use first operand
-        else if (j < 3) operands[2] = operands[j+2];       // two or one operands: use last vacant operand
-        else operands[2] = operands[4];                    // no vacant operand: use first operand
+        uint8_t fb = findFallback(fInstr,  pInstr, nOperands);
+        operands[2] = fb;                                  // fallback register, or 0xFF if zero fallback
     }
     else {
         operands[1] = operands[2] = 0xFF;                  // no mask, no fallback
@@ -569,6 +601,9 @@ void CThread::decode() {
 
     // determine if vector registers are used
     vect = (fInstr->vect & 1) || ((fInstr->vect & 0x10) && (pInstr->a.ot & 4));
+
+    // return type for debug output. may be changed by execution function
+    returnType = operandType | 0x10 | vect << 8;
 
     // get value of last operand if not a vector
     if (opAvail & 0x01) {
@@ -617,16 +652,25 @@ void CThread::decode() {
             }
             break;
         case 7:  // quadruple precision
-            // todo
+            // to do
             break;
         default: // all integer types. shift value if needed
             if (fInstr->imm2 & 4) parm[2].q <<= pInstr->a.im3;
             else if (fInstr->imm2 & 8) parm[2].q <<= pInstr->a.im2;
         }
+        if (opAvail & 2) {
+            // both memory and immediate operand
+            if ((!vect || (fInstr->vect & 4)) && !dontRead) {
+                // scalar or broadcast memory operand
+                parm[1].q = readMemoryOperand(memAddress);
+            }
+            if (nOperands > 2) parm[0].q = readRegister(operands[3] & 0x1F);
+            return;
+        }
     }
     else if ((!vect || (fInstr->vect & 4)) && (opAvail & 0x02) && !dontRead) {
-        // scalar or broadcast memory operand
-        if (!dontRead) parm[2].q = readMemoryOperand(memAddress);
+        // scalar or broadcast memory operand and no immediate operand
+        parm[2].q = readMemoryOperand(memAddress);
     }
     else if (!vect) {
         // general purpose register
@@ -635,8 +679,6 @@ void CThread::decode() {
     // get values of remaining operands
     if (nOperands > 1) parm[1].q = readRegister(operands[4] & 0x1F);
     if (nOperands > 2) parm[0].q = readRegister(operands[3] & 0x1F);
-    // return type for debug output. may be changed by execution function
-    returnType = operandType | 0x10 | vect << 8;
 }
 
 
@@ -650,7 +692,8 @@ void CThread::execute() {
     if (fInstr->exeTable == 0) {
         interrupt(INT_UNKNOWN_INST);  return;
     }
-    if (fInstr->tmpl == 0xE && pInstr->a.op2 != 0) {  // single format instruction with E template
+    if (fInstr->tmplate == 0xE && pInstr->a.op2 != 0 && !(fInstr->imm2 & 0x100)) {  
+        // single format instruction with E template
         uint8_t index; // index into EDispatchTable
         // bit 0-2 = mode2
         // bit   3 = mode bit 1
@@ -685,15 +728,20 @@ void CThread::execute() {
                 vectorLengthR = vectorLength[operands[5]];
             }
             break;
-        case 2:  // first source operand is register
-            vectorLengthR = vectorLength[operands[4]];
+        case 2:  // two source operands
+            if (operands[4] & 0x40) {  // first source operand is memory                
+                vectorLengthR = vectorLengthM;
+            }
+            else {   // first source operand is register
+                vectorLengthR = vectorLength[operands[4]];
+            }
             break;
-        case 3: default:
+        case 3: default:  // three source operands. first source operand must be register
             vectorLengthR = vectorLength[operands[3]];
             break;
         }
         if (noVectorLength                       // vector length determined by execution function
-        || fInstr->cat == 4) {                   // call compare/jump function even if vector is empty
+            || fInstr->category == 4) {          // call compare/jump function even if vector is empty
             vectorLengthR = elementSize;         // make sure it is called at least once
         }
         // set vector length of destination
@@ -701,40 +749,55 @@ void CThread::execute() {
             vectorLength[operands[0]] = vectorLengthR;
         }
 
-        // last operand type
-        uint8_t lastOpType = 2; // 0: broadcast immediate or memory, 1: memory vector, 2: vector register
-        if ((fInstr->opAvail & 2) && !(fInstr->vect & 4)) lastOpType = 1;
-        if ((fInstr->opAvail & 1) || ((fInstr->opAvail & 2) && (fInstr->vect & 4))) lastOpType = 0;
-
         // loop through vector
         vect = 1;
         for (vectorOffset = 0; vectorOffset < vectorLengthR; vectorOffset += elementSize) {
             if (vect & 4) break;  // stop loop
-            // get last operand (broadcast operands have already been read)
-            if (lastOpType == 1) {
-                // vector memory operand
-                if (!dontRead) parm[2].q = readMemoryOperand(memAddress + vectorOffset);
+
+            // read nOperands operands
+            for (int iOp = 3 - nOperands; iOp <= 2; iOp++) {
+                if (operands[iOp+3] & 0x20) { // immediate
+                    // has already been read into parm[2]
+                }
+                else if (operands[iOp+3] & 0x40) { // memory
+                    if (fInstr->vect & 4) { // broadcast memory operand
+                        if (vectorOffset + elementSize > vectorLengthM) {
+                            parm[iOp].q = 0; // beyond broadcast length
+                        }
+                        else { // read broadcast memory operand
+                            parm[iOp].q = readMemoryOperand(memAddress);
+                        }
+                    }
+                    else {  // memory vector 
+                        if (!dontRead) {
+                            if (vectorOffset + elementSize > vectorLengthM) {
+                                parm[iOp].q = 0; // beyond memory operand length
+                            }
+                            else {  // read memory vector                          
+                                parm[iOp].q = readMemoryOperand(memAddress + vectorOffset);                        
+                            }
+                        }
+                    }
+                }
+                else { // vector register
+                    parm[iOp].q = readVectorElement(operands[iOp+3], vectorOffset);                    
+                }            
             }
-            else if (lastOpType == 2) {
-                // vector register operand
-                parm[2].q = readVectorElement(operands[5], vectorOffset);
-            }
-            // get values of remaining operands
-            if (nOperands > 1) parm[1].q = readVectorElement(operands[4], vectorOffset);
-            if (nOperands > 2) parm[0].q = readVectorElement(operands[3], vectorOffset);
             
             // get mask
             if ((operands[1] & 7) != 7) {
                 parm[3].q = readVectorElement(operands[1], vectorOffset);
             }
-            else parm[3].q = numContr;
+            else {
+                parm[3].q = numContr;
+            }
             // skip instruction if mask = 0, except for certain instructions
             if ((parm[3].q & 1) == 0 && !ignoreMask) {
                 // result is masked off. find fallback
-                if ((operands[2] & 0x1F) == 0x1F) result = 0;               // fallback = 0
+                if (operands[2] == 0xFF) result = 0;               // fallback = 0
                 else result = readVectorElement(operands[2], vectorOffset); // fallback register          
                 if (doubleStep) {
-                    if ((operands[2] & 0x1F) == 0x1F) result = 0;
+                    if (operands[2] == 0xFF) result = 0;
                     else result = readVectorElement(operands[2], vectorOffset + elementSize);
                 }
             }
@@ -749,8 +812,11 @@ void CThread::execute() {
                 //uint64_t opmask = dataSizeMask[operandType];
                 // write result to vector
                 writeVectorElement(operands[0], result, vectorOffset);
-                if (dataSizeTable[operandType] >= 16 || doubleStep) {  // double size
+                if (dataSizeTable[operandType] >= 16) {  // 128 bits
                     writeVectorElement(operands[0], parm[5].q, vectorOffset + (elementSize>>1)); // high part of double size result
+                }
+                if (doubleStep) {  // double step
+                    writeVectorElement(operands[0], parm[5].q, vectorOffset + elementSize); // high part of double size result
                 }
             }
             vect ^= 3;                                     // toggle between 1 for even elements, 2 for odd
@@ -764,11 +830,13 @@ void CThread::execute() {
         if ((operands[1] & 7) != 7) {
             parm[3].q = readRegister(operands[1]);
         }
-        else parm[3].q = numContr;
+        else {
+            parm[3].q = numContr;
+        }
         // skip instruction if mask = 0, except for certain instructions
         if ((parm[3].q & 1) == 0 && !ignoreMask) {
             // result is masked off. find fallback
-            if ((operands[2] & 0x1F) == 0x1F) result = 0;
+            if (operands[2] == 0xFF) result = 0;
             else result = readRegister(operands[2]);            
         }
         else {
@@ -781,8 +849,36 @@ void CThread::execute() {
         if (running & 1) registers[operands[0]] = result & dataSizeMask[operandType];
         listResult(result);                                // debug output
     }
+    performanceCounters();  // update performance counters
 }
 
+// update performance counters
+void CThread::performanceCounters() {
+    perfCounters[perf_cpu_clock_cycles]++;       // clock cycles
+    perfCounters[perf_instructions]++;       // instructions
+    if ((fInstr->format2 & 0xF00) == 0x200)  perfCounters[perf_2size_instructions]++;  // double size instructions
+    if ((fInstr->format2 & 0xF00) == 0x300)  perfCounters[perf_3size_instructions]++;  // triple size instructions
+    if (vect) {
+        perfCounters[perf_vector_instructions]++;  // vector instructions
+    }
+    else {
+        perfCounters[perf_gp_instructions]++;  // g.p. instructions
+        if ((parm[3].q & 1) == 0 && !ignoreMask) perfCounters[perf_gp_instructions_mask0]++;  // g.p. instructions masked off
+    }
+    if (fInstr->category == 4) {  // jump instructions
+        perfCounters[perf_control_transfer_instructions]++;  // all jumps, calls, returns
+        if (fInstr->tmplate == 0xD) { // direct jump/call
+            perfCounters[perf_direct_jumps]++;  // g.p. instructions
+        }
+        else if (fInstr->exeTable == 2) {
+            if (op == 62 && fInstr->format2 >> 4 == 0x16) {
+                perfCounters[perf_direct_jumps]++; // simple return
+            }
+            else if (op >= 56) perfCounters[perf_indirect_jumps]++; // indirect jumps and calls
+            else perfCounters[perf_cond_jumps]++; // conditional jumps 
+        }
+    }
+}
 
 // read vector element
 uint64_t CThread::readVectorElement(uint32_t v, uint32_t vectorOffset) {
@@ -791,16 +887,21 @@ uint64_t CThread::readVectorElement(uint32_t v, uint32_t vectorOffset) {
     if (operandType == 8) size = 2;
     else size = dataSizeTableMax8[operandType];
     v &= 0x1F;  // protect against array overflow
-    if (vectorOffset < vectorLength[v]) {
+    //if (vectorOffset < vectorLength[v]) {
+    if (vectorOffset + size <= vectorLength[v]) {
         switch (size) {  // zero-extend from element size
         case 1:
             returnval = *(uint8_t*)(vectors.buf() + MaxVectorLength*v + vectorOffset);
+            break;
         case 2:
             returnval = *(uint16_t*)(vectors.buf() + MaxVectorLength*v + vectorOffset);
+            break;
         case 4:
             returnval = *(uint32_t*)(vectors.buf() + MaxVectorLength*v + vectorOffset);
+            break;
         case 8:
             returnval = *(uint64_t*)(vectors.buf() + MaxVectorLength*v + vectorOffset);
+            break;
         }
         uint32_t sizemax = vectorLength[v] - vectorOffset;            
         if (size > sizemax) {  // reading beyond end of vector. cut off element to max size
@@ -836,12 +937,13 @@ void CThread::writeVectorElement(uint32_t v, uint64_t value, uint32_t vectorOffs
 uint64_t CThread::getMemoryAddress() {
     // find base register
     if ((fInstr->mem & 3) == 0) err.submit(ERR_INTERNAL);
-    uint8_t basereg = (fInstr->mem & 1) ? pInstr->a.rt : pInstr->a.rs;
-    //uint8_t basereg = (fInstr->mem & 1) ? pInstr->a.rt : rs;
+    //uint8_t basereg = (fInstr->mem & 1) ? pInstr->a.rt : pInstr->a.rs;
+    uint8_t basereg = pInstr->a.rs;
     readonly = false;
+    memory_error = false;
     // base register value
     uint64_t baseval = registers[basereg];
-    if (fInstr->addrSize > 1) {
+    if (fInstr->addrSize > 1 && !(fInstr->mem & 0x20)) {
         // special registers
         switch (basereg) {
         case 28:   // threadp
@@ -858,16 +960,18 @@ uint64_t CThread::getMemoryAddress() {
 
     // find index register
     uint64_t indexval = 0;
-    if ((fInstr->mem & 4) && (pInstr->a.rs != 0x1F)) {
-        // rs is index register
-        indexval = registers[pInstr->a.rs & 0x1F];
+    if ((fInstr->mem & 4) && (pInstr->a.rt != 0x1F)) {
+        // rt is index register
+        indexval = registers[pInstr->a.rt & 0x1F];
         // check limit
         if (fInstr->mem & 0x20) {
-            const uint8_t * pi = &pInstr->b[0] + fInstr->immPos; // pointer to immediate field
-            uint32_t limit = *(uint32_t*)pi;
-            limit &= (1 << (fInstr->immSize * 8)) - 1;
+            const uint8_t * pi = &pInstr->b[0] + fInstr->addrPos; // pointer to immediate field
+            uint64_t limit = *(uint64_t*)pi;
+            limit &= (uint64_t(1) << (fInstr->addrSize * 8)) - 1;
             if (indexval > limit) {
-                interrupt(INT_ARRAY_BOUNDS);  return 0;
+                interrupt(INT_ARRAY_BOUNDS);
+                memory_error = true;
+                //return 0;
             }
         }
     }
@@ -906,9 +1010,9 @@ uint64_t CThread::getMemoryAddress() {
         break;
     }
     // get length
-    if ((fInstr->vect & 6) && pInstr->a.rs < 0x1F) { // vector length or broadcast length is in RS        
-        if (registers[pInstr->a.rs] > MaxVectorLength) vectorLengthM = MaxVectorLength;
-        else vectorLengthM = (uint32_t)registers[pInstr->a.rs];
+    if ((fInstr->vect & 6) && pInstr->a.rt < 0x1F) { // vector length or broadcast length is in RT        
+        if (registers[pInstr->a.rt] > MaxVectorLength) vectorLengthM = MaxVectorLength;
+        else vectorLengthM = (uint32_t)registers[pInstr->a.rt];
     }
     else { // scalar
         vectorLengthM = dataSizeTable[operandType & 7];
@@ -947,6 +1051,12 @@ uint64_t CThread::readMemoryOperand(uint64_t address) {
         interrupt(INT_ACCESS_READ);
     }
 
+    // check alignment
+
+
+    // return zero if any kind of error
+    if (memory_error) return 0;
+
     // save index for next time
     *indexp = index;
 
@@ -958,10 +1068,13 @@ uint64_t CThread::readMemoryOperand(uint64_t address) {
     case 1:
         return *(uint8_t*)p;
     case 2:
+        if (address & 1) interrupt(INT_MISALIGNED_MEM);
         return *(uint16_t*)p;
     case 4:
+        if (address & 3) interrupt(INT_MISALIGNED_MEM);
         return *(uint32_t*)p;
     case 8:
+        if (address & 7) interrupt(INT_MISALIGNED_MEM);
         return *(uint64_t*)p;
     }
     return 0;
@@ -1004,12 +1117,15 @@ void CThread::writeMemoryOperand(uint64_t val, uint64_t address) {
         *(uint8_t*)p = (uint8_t)val;
         break;
     case 2:
+        if (address & 1) interrupt(INT_MISALIGNED_MEM);
         *(uint16_t*)p = (uint16_t)val;
         break;
     case 4:
+        if (address & 3) interrupt(INT_MISALIGNED_MEM);
         *(uint32_t*)p = (uint32_t)val;
         break;
     case 8:
+        if (address & 7) interrupt(INT_MISALIGNED_MEM);
         *(uint64_t*)p = val;
         break;
     }
@@ -1036,7 +1152,7 @@ void CThread::listStart() {
 static uint32_t listIndex = 0;                   // index into lineList
 // write current instruction to debug list
 void CThread::listInstruction(uint64_t address) {
-    if (!listFileName) return;                   // nothing if no list file
+    if (listFileName == 0 || cmd.maxLines == 0) return;    // stop listing
     SLineRef rec = {address, 1, 0};
     const char * text = 0;
     if (listIndex + 1 < emulator->lineList.numEntries() && emulator->lineList[listIndex+1] == rec) {
@@ -1149,10 +1265,10 @@ uint64_t CThread::makeNan(uint32_t code, uint32_t operandTyp) {
         retval = (uint8_t)code | 0x7E00 | (iaddress & 1) << 8;
         break;
     case 5:  // single precision
-        retval = (uint8_t)code | 0x7FC00000 | uint32_t(iaddress & (1 << 14) - 1) << 8;
+        retval = (uint8_t)code | 0x7FC00000 | uint32_t(iaddress & ((1 << 14) - 1)) << 8;
         break;
     case 6:  // double precision
-        retval = (uint8_t)code | 0x7FF8000000000000 | (iaddress & ((uint64_t)1 << 43) - 1) << 8;
+        retval = (uint8_t)code | 0x7FF8000000000000 | (iaddress & (((uint64_t)1 << 43) - 1)) << 8;
         break;
     }
     return retval;

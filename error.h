@@ -1,14 +1,14 @@
 /****************************   error.h   ************************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2020-05-19
-* Version:       1.10
+* Last modified: 2021-03-30
+* Version:       1.11
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        error.h
 * Description:
 * Header file for error handler error.cpp
 *
-* Copyright 2006-2020 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2006-2021 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 #pragma once
 
@@ -121,6 +121,8 @@ const int ERR_EXPORT_EXPRESSION        = 0x125;  // cannot export expression
 const int ERR_CANNOT_EXPORT            = 0x126;  // cannot export this type of symbol
 const int ERR_CODE_WO_SECTION          = 0x127;  // code without section
 const int ERR_DATA_WO_SECTION          = 0x128;  // data without section
+const int ERR_MIX_DATA_AND_CODE        = 0x129;  // mixing data and code in same section
+const int ERR_MUST_BE_CONSTANT         = 0x12A;  // option value must be constant
 const int ERR_MEM_COMPONENT_TWICE      = 0x140;  // component of memory operand specified twice
 const int ERR_SCALE_FACTOR             = 0x141;  // wrong scale factor
 const int ERR_MUST_BE_GP               = 0x142;  // length or broadcast must be general purpose register
@@ -143,7 +145,8 @@ const int ERR_CANNOT_SWAP_VECT         = 0x152;  // cannot change the order of v
 const int ERR_EXPECT_JUMP_TARGET       = 0x158;  // expecting jump target
 const int ERR_JUMP_TARGET_MISALIGN     = 0x159;  // jump target offset must be divisible by 4
 const int ERR_ABS_RELOCATION           = 0x15a;  // absolute address not allowed here
-const int ERR_RELOCATION_DOMAIN        = 0x15b;  // cannot calculate difference between two symbols in different domains
+const int ERR_ABS_RELOCATION_WARN      = 0x15b;  // absolute address allowed, but not recommended. make warning
+const int ERR_RELOCATION_DOMAIN        = 0x15c;  // cannot calculate difference between two symbols in different domains
 const int ERR_WRONG_REG_TYPE           = 0x160;  // wrong type for register operand
 const int ERR_CONFLICT_OPTIONS         = 0x161;  // conflicting options on memory operand
 const int ERR_VECTOR_OPTION            = 0x162;  // vector option applied to non-vector operands
@@ -154,12 +157,14 @@ const int ERR_LIMIT_TOO_LARGE          = 0x166;  // index limit too large
 const int ERR_IMMEDIATE_TOO_LARGE      = 0x167;  // instruction format does not have space for full-size constant and option/signbits
 const int ERR_TOO_LARGE_FOR_JUMP       = 0x168;  // jump instruction does not have space for full-size constant
 const int ERR_CANNOT_HAVE_OPTION       = 0x169;  // this instruction cannot have options
-const int ERR_CANNOT_HAVEFALLBACK      = 0x16A;  // cannot have fallback != destination with this memory operand
-const int ERR_3OP_AND_FALLBACK         = 0x16B;  // cannot have fallback != destination with three operands
-const int ERR_3OP_AND_MEM              = 0x16C;  // the first source register must be the same as the destination when there is a memory operand with index or vector
-const int ERR_R28_30_BASE              = 0x16D;  // cannot use r28-r30 as base pointer with more than 8 bits offset
-const int ERR_NO_BASE                  = 0x16E;  // memory operand has no base pointer
-const int ERR_MEM_WO_BRACKET           = 0x16F;  // memory operand requires [] bracket
+const int ERR_CANNOT_HAVEFALLBACK1     = 0x16A;  // cannot have fallback register
+const int ERR_CANNOT_HAVEFALLBACK2     = 0x16B;  // cannot have fallback != destination with this memory operand
+const int ERR_3OP_AND_FALLBACK         = 0x16C;  // cannot have fallback != destination with three operands
+const int ERR_3OP_AND_MEM              = 0x16D;  // the first source register must be the same as the destination when there is a memory operand with index or vector
+const int ERR_R28_30_BASE              = 0x16E;  // cannot use r28-r30 as base pointer with more than 8 bits offset
+const int ERR_NO_BASE                  = 0x16F;  // memory operand has no base pointer
+const int ERR_MEM_WO_BRACKET           = 0x170;  // memory operand requires [] bracket
+const int ERR_UNKNOWN                  = 0x171;  // unknown error during assembly
 const int ERR_UNMATCHED_END            = 0x210;  // unmatched end
 const int ERR_SECTION_MISS_END         = 0x211;  // missing end of section
 const int ERR_FUNCTION_MISS_END        = 0x212;  // missing end of function
@@ -168,7 +173,7 @@ const int ERR_EXPECT_PARENTHESIS       = 0x223;  // expecting parenthesis after 
 const int ERR_EXPECT_BRACKET           = 0x224;  // expecting bracket after if, for, while, switch()
 const int ERR_EXPECT_LOGICAL           = 0x225;  // expecting logical expression in if() or while()
 const int ERR_MEM_NOT_ALLOWED          = 0x226;  // cannot have memory operand
-const int ERR_MUST_BE_POW2             = 0x227;  // constant must have only one bit set
+//const int ERR_MUST_BE_POW2             = 0x227;  // constant must have only one bit set
 const int ERR_WHILE_EXPECTED           = 0x228;  // 'while' expected after 'do'
 const int ERR_MISPLACED_BREAK          = 0x229;  // nothing: to break out of
 const int ERR_MISPLACED_CONTINUE       = 0x22A;  // no loop to continue

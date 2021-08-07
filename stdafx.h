@@ -1,14 +1,14 @@
 /****************************    stdafx.h    ***********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2020-05-19
-* Version:       1.10
+* Last modified: 2021-05-08
+* Version:       1.11
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        stdafx.h
 * Description:
 * Header file for ForwardCom tools
 *
-* Copyright 2017-2020 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2021 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 #pragma once
@@ -21,6 +21,7 @@
 #include <io.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <conio.h>
 #endif
 
 // for all compilers:

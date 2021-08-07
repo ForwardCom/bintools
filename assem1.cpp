@@ -1,7 +1,7 @@
 /****************************    assem1.cpp    ********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2020-09-18
+* Last modified: 2021-07-10
 * Version:       1.11
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.cpp
@@ -10,7 +10,7 @@
 * pass1(): Split input file into lines and tokens. Remove comments. Find symbol definitions
 * pass2(): Handle meta code. Classify lines. Identify symbol names, sections, functions
 *
-* Copyright 2017-2020 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2021 GNU General Public License http://www.gnu.org/licenses
 ******************************************************************************/
 #include "stdafx.h"
 
@@ -56,6 +56,7 @@ SOperator operatorsList[] = {
     {"|", '|',     11},
     {"&&", '&'+D2, 12},
     {"||", '|'+D2, 13},
+    {"^^", '^'+D2, 13},           // boolean XOR. non-standard operator
     {"?", '?',     14},
     {":", ':',     14},
     {"=", '=',     15},
@@ -112,6 +113,7 @@ SKeyword keywordsList[] = {
     {"int128",         TYP_INT128},
     {"uint128",        TYP_INT128+TYP_UNS},
     {"int",            TYP_INT32},
+    {"uint",           TYP_INT32+TYP_UNS},
     {"float",          TYP_FLOAT32},
     {"double",         TYP_FLOAT64},
     {"float16",        TYP_FLOAT16},
@@ -128,8 +130,10 @@ SKeyword keywordsList[] = {
     {"limit",          OPT_LIMIT},
     {"scalar",         OPT_SCALAR},
     {"options",        OPT_OPTIONS}, 
+    {"option",         OPT_OPTIONS},  // alias
 
-    // TOK_REG: register names
+    // TOK_REG: register names    
+    {"numcontr",       REG_NUMCONTR},      
     {"threadp",        REG_THREADP},      
     {"datap",          REG_DATAP},
     {"ip",             REG_IP},
@@ -146,6 +150,8 @@ SKeyword keywordsList[] = {
     {"do",             HLL_DO},             // do {} while ()
     {"break",          HLL_BREAK},          // break out of switch or loop
     {"continue",       HLL_CONTINUE},       // continue loop 
+    {"true",           HLL_TRUE},           // constant = 1
+    {"false",          HLL_FALSE},          // constant = 0
 
     // temporary additions. will be replaced by macros later:
     {"push",           HLL_PUSH},           // push registers
@@ -187,7 +193,10 @@ void CAssembler::go() {
 
     // Set default options
     if (cmd.codeSizeOption == 0) cmd.codeSizeOption = 1 << 24;
-    if (cmd.dataSizeOption == 0) cmd.dataSizeOption = 1 << 24;
+    if (cmd.dataSizeOption == 0) cmd.dataSizeOption = 1 << 15;
+    // initialize options
+    code_size = cmd.codeSizeOption;
+    data_size = cmd.dataSizeOption;
 
     do {  // This loop is repeated only once. Just convenient to break out of in case of errors
         pass = 1;
@@ -209,10 +218,12 @@ void CAssembler::go() {
         // Interpret lines. Generate code and data
         pass3();
         if (errors.tooMany()) {err.submit(ERR_TOO_MANY_ERRORS);  break;}
+
         pass = 4;
         // Resolve internal cross references, optimize forward references
         pass4();
         if (errors.tooMany()) {err.submit(ERR_TOO_MANY_ERRORS);  break;}
+
         pass = 5;
         // Make binary file
         pass5();
@@ -319,8 +330,8 @@ void CAssembler::pass1() {
     uint32_t m;                    // end of current token
     int32_t  i, f;                 // temporary
     int32_t  comment = 0;          // 0: normal, 1: inside comment to end of line, 2: inside /* */ comment
-    uint32_t commentStart;         // start position of multiline comment
-    uint32_t commentStartColumn;   // start column of multiline comment
+    uint32_t commentStart = 0;     // start position of multiline comment
+    uint32_t commentStartColumn = 0;// start column of multiline comment
     char c;                        // current character or byte
     SToken token = {0};            // current token
     SKeyword keywSearch;           // record to search for keyword
@@ -413,10 +424,10 @@ void CAssembler::pass1() {
             if (token.type == TOK_NAM && m-n < sizeof(instructSearch.name)) {
                 memcpy(instructSearch.name, buf()+n, m-n);
                 instructSearch.name[m-n] = 0;
-                f = instructionlist.findFirst(instructSearch);
+                f = instructionlistNm.findFirst(instructSearch);
                 if (f >= 0) {  // instruction name found
                     token.type = TOK_INS;
-                    token.id = instructionlist[f].id;
+                    token.id = instructionlistNm[f].id;
                 }
             }
             n = m;
@@ -614,7 +625,7 @@ void CAssembler::interpretSectionDirective() {
     // pass 2: identify section name and type, and give it a number
     // pass 3: make section header
 
-    // todo: nested sections
+    // to do: nested sections
 
     uint32_t tok;                                          // token number
     ElfFWC_Sym2 sym;                                       // symbol record
@@ -646,8 +657,8 @@ void CAssembler::interpretSectionDirective() {
                 errors.report(tokens[tok]);  break;
             }
         }
-        else if (tokens[tok].type == TOK_REG && tokens[tok].id == REG_IP    && state == 0) sectionFlags |= SHF_IP;
-        else if (tokens[tok].type == TOK_REG && tokens[tok].id == REG_DATAP && state == 0) sectionFlags |= SHF_DATAP;
+        else if (tokens[tok].type == TOK_REG && tokens[tok].id == REG_IP    && state == 0)   sectionFlags |= SHF_IP;
+        else if (tokens[tok].type == TOK_REG && tokens[tok].id == REG_DATAP && state == 0)   sectionFlags |= SHF_DATAP;
         else if (tokens[tok].type == TOK_REG && tokens[tok].id == REG_THREADP && state == 0) sectionFlags |= SHF_THREADP;
         else if (tokens[tok].type == TOK_OPR && tokens[tok].id == '=' && state == 1) state = 2;
         else if (tokens[tok].type == TOK_OPR && tokens[tok].id == ',' && state != 2) ; // comma, ignore
@@ -794,13 +805,90 @@ void CAssembler::interpretEndDirective() {
         }
         else if (symbols[symi].st_type == STT_FUNC && pass >= 4) {
             symbols[symi].st_unitsize = 4;  
-            // todo: insert size
+            // to do: insert size!
             //symbols[symi].st_unitsize = ?
             // support function(){} syntax. prevent nested functions
         }
     }
     lines[linei].type = LINE_ENDDIR;        // line is end directive
 }
+
+// Interpret line specifying options
+void CAssembler::interpretOptionsLine() {
+
+    // Expecting a line of the type:
+    // "options codesize = 0x10000, datasize = 1 << 20"
+    uint32_t tok;                      // token number
+    uint32_t state = 0;                // 0: start, 1: after option name, 2: after equal sign, 3: after expression
+    const char * optionname = 0;
+    int option = 0;                    // 1: codesize, 2: datasize
+    SExpression val;                   // value to be assigned
+    SCode code;                        // instruction code containing options
+    for (tok = tokenB + 1; tok < tokenB + tokenN; tok++) { 
+
+        switch (state) {
+        case 0:                        // start. expect name "datasize" or "codesize"
+            if (tokens[tok].type != TOK_NAM) {
+                errors.report(tokens[tok]);  return;  // unexpected token
+            }
+            optionname = (char*)buf()+tokens[tok].pos; // tokens[tok].stringLength;
+            if (strncasecmp_(optionname, "codesize", 8) == 0) option = 1;
+            else if (strncasecmp_(optionname, "datasize", 8) == 0) option = 2;
+            else {
+                errors.report(tokens[tok]);  return;  // unexpected name
+            }
+            state = 1;
+            break;
+
+        case 1:  // after name, expecting equal sign
+            if (tokens[tok].type == TOK_OPR && tokens[tok].id == '=') {
+                state = 2;
+            }
+            else {
+                errors.report(tokens[tok]);  return;  // unexpected token
+            }
+            break;
+
+        case 2:  // expect expression
+            val = expression(tok, tokenB + tokenN - tok, 0);  // evaluate number or expression
+            tok += val.tokens - 1;
+            if (val.etype != XPR_INT) {
+                errors.reportLine(ERR_MUST_BE_CONSTANT);
+                return;
+            }
+            zeroAllMembers(code);                    // reset code structure
+            switch (option) {
+            case 1:  // set codesize
+                if (val.value.u == 0) code_size = cmd.codeSizeOption;
+                else code_size = val.value.u; 
+                code.value.u = code_size;
+                break;
+            case 2:  // set datasize 
+                if (val.value.u == 0) data_size = cmd.dataSizeOption;
+                else data_size = val.value.u;
+                code.value.u = data_size;
+                break;
+            }
+            // This is called only in pass 3. Save this option for pass 4:
+            code.instruction = II_OPTIONS;
+            code.section = section;
+            code.fitNum = option;
+            code.sizeUnknown = 1;
+            codeBuffer.push(code);
+            state = 3;
+            break;
+
+        case 3:  // expect comma or nothing
+            if (tokens[tok].type == TOK_OPR && tokens[tok].id == ',') {
+                state = 0;    // start over after comma
+            }
+            else {
+                errors.report(tokens[tok]);  return;  // unexpected token
+            }
+        }
+    }
+}
+
 
 // Find symbol by index into symbolNameBuffer. The return value is an index into symbols. 
 // Symbol indexes may change when new symbols are added to the symbols list, which is sorted by name
@@ -963,7 +1051,7 @@ void CAssembler::interpretExternDirective() {
 
 void CAssembler::interpretLabel(uint32_t tok) {
     // line begins with a name. interpret label
-    // todo: add type if data. not string type
+    // to do: add type if data. not string type
     ElfFWC_Sym2 sym;   // symbol record
     zeroAllMembers(sym); // reset symbol
 
@@ -1124,7 +1212,7 @@ void CAssembler::interpretVariableDefinition1() {
                         }
                     }
                     int64_t value = exp1.value.i;  //value of expression
-                    if (exp1.sym1) {                                                                                      
+                    if (exp1.sym3) {                                                                                      
                         // calculation of symbol value. add relocation if needed
                         uint32_t size = type & 0xF;
                         if (type & 0x40) size -= 3;
@@ -1135,6 +1223,21 @@ void CAssembler::interpretVariableDefinition1() {
                             errors.reportLine((uint32_t)value); // report error
                             break;
                         }
+                        // check for overflow
+                        bool overflow = false;
+                        switch (type & 0xFF) {
+                        case TYP_INT8 & 0xFF:
+                            overflow = value > 0x7F || value < -0x80;
+                            break;
+                        case TYP_INT16 & 0xFF:
+                            overflow = value > 0x7FFF || value < -0x8000;
+                            break;
+                        case TYP_INT32 & 0xFF:
+                            overflow = value > 0x7FFFFFFF || value < int32_t(0x80000000);
+                            break;
+                        default:;
+                        }
+                        if (overflow) errors.reportLine(ERR_OVERFLOW); // (symbol1 - symbol2) overflows
                     }
                     if (sectionHeaders[section].sh_type == SHT_NOBITS) {
                         // uninitialized (BSS) section. check that value is zero, but don't store
@@ -1382,14 +1485,28 @@ void CAssembler::interpretVariableDefinition2() {
                 exp1 = expression(tok, tokenB + tokenN - tok, 0);
                 tok += exp1.tokens - 1;
                 if (lineError) return;
-                //int64_t value = exp1.value.i;  //value of expression
-                if ((exp1.etype & XPR_SYM1) && exp1.sym1 && pass > 3) {                                                                                      
+                if ((exp1.etype & XPR_SYM1) && exp1.sym3 && pass > 3) {                                                                                      
                     // calculation of symbol value. add relocation if needed
                     exp1.value.i = calculateConstantOperand(exp1, sectionHeaders[section].sh_size, dsize);                            
                     if (exp1.etype & XPR_ERROR) {
                         errors.reportLine((uint32_t)(exp1.value.i)); // report error
                         break;
                     }
+                    // check for overflow
+                    bool overflow = false;
+                    switch (type & 0xFF) {
+                    case TYP_INT8 & 0xFF:
+                        overflow = exp1.value.i > 0x7F || exp1.value.i < -0x80;
+                        break;
+                    case TYP_INT16 & 0xFF:
+                        overflow = exp1.value.i > 0x7FFF || exp1.value.i < -0x8000;
+                        break;
+                    case TYP_INT32 & 0xFF:
+                        overflow = exp1.value.i > 0x7FFFFFFF || exp1.value.i < int32_t(0x80000000);
+                        break;
+                    default:;
+                    }
+                    if (overflow) errors.reportLine(ERR_OVERFLOW); // (symbol1 - symbol2) overflows
                 }
             }
             if (!(exp1.etype & (XPR_IMMEDIATE | XPR_STRING | XPR_UNRESOLV | XPR_SYM1)) || (exp1.etype & (XPR_REG|XPR_OPTION|XPR_MEM|XPR_ERROR))) {
@@ -1488,13 +1605,16 @@ void CAssembler::determineLineType() {
     uint32_t tok;                           // current token
     uint32_t elements = 0;                  // detect type and constant tokens
     
+    if (tokens[tokenB].type == TOK_OPT) {
+        lines[linei].type = LINE_OPTIONS;  return;
+    }
     // loop through tokens on this line
     for (tok = tokenB; tok < tokenB + tokenN; tok++) {
         if (tokens[tok].type == TOK_REG || tokens[tok].type == TOK_INS || tokens[tok].type == TOK_XPR || tokens[tok].type == TOK_HLL) {
             lines[linei].type = LINE_CODEDEF;  return;     // register or instruction found. must be code
         }
         if (tokens[tok].type == TOK_TYP) elements |= 1;
-        if (tokens[tok].type == TOK_NUM || tokens[tok].type == TOK_FLT || TOK_CHA || TOK_STR) elements |= 2;
+        if (tokens[tok].type == TOK_NUM || tokens[tok].type == TOK_FLT || tokens[tok].type == TOK_CHA || tokens[tok].type == TOK_STR) elements |= 2;
     }
     if (elements == 3)  lines[linei].type = LINE_DATADEF;
     else if (tokens[tokenB].type == TOK_ATT && tokens[tokenB].id == ATT_ALIGN) {  // align directive
@@ -1509,8 +1629,12 @@ void CAssembler::determineLineType() {
         // metaprogramming code
         lines[linei].type = LINE_METADEF;
     }
+    else if (linei > 1) {
+        // undetermined. This may occur in for(;;) clause. Use same type as previous line
+        lines[linei].type = lines[linei-1].type;
+    }
     else {
-        //errors.reportLine
+        // error. cannot determine
         errors.report(tokens[tokenB]);
         lines[linei].type = LINE_ERROR;
     }
@@ -1675,26 +1799,26 @@ void CAssembler::showSymbols() {
 // Show all tokens. For debugging only
 void CAssembler::showTokens() {
     SKeyword const tokenNames[] = {        
-        {"name", TOK_NAM},  // unidentified name        
-        {"direc", TOK_DIR},   // section or function directive
-        {"attrib", TOK_ATT},   // section or function attribute
-        {"label", TOK_LAB},   // code label or function name
-        {"datalb", TOK_VAR},    // data label
-        {"secnm", TOK_SEC},   // section name
-        {"type", TOK_TYP},   // type name
-        {"reg", TOK_REG},   //  register name
-        {"instr", TOK_INS},   //instruction name 
-        {"oper", TOK_OPR},   // operator
-        {"option", TOK_OPT},   // operator
-        {"num", TOK_NUM},   // number
-        {"float", TOK_FLT},   // floating point number
-        {"char", TOK_CHA},   // character or string in single quotes ' '
-        {"string", TOK_STR},   // string in double quotes " "
-        {"symbol", TOK_SYM},   // symbol
-        {"expression", TOK_XPR},   // expression
-        {"eof", TOK_EOF},   // string in double quotes " "
-        {"hll", TOK_HLL}   // string in double quotes " "
-                           //   {"error", TOK_ERR}   // error. illegal character or unmatched quote
+        {"name",        TOK_NAM},   // unidentified name        
+        {"direc",       TOK_DIR},   // section or function directive
+        {"attrib",      TOK_ATT},   // section or function attribute
+        {"label",       TOK_LAB},   // code label or function name
+        {"datalb",      TOK_VAR},   // data label
+        {"secnm",       TOK_SEC},   // section name
+        {"type",        TOK_TYP},   // type name
+        {"reg",         TOK_REG},   //  register name
+        {"instr",       TOK_INS},   // instruction name 
+        {"oper",        TOK_OPR},   // operator
+        {"option",      TOK_OPT},   // operator
+        {"num",         TOK_NUM},   // number
+        {"float",       TOK_FLT},   // floating point number
+        {"char",        TOK_CHA},   // character or string in single quotes ' '
+        {"string",      TOK_STR},   // string in double quotes " "
+        {"symbol",      TOK_SYM},   // symbol
+        {"expression",  TOK_XPR},   // expression
+        {"eof",         TOK_EOF},   // string in double quotes " "
+        {"hll",         TOK_HLL}    // string in double quotes " "
+                                    //   {"error", TOK_ERR}   // error. illegal character or unmatched quote
     };
 
     uint32_t line, tok, i;
@@ -1708,7 +1832,7 @@ void CAssembler::showTokens() {
                 for (i = 0; i < TableSize(tokenNames); i++) {
                     if (tokenNames[i].id == tokens[tok].type) nm = tokenNames[i].name;
                 }
-                if (nm) printf("\n%8s: ", nm);                               // Token type
+                if (nm) printf("\n%4X  %8s: ", tok, nm);                               // Token type
                 else printf("type %4X", tokens[tok].type);
 
                 switch (tokens[tok].type) {
@@ -1731,7 +1855,7 @@ void CAssembler::showTokens() {
                 case TOK_REG: //registerNames
                     nm = 0;
                     for (i = 0; i < TableSize(registerNames); i++) {
-                        if (registerNames[i].id == (tokens[tok].id & 0xFFFFFF00)) nm = registerNames[i].name;
+                        if (registerNames[i].id == tokens[tok].id) nm = registerNames[i].name;
                     }
                     if (nm) printf("%s%i", nm, tokens[tok].id & 0xFF);
                     else printf("%4X %2i", tokens[tok].pos, tokens[tok].stringLength);
@@ -1766,12 +1890,13 @@ void CAssembler::initializeWordLists() {
     instructionListFile.parse();                            // Read and interpret instruction list file
     instructionlist << instructionListFile.instructionlist; // Transfer instruction list to my own container
     instructionlistId.copy(instructionlist);                // copy instruction list
-    // sort lists by different criteria, defined by the different operators:
+    instructionlistNm.copy(instructionlist);                // copy instruction list
+                                                            // sort lists by different criteria, defined by the different operators:
     // operator < (SInstruction const & a, SInstruction const & b)
     // operator < (SInstruction3 const & a, SInstruction3 const & b)
     SInstruction3 nullInstruction;                          // empty record
     zeroAllMembers(nullInstruction);
     instructionlistId.push(nullInstruction);                // Empty record will go to position 0 to avoid an instruction with index 0
-    instructionlist.sort();                                 // Sort instructionlist by name
+    instructionlistNm.sort();                               // Sort instructionlist by name
     instructionlistId.sort();                               // Sort instructionlistId by id
 }

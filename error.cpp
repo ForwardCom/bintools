@@ -1,14 +1,21 @@
 /****************************   error.cpp   **********************************
 * Author:        Agner Fog
 * Date created:  2017-11-03
-* Last modified: 2018-03-30
-* Version:       1.10
+* Last modified: 2021-03-30
+* Version:       1.11
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        error.cpp
 * Description:
 * Standard procedure for error reporting to stderr
 *
-* Copyright 2006-2020 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2006-2021 GNU General Public License http://www.gnu.org/licenses
+******************************************************************************
+
+You may set breakpoints here to trace errors (use stack trace)
+
+Runtime errors during emulation are not going here, but to 
+CThread::interrupt in emulator6.cpp
+
 *****************************************************************************/
 
 #include "stdafx.h"
@@ -18,7 +25,7 @@ CErrorReporter err;
 
 // General error messages
 
-// todo: remove unused error messages!
+// to do: remove unused error messages!
 
 SErrorText errorTexts[] = {
     // Unknown error
@@ -35,6 +42,8 @@ SErrorText errorTexts[] = {
     {ERR_DUPLICATE_NAME_IN_LIB, 1, "Library has more than one members named %s"}, // duplicate name in library
     {ERR_DUPLICATE_SYMBOL_IN_LIB, 1, "More than one symbol named %s in modules %s"}, // duplicate symbol in library
     {ERR_NO_SYMTAB_IN_LIB, 2, "No ForwardCom symbol table found in library"}, // probably wrong library type
+    {ERR_ABS_RELOCATION_WARN, 1, "Code at line %i is position dependent because it contains absolute address of symbol: %s"}, // warn if absolute address
+
 
     {ERR_LIBRARY_FILE_TYPE, 2, "Library file has wrong type: %s"}, // expecting library file
     {ERR_LIBRARY_FILE_CORRUPT, 2, "Library file is corrupt"}, // index out of range in library file
@@ -106,7 +115,7 @@ SErrorText errorTexts[] = {
 // Error messages for assembly file
 SErrorText assemErrorTexts[] = {
     // the status number indicates if an extra string is required
-    {0,          0, "Unknown error number!"},
+    {0,          0, "misplaced unknown token"},
     {TOK_NAM,    1, "unknown name: "},
     {TOK_LAB,    1, "misplaced label: "},
     {TOK_VAR,    1, "misplaced variable: "},
@@ -164,8 +173,8 @@ SErrorText assemErrorTexts[] = {
     {ERR_CANNOT_EXPORT,      1, "cannot export: "},
     {ERR_CODE_WO_SECTION,    1, "code without section: "},
     {ERR_DATA_WO_SECTION,    1, "data without section: "},
-
-
+    {ERR_MIX_DATA_AND_CODE,  1, "code and data in same section: "},
+    {ERR_MUST_BE_CONSTANT,   1, "value must be constant: "},
     {ERR_MEM_COMPONENT_TWICE,1, "component of memory operand specified twice: "},
     {ERR_SCALE_FACTOR,       1, "wrong scale factor for this instruction: "},
     {ERR_MUST_BE_GP,         1, "vector length must be general purpose register: "},
@@ -189,7 +198,6 @@ SErrorText assemErrorTexts[] = {
     {ERR_JUMP_TARGET_MISALIGN, 1, "jump target offset must be divisible by 4: "},
     {ERR_ABS_RELOCATION,     1, "absolute address not possible here: "},
     {ERR_RELOCATION_DOMAIN,  1, "cannot calculate difference between two symbols in different domains: "},
-
     {ERR_WRONG_REG_TYPE,     1, "wrong type for register operand: "},
     {ERR_CONFLICT_OPTIONS,   1, "conflicting options: "},
     {ERR_VECTOR_OPTION,      1, "vector option applied to non-vector operands: "},
@@ -200,13 +208,14 @@ SErrorText assemErrorTexts[] = {
     {ERR_IMMEDIATE_TOO_LARGE,1, "instruction format does not have space for full-size constant and option/signbits: "},
     {ERR_TOO_LARGE_FOR_JUMP, 1, "conditional jump does not have space for 64-bit constant: "},
     {ERR_CANNOT_HAVE_OPTION, 1, "this instruction cannot have options: "},
-    {ERR_CANNOT_HAVEFALLBACK, 1, "the fallback must be the same as the first source operand when there is a memory operand with index or vector: "},
+    {ERR_CANNOT_HAVEFALLBACK1, 1, "this instruction cannot have a fallback register: "},
+    {ERR_CANNOT_HAVEFALLBACK2, 1, "the fallback must be the same as the first source operand when there is a memory operand with index or vector: "},
     {ERR_3OP_AND_FALLBACK,   1, "the fallback must be the same as the first source operand on instructions with three operands: "},
     {ERR_3OP_AND_MEM,        1, "the first source register must be the same as the destination when there is a memory operand with index or vector: "},
     {ERR_R28_30_BASE,        1, "cannot use r28-r30 as base pointer with more than 8 bits offset: "},
     {ERR_NO_BASE,            1, "memory operand has no base pointer: "},
     {ERR_MEM_WO_BRACKET,     1, "memory operand requires [] bracket: "},
-
+    {ERR_UNKNOWN,            1, "unknown assembly error"},
     {ERR_UNMATCHED_END,      0, "unmatched end"},
     {ERR_SECTION_MISS_END,   1, "missing end of section: "},
     {ERR_FUNCTION_MISS_END,  1, "missing end of function: "},
@@ -215,7 +224,7 @@ SErrorText assemErrorTexts[] = {
     {ERR_EXPECT_BRACKET,     1, "expecting '{' bracket: "},
     {ERR_EXPECT_LOGICAL,     1, "expecting logical expression: "},
     {ERR_MEM_NOT_ALLOWED,    1, "cannot have memory operand: "},
-    {ERR_MUST_BE_POW2,       1, "constant must have only one bit set: "},
+    //{ERR_MUST_BE_POW2,       1, "constant must have only one bit set: "},
     {ERR_WHILE_EXPECTED,     1, "'do' statement requires a 'while' here: "},
     {ERR_MISPLACED_BREAK,    1, "nothing: to break out of: "},
     {ERR_MISPLACED_CONTINUE, 1, "no loop to continue: "}
@@ -285,7 +294,8 @@ void CErrorReporter::submit(int ErrorNumber, char const * extra) {
 void CErrorReporter::submit(int ErrorNumber, char const * extra1, char const * extra2) {
     // Print error message with two extra text info fields
     // ErrorTexts[ErrorNumber] must contain %s where extra texts are to be inserted
-    if (extra1 == 0) extra1 = "???"; if (extra2 == 0) extra2 = "???";
+    if (extra1 == 0) extra1 = "???"; 
+    if (extra2 == 0) extra2 = "???";
     SErrorText * err = FindError(ErrorNumber);
     strings.setSize((uint32_t)strlen(err->text) + (uint32_t)strlen(extra1) + (uint32_t)strlen(extra2));
     sprintf((char*)strings.buf(), err->text, extra1, extra2);
@@ -295,7 +305,9 @@ void CErrorReporter::submit(int ErrorNumber, char const * extra1, char const * e
 void CErrorReporter::submit(int ErrorNumber, char const * extra1, char const * extra2, char const * extra3) {
     // Print error message with three extra text info fields
     // ErrorTexts[ErrorNumber] must contain %s where extra texts are to be inserted
-    if (extra1 == 0) extra1 = "???"; if (extra2 == 0) extra2 = "???"; if (extra3 == 0) extra2 = "???";
+    if (extra1 == 0) extra1 = "???"; 
+    if (extra2 == 0) extra2 = "???"; 
+    if (extra3 == 0) extra3 = "???";
     SErrorText * err = FindError(ErrorNumber);
     strings.setSize((uint32_t)strlen(err->text) + (uint32_t)strlen(extra1) + (uint32_t)strlen(extra2) + (uint32_t)strlen(extra3));
     sprintf((char*)strings.buf(), err->text, extra1, extra2, extra3);
@@ -313,7 +325,7 @@ void CErrorReporter::submit(int ErrorNumber, int extra1, char const * extra2) {
 }
 
 // Write an error message.
-// To trace an error message: set a breakpoint here !½
+// To trace a runtime error message: set a breakpoint here !½
 void CErrorReporter::handleError(SErrorText * err, char const * text) {
     // HandleError is used by submit functions
     // check severity
@@ -396,7 +408,7 @@ bool CAssemErrors::tooMany() {
 }
 
 // Report an error in assembly file
-// To trace an assembly error: set a breakpoint here
+// To trace an assembly error: set a breakpoint here ½
 void CAssemErrors::report(uint32_t position, uint32_t stringLength, uint32_t num) {
     // position: position in input file
     // stringLength: length of token
@@ -428,9 +440,13 @@ void CAssemErrors::report(SToken const & token) {
 void CAssemErrors::reportLine(uint32_t num) {
     int tokenB = owner->lines[owner->linei].firstToken;
     int tokenN = owner->lines[owner->linei].numTokens;
+    if (tokenB <= 0 || tokenN <= 0) {
+        num = ERR_UNKNOWN;
+        tokenB = 0;
+        tokenN = 1;
+    }
     report(owner->tokens[tokenB].pos,
-        owner->tokens[tokenB + tokenN - 1].pos + owner->tokens[tokenB + tokenN - 1].stringLength - owner->tokens[tokenB].pos,
-        num);
+        owner->tokens[tokenB + tokenN - 1].pos + owner->tokens[tokenB + tokenN - 1].stringLength - owner->tokens[tokenB].pos, num);
 }
 
 void CAssemErrors::outputErrors() {
@@ -440,7 +456,7 @@ void CAssemErrors::outputErrors() {
     if (list.numEntries() == 0) return;
     const char * text1;
     char text2[256];
-    const char * filename = cmd.getFilename(cmd.inputFile); //!! owner->fileName; // to do: support include filenames
+    const char * filename = cmd.getFilename(cmd.inputFile); // owner->fileName; // to do: support include filenames
     const uint32_t errorTextsLength = TableSize(assemErrorTexts);
     uint32_t i, j, texti;
 

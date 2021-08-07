@@ -113,6 +113,9 @@
     <ClCompile Include="emulator1.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="format_tables.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="emulator2.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -126,9 +129,6 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="emulator6.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="emulator7.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

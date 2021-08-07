@@ -1,13 +1,13 @@
 /****************************  maindef.h   **********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2020-05-19
-* Version:       1.10
+* Last modified: 2021-07-10
+* Version:       1.11
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        maindef.h
 * Original location: https://github.com/forwardcom/binutils
 * License: GPL-3.0. https://www.gnu.org/licenses/#GPL
-* Copyright 2016-2020 by Agner Fog
+* Copyright 2016-2021 by Agner Fog
 *
 * Description:
 * Header file for type definitions and other main definitions.
@@ -16,7 +16,7 @@
 
 // Program version
 #define FORWARDCOM_VERSION         1
-#define FORWARDCOM_SUBVERSION      10
+#define FORWARDCOM_SUBVERSION      11
 
 
 // Get high part of a 64-bit integer
@@ -39,6 +39,7 @@ const int FILETYPE_ELF =              3;         // x86 ELF file
 const int FILETYPE_FWC =           0x10;         // ForwardCom ELF file
 const int FILETYPE_FWC_EXE =       0x11;         // Executable ForwardCom ELF file
 const int FILETYPE_FWC_LIB =       0x20;         // ForwardCom library file
+const int FILETYPE_FWC_HEX =       0x40;         // Executable code in hexadecimal format for loader ROM
 const int FILETYPE_ASM =          0x100;         // Disassembly output
 const int FILETYPE_LIBRARY =     0x1000;         // UNIX-style library/archive
 
