@@ -11,11 +11,10 @@ forwardcom_sourcecode_documentation.odt | Documentation of the source code
 *.cpp    |      C++ source code   
 *.h      |      C++ header files   
 forw.exe  |     Windows executable, 64-bit  
-forw.make  |     Makefile for Gnu C++ compiler  
-instruction_list.csv | List of instructions as comma separated file. Made from instruction_list.ods  
+forw.make  |     Makefile for Gnu or Clang C++ compiler  
+instruction_list.csv | List of instructions as comma separated file
 forwardcom.pdf | Manual (from ForwardCom/manual repository)  
 forw.vcxproj forw.sln forw.vcxproj.filters | Project files for MS Visual Studio  
-resp.txt     |  Response file used during debugging in Visual Studio  
 
 
 
