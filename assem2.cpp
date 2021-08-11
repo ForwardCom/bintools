@@ -1,7 +1,7 @@
 /****************************    assem2.cpp    ********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2021-06-20
+* Last modified: 2021-08-11
 * Version:       1.11
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.cpp
@@ -201,7 +201,9 @@ SExpression CAssembler::expression(uint32_t tok1, uint32_t maxtok, uint32_t opti
                     exp1.etype |= XPR_MEM;
                     exp1.sym3 = 0;
                     if (is_local) {
-                        exp1.offset_mem = tokens[tok1].value.w;   // don't take value from symbol, it may change
+                        exp1.offset_mem = tokens[tok1].value.w;// don't take value from symbol, it may change
+                        exp1.etype &= ~XPR_SYM1;               // symbol reference no longer needed
+                        exp1.etype |= XPR_OFFSET;              // has offset
                     }
                     else {
                         exp1.sym1 = tokens[tok1].id;
