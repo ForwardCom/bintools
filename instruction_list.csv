@@ -1,4 +1,4 @@
-Instruction list for ForwardCom instruction set. Version 1.12. 2022-12-28,,,,,,,,,,,,,
+Instruction list for ForwardCom instruction set. Version 1.12. 2023-01-01,,,,,,,,,,,,,
 Name,Id,Category,Formats,Template,Template variant,Source operands,OP1,OP2,Operand types general purpose registers,Operand types scalar,Operand types vectors,Immediate operand type,Description
 nop,0x30000,3,0x00000FFF,0,D0,0,0,0,0x000F,0xFF,0,0,no operation
 nop2,0x30200,3,0xFFFFF000,0,D0,0,0,0,0x000F,0xFF,0,0,no operation
@@ -73,7 +73,7 @@ xor,28,1,0x110,0xC,,2,17,0,0x0008,0,0,6,sign-extend IM2 to 64 bits and shift lef
 add,8,1,0x110,0xC,,2,18,0,0x0004,0,0,8,shift 16-bit zero extended constant left by 16 and add to 32 bit register
 abs,0xA0000,1,0x180,0xB,,2,0,0,0x100F,0,0,18,absolute value of integer. use saturation if IM1 = 1
 bitscan,0x10001,1,0x180,0xB,,2,2,0,0x100F,0,0,18,bit scan forward or reverse. Find index first or last set bit 
-popcount,0x13018,1,0x180,0xB,,1,4,0,0x100F,0,0,0,population count. number of bits that are 1
+popcount,0x13018,1,0x180,0xB,,2,4,0,0x100F,0,0,i0,population count. number of bits that are 1
 roundp2,0x10003,1,0x180,0xB,,2,3,0,0x100F,0,0,18,round up or down to nearest power of 2
 read_spec,0x18020,1,0x180,0xB,X1,2,32,0,0x1708,0,0,i0,read special register into general purpose register
 read_spec,0x18020,1,0x180,0xB,X1,2,32,0,0x1708,0,0,18,read special register into general purpose register
@@ -155,7 +155,7 @@ broadcast_max,0x13013,1,0x130,0xB,,1,19,0,0,0x906F,0x906F,2,broadcast constant t
 byte_reverse,0x13014,1,0x130,0xB,,2,20,0,0,0x100F,0x100F,18,reverse the order of bytes in each element of vector
 bit_reverse,0x13015,1,0x130,0xB,,2,20,0,0,0x1F00,0x1F00,18,reverse the order of bits in each element of vector
 bitscan,0x10001,1,0x130,0xB,,2,21,0,0,0x100F,0x1F00,18,bit scan forward or reverse. find index to first or last set bit
-popcount,0x13018,1,0x130,0xB,,1,22,0,0,0x100F,0x1F00,0,population count. number of bits that are 1
+popcount,0x13018,1,0x130,0xB,,2,22,0,0,0x100F,0x1F00,i0,population count. number of bits that are 1
 bool2bits,0x1301A,1,0x130,0xB,,2,25,0,0,0x906F,0x906F,i0,pack boolean vector into bits
 bool_reduce,0x1301B,1,0x130,0xB,,2,26,0,0,0x100F,0x100F,18,AND/OR combination of all elements in boolean vector
 fp_category_reduce,0x1301C,1,0x130,0xB,I2H0,2,27,0,0,0x8260,0x8260,18,OR combinations of elements belonging to one of 8 categories
