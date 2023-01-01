@@ -1,9 +1,9 @@
 /****************************    elf_forwardcom.h    **************************
 * Author:              Agner Fog
 * Date created:        2016-06-25
-* Last modified:       2021-05-28
-* ForwardCom version:  1.11
-* Program version:     1.11
+* Last modified:       2023-01-01
+* ForwardCom version:  1.12
+* Program version:     1.12
 * Project:             ForwardCom binary tools
 * Description:         Definition of ELF file format. See below
 *
@@ -13,7 +13,7 @@
 * To do: define formats for debug information
 * To do: define access rights of executable file or device driver
 *
-* Copyright 2016-2021 GNU General Public License v. 3
+* Copyright 2016-2023 GNU General Public License v. 3
 * http://www.gnu.org/licenses/gpl.html
 *******************************************************************************
 

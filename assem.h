@@ -1,14 +1,14 @@
 /****************************    assem.h    ***********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2021-05-26
-* Version:       1.11
+* Last modified: 2022-12-26
+* Version:       1.12
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.h
 * Description:
 * Header file for assembler
 *
-* Copyright 2017-2021 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2022 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 #pragma once
 
@@ -168,7 +168,7 @@ const int XPR_LENGTH    = 0x100000;    // contains vector length register
 const int XPR_BROADC    = 0x200000;    // contains vector broadcast length register
 const int XPR_MASK      = 0x400000;    // contains mask register
 const int XPR_FALLBACK  = 0x800000;    // contains fallback register
-const int XPR_OPTIONS  = 0x1000000;    // contains options or signbits in IM3
+const int XPR_OPTIONS  = 0x1000000;    // contains options or signbits in IM5
 const int XPR_JUMPOS   = 0x2000000;    // contains self-relative jump offset
 const int XPR_TYPENAME =0x10000000;    // contains type name in value
 const int XPR_UNRESOLV =0x40000000;    // contains unresolved name or value
@@ -178,6 +178,7 @@ const int XPR_ERROR    =0x80000000;    // an error occurred during the generatio
 const uint32_t II_NOP            =  0x30000;
 const uint32_t II_STORE          =        1;
 const uint32_t II_MOVE           =        2;
+const uint32_t II_COMPARE_HH     =        6; // opcode for II_COMPARE_H
 const uint32_t II_COMPARE        =        7;
 const uint32_t II_ADD            =        8;
 const uint32_t II_SUB            =        9;
@@ -188,13 +189,12 @@ const uint32_t II_MUL_EX         =  0x1201A;
 const uint32_t II_DIV            =       14;
 const uint32_t II_DIV_U          =       15; // all unsigned variants must be signed variant | 1
 const uint32_t II_DIV_REV        =       16;
+const uint32_t II_DIV_REV_U      =       17;
 const uint32_t II_DIV_EX         =  0x12018;
 const uint32_t II_REM            =       18;
 const uint32_t II_REM_U          =       19;
 const uint32_t II_MIN            =       20;
-const uint32_t II_MIN_U          =       21;
-const uint32_t II_MAX            =       22;
-const uint32_t II_MAX_U          =       23;
+const uint32_t II_MAX            =       21;
 const uint32_t II_AND            =       26; 
 const uint32_t II_OR             =       27; 
 const uint32_t II_XOR            =       28; 
@@ -215,18 +215,23 @@ const uint32_t II_ADD_ADD        =       51;
 const uint32_t II_SELECT_BITS    =       52;
 const uint32_t II_FUNNEL_SHIFT   =       53;
 const uint32_t II_SHIFT_U_ADD    =   0x0101;
-//const uint32_t II_MOVE_U         =   0x11001;
+const uint32_t II_SQRT           =  0x1201C;
+const uint32_t II_FLOAT2INT      =  0x1300C;
+const uint32_t II_INT2FLOAT      =  0x1300D;
+const uint32_t II_COMPARE_H      =  0x50007;  // float16
 const uint32_t II_ADD_H          =  0x50008;  // float16
 const uint32_t II_SUB_H          =  0x50009;  // float16
 const uint32_t II_MUL_H          =  0x5000B;  // float16
 const uint32_t II_DIV_H          =  0x50010;  // float16
-const uint32_t II_MUL_ADD_H      =  0x50031;  // float16
+//const uint32_t II_MUL_ADD_H      =  0x50031;  // float16
+const uint32_t II_FP_CATEGORY_REDUCE = 0x1301C;  // float16 allowed
 const uint32_t II_PUSH           =  0x18038;
 const uint32_t II_POP            =  0x18039;
 const uint32_t II_REPLACE        =  0xA0001;
 const uint32_t II_REPLACE_EVEN   =  0x26004;
 const uint32_t II_REPLACE_ODD    =  0x26005;
 const uint32_t II_ADDRESS        =  0x29020;
+
 
 // constants for jump and branch instrucions. May be combined with II_ADD, II_SUB, II_COMPARE, etc. 
 const uint32_t II_INCREMENT      =   0x0051;  // increment. combine with II_JUMP_POSITIVE

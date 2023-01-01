@@ -1,14 +1,14 @@
 /****************************  emulator.h   **********************************
 * Author:        Agner Fog
 * date created:  2018-02-18
-* Last modified: 2021-04-02
-* Version:       1.11
+* Last modified: 2022-12-22
+* Version:       1.12
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        emulator.h
 * Description:
 * Header file for emulator
 *
-* Copyright 2018-2021 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2018-2022 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 // structure for memory map
@@ -173,6 +173,7 @@ protected:
     void load();                                 // load executable file into memory
     void relocate();                             // relocate any absolute addresses and system function id's
     void disassemble();                          // make disassembly listing for debug output
+    void updateNumOperands();                    // update numOperands table from instruction_list.csv
     uint32_t MaxVectorLength;                    // maximum vector length
     int8_t * memory;                             // program memory
     uint64_t memsize;                            // total allocated memory size
@@ -225,10 +226,10 @@ extern PFunc * metaFunctionTable[];
 extern PFunc EDispatchTable[];
 
 // Table of number of operands for each instruction
-extern uint8_t numOperands[15][64];
-extern uint8_t numOperands2071[64];
-extern uint8_t numOperands2261[64];
-extern uint8_t numOperands2271[64];
+extern uint16_t numOperands[15][64];
+extern uint16_t numOperands2071[64];
+extern uint16_t numOperands2261[64];
+extern uint16_t numOperands2271[64];
 
 // Execution functions shared between multiple cpp files
 uint64_t f_nop(CThread * thread);

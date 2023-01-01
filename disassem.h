@@ -1,14 +1,14 @@
 /****************************  disassem.h   **********************************
 * Author:        Agner Fog
 * Date created:  2017-04-26
-* Last modified: 2021-04-11
-* Version:       1.11
+* Last modified: 2022-12-26
+* Version:       1.12
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        disassem.h
 * Description:
 * Header file for disassembler
 *
-* Copyright 2006-2021 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2006-2022 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 
@@ -35,22 +35,22 @@ union STemplate {
         uint32_t op1:   6;   // Destination register RD in formats A, B, C, and E
         uint32_t mode:  3;   // Mode in all formats
         uint32_t il:    2;   // Instruction length in all formats
-        uint32_t im2:  16;   // IM2 in format E
-        uint32_t im3:   6;   // IM3 in format E
+        uint32_t im4:  16;   // IM4 in format E
+        uint32_t im5:   6;   // IM5 in format E
         uint32_t op2:   2;   // OP2 in format E
         uint32_t ru:    5;   // Source register RU in format E
         uint32_t mode2: 3;   // Mode2 in format E
     } a;
     struct {
-        int32_t  im2:  24;   // IM2 in format D
+        int32_t  im3:  24;   // IM3 in format D
         uint32_t op1:   3;   // The remaining part of OP1 in format D
         uint32_t mode:  3;   // Mode in format D
         uint32_t il:    2;   // Instruction length in format D
     } d;
     uint8_t      b[12];      // IM1 in format B
     uint16_t     s[4];       // IM1+2 in format C
-    uint32_t     i[3];       // IM2 and IM3 in format A2, A3, B2, B3
-    float        f[2];       // IM2 as float
+    uint32_t     i[3];       // IM6 and IM7 in format A2, A3, B2, B3
+    float        f[2];       // IM6 as float
 };
 
 // Record in nested lookup lists for formats.
@@ -84,16 +84,16 @@ struct SFormat {
     uint8_t  immPos;         // Position of first immediate operand (bytes)
 
     uint16_t imm2;           // Size and position of extra immediate operands:
-                             // 1 = IM2 in template C, 
-                             // 2 = IM3 in template E may contain options, 
-                             // 4 = IM3 is shift count for IM2 if no options, 
-                             // 8 = IM2 is shift count for IM4,
-                             // 0x10 = IM3 in template A3 or B3, 
+                             // 1 = IM1-2 in template C, 
+                             // 2 = IM5 in template E may contain options, 
+                             // 4 = IM5 is shift count for IM6 if no options, 
+                             // 8 = IM5 is shift count for IM7,
+                             // 0x10 = IM7 in template A3 or B3, 
                              // 0x40 = has fixed values
                              // 0x80 = jump OPJ in IM1
-                             // 0x90 = jump OPJ is in high part of IM2 in format A2
+                             // 0x90 = jump OPJ is in high half of IM6 in format A2
                              // 0xC0 = jump with no OPJ
-                             // 0x100 = OP2 is used for immediate operand as extension of IM3
+                             // 0x100 = OP2 is used for immediate operand as extension of IM5
 
     uint8_t  vect;           // 1 = vector registers used, 2 = vector length in RT, 4 = broadcast length in RT
                              // 0x10 = vector registers used if M bit
@@ -148,7 +148,6 @@ const int VARIANT_D1 = (1 << 1);                 // no destination, but operant 
 const int VARIANT_D2 = (1 << 2);                 // operant type ignored
 const int VARIANT_D3 = (1 << 3);                 // register RD used for other purpose
 const int VARIANT_M0 = (1 << 4);                 // memory operand destination
-//const int VARIANT_M1 = (1 << 5);                 // IM3 used as extra immediate operand in E formats with a memory operand. obsolote
 const int VARIANT_R0 = (1 << 8);                 // destination is general purpose register
 const int VARIANT_R1B =       9;                 // bit index to VARIANT_R1
 const int VARIANT_R1 = (1 << VARIANT_R1B);       // first source operand is general purpose register
@@ -161,10 +160,11 @@ const int VARIANT_F0 = (1 << 14);                // can have mask register, but 
 const int VARIANT_F1 = (1 << 15);                // can have fallback register without mask register
 const int VARIANT_I2 = (1 << 16);                // immediate operand is integer
 const int VARIANT_U0 = (1 << 18);                // integer operands are unsigned
-const int VARIANT_U3 = (1 << 19);                // integer operands are unsigned if bit 3 in IM3 (format 2.4.x, 2.8.x) is set.
+const int VARIANT_U3 = (1 << 19);                // integer operands are unsigned if bit 3 in IM5 (format 2.4.x, 2.8.x) is set.
 //const int VARIANT_Kn = (1 << 20);                // integer operand is implicit
-const int VARIANT_On = (7 << 24);                // n IM3 bits used for options
+const int VARIANT_On = (7 << 24);                // n IM5 bits used for options
 const int VARIANT_H0 = (1 << 28);                // half precision floating point operands
+const int VARIANT_H5 = (1 << 29);                // half precision floating point operands if option bit 5
 const int VARIANT_SPECB = 32;                    // bit index to special register type
 const uint64_t VARIANT_SPEC = (uint64_t)0xF << VARIANT_SPECB; // Special register types for operands
 const uint64_t VARIANT_SPECS = 0x1000000000;     // Special register type for source
@@ -185,6 +185,7 @@ public:
     void go();                                   // Disassemble
     void getLineList(CDynamicArray<SLineRef> & list); // transfer lineList to debugger
     void getOutFile(CTextFileBuffer & buffer);   // transfer outFile to debugger
+    CDynamicArray<SInstruction2> & getInstructionList(); // get instructionlist
     uint32_t outputFile;                         // Output file name, as index into cmd.fileNameBuffer
     uint8_t  debugMode;                          // produce disassembly for emulator/debugger
     uint8_t asmTab0;                             // Column for operand type
@@ -211,9 +212,9 @@ protected:
     STemplate const * pInstr;                    // Pointer to current instruction code
     SInstruction2 const * iRecord;               // Pointer to instruction table entry
     SFormat const * fInstr;                      // Format details of current instruction code
-    CDynamicArray<SInstruction2> instructionlist;// List of instruction set, sorted by category, format, and op1
     CDynamicArray<ElfFwcSym> newSymbols;         // List of new symbols added during pass 1
     CDynamicArray<SLineRef> lineList;            // Cross reference of code addresses to lines in outFile (used by debugger)
+    CDynamicArray<SInstruction2> instructionlist;// List of instruction set, sorted by category, format, and op1
     CTextFileBuffer outFile;                     // Output file
     bool isExecutable;                           // Disassembling executable file
     void feedBackText1();                        // Write feedback text on stdout
