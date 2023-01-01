@@ -1,13 +1,13 @@
 ﻿/****************************  emulator4.cpp  ********************************
 * Author:        Agner Fog
 * date created:  2018-02-18
-* Last modified: 2021-08-05
-* Version:       1.11
+* Last modified: 2022-12-28
+* Version:       1.12
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
 * Emulator: Execution functions for single format instructions, part 1
 *
-* Copyright 2018-2021 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2018-2022 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 #include "stdafx.h"
@@ -412,40 +412,64 @@ static uint64_t write_sys(CThread * t) {
 static uint64_t push_r(CThread * t) {
     // push one or more g.p. registers on a stack pointed to by rd
     int32_t step = dataSizeTable[t->operandType];
-    if (!(t->parm[4].i & 0x80)) step = -step;
+    bool forward = (t->parm[4].i & 0x80) != 0; // false: pre-decrement, true: post-increment pointer
     uint8_t reg0 = t->operands[0] & 0x1F;   // pointer register
     uint8_t reg1 = t->operands[4] & 0x1F;   // first push register
     uint8_t reglast = t->parm[4].i & 0x1F;  // last push register
     uint8_t reg;
+    // check for errors
+    if (reglast < reg1 || (reg0 >= reg1 && reg0 <= reglast)) {
+        t->interrupt(INT_WRONG_PARAMETERS);
+    }
+
     uint64_t pointer = t->registers[reg0];
     // loop through registers to push
     for (reg = reg1; reg <= reglast; reg++) {
-        pointer += (int64_t)step;
+        if (!forward) pointer -= (int64_t)step;
         uint64_t value = t->registers[reg];
         t->writeMemoryOperand(value, pointer);    
+        if (forward) pointer += (int64_t)step;
         t->listResult(value);
     }
     t->registers[reg0] = pointer;
+    t->running = 2; // don't save stack pointer with reduced operand size
     return pointer;
 }
 
 static uint64_t pop_r(CThread * t) {
     // pop one or more g.p. registers from a stack pointed to by rd
     int32_t step = dataSizeTable[t->operandType];
-    if (t->parm[4].i & 0x80) step = -step;
+    bool regorder = (t->parm[4].i & 0x40) != 0; // false means last register first, true means first register first
     uint8_t reg0 = t->operands[0] & 0x1F;   // pointer register
     uint8_t reg1 = t->operands[4] & 0x1F;   // first push register
     uint8_t reglast = t->parm[4].i & 0x1F;  // last push register
     uint8_t reg;
+    // check for errors
+    if (reglast < reg1 || (reg0 >= reg1 && reg0 <= reglast)) {
+        t->interrupt(INT_WRONG_PARAMETERS);
+    }
+
     uint64_t pointer = t->registers[reg0];
-    // loop through registers to pop in reverse order
-    for (reg = reglast; reg >=  reg1; reg--) {
-        uint64_t value = t->readMemoryOperand(pointer);
-        t->registers[reg] = value;
-        pointer += (int64_t)step;
-        t->listResult(value);
+    if (regorder) {
+        // loop through registers to pop in forward order
+        for (reg = reg1; reg <= reglast; reg++) {
+            uint64_t value = t->readMemoryOperand(pointer);
+            t->registers[reg] = value;
+            pointer += (int64_t)step;
+            t->listResult(value);
+        }
+    }
+    else {
+        // loop through registers to pop in reverse order
+        for (reg = reglast; reg >= reg1; reg--) {
+            uint64_t value = t->readMemoryOperand(pointer);
+            t->registers[reg] = value;
+            pointer += (int64_t)step;
+            t->listResult(value);
+        }
     }
     t->registers[reg0] = pointer;
+    t->running = 2; // don't save stack pointer with reduced operand size
     return pointer;
 }
 
@@ -453,7 +477,7 @@ static uint64_t pop_r(CThread * t) {
 // Format 2.9 A. Three general purpose registers and a 32-bit immediate operand
 
 static uint64_t move_hi32(CThread * t) {
-    // Load 32-bit constant into the high part of a general purpose register. The low part is zero. RD = IM2 << 32.
+    // Load 32-bit constant into the high part of a general purpose register. The low part is zero. RD = IM4 << 32.
     return t->parm[2].q << 32;
 }
 
@@ -475,23 +499,23 @@ static uint64_t sub_32u(CThread * t) {
 }
 
 static uint64_t add_hi32(CThread * t) {
-    // Add 32-bit constant to high part of general purpose register. RD = RT + (IM2 << 32).
+    // Add 32-bit constant to high part of general purpose register. RD = RT + (IM6 << 32).
     t->parm[2].q <<= 32;
     return f_add(t);
 }
 
 static uint64_t and_hi32(CThread * t) {
-    // AND high part of general purpose register with 32-bit constant. RD = RT & (IM2 << 32).
+    // AND high part of general purpose register with 32-bit constant. RD = RT & (IM6 << 32).
     return t->parm[1].q & t->parm[2].q << 32;
 }
 
 static uint64_t or_hi32(CThread * t) {
-    // OR high part of general purpose register with 32-bit constant. RD = RT | (IM2 << 32).
+    // OR high part of general purpose register with 32-bit constant. RD = RT | (IM6 << 32).
     return t->parm[1].q | t->parm[2].q << 32;
 }
 
 static uint64_t xor_hi32(CThread * t) {
-    // XOR high part of general purpose register with 32-bit constant. RD = RT ^ (IM2 << 32).
+    // XOR high part of general purpose register with 32-bit constant. RD = RT ^ (IM6 << 32).
     return t->parm[1].q ^ t->parm[2].q << 32;
 }
 
@@ -508,7 +532,7 @@ static uint64_t replace_bits(CThread * t) {
 }
 
 static uint64_t address_(CThread * t) {
-    // RD = RT + IM2, RS can be THREADP (28), DATAP (29) or IP (30)
+    // RD = RT + IM6, RS can be THREADP (28), DATAP (29) or IP (30)
     t->returnType = 0x13;
     return t->memAddress;
 }
@@ -1134,7 +1158,7 @@ static uint64_t sqrt_ (CThread * t) {
     bool roundingMode = (mask & (3 << MSKI_ROUNDING)) != 0;  // non-standard rounding mode
     bool error = false;
     switch (operandType) {
-    case 0:   // int8
+    /*case 0:   // int8
         if (a.bs < 0) error = true;
         else result.b = (int8_t)sqrtf(a.bs);
         break;
@@ -1149,6 +1173,26 @@ static uint64_t sqrt_ (CThread * t) {
     case 3:   // int64
         if (a.qs < 0) error = true;
         else result.q = (int64_t)sqrt(a.bs);
+        break; */
+    case 1:   // float16
+        if (a.ss < 0) {
+            result.q = t->makeNan(nan_invalid_sqrt, operandType);
+        }
+        else {
+            float x = half2float(a.s);
+            if (detectExceptions) clearExceptionFlags();   // clear previous exceptions
+            //if (roundingMode) setRoundingMode(mask >> MSKI_ROUNDING); // cannot set rounding mode for float2half
+            float y = sqrtf(x);                            // calculate square root
+            result.i = float2half(y);                      // convert to float16
+            //if (roundingMode) setRoundingMode(0);
+            if (detectExceptions) {
+                uint32_t x = getExceptionFlags();          // read exceptions
+                if (result.i == 0 && y != 0) x = 0x10;     // underflow
+                if ((mask & (1<<MSK_UNDERFLOW)) && (x & 0x10)) result.q = t->makeNan(nan_underflow, operandType);
+                else if ((mask & (1<<MSK_INEXACT)) && (x & 0x20)) result.q = t->makeNan(nan_inexact, operandType);
+            }
+        }
+        t->returnType = 0x118;                             // return type is float16
         break;
     case 5:   // float
         if (a.f < 0) {

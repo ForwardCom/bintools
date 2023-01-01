@@ -1,8 +1,8 @@
 /****************************    assem6.cpp    ********************************
 * Author:        Agner Fog
 * Date created:  2017-08-07
-* Last modified: 2021-02-23
-* Version:       1.11
+* Last modified: 2022-12-16
+* Version:       1.12
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.cpp
 * Description:
@@ -10,7 +10,7 @@
 * This module contains:
 * - pass4(): Resolve internal cross references, optimize forward references
 * - pass5(): Make binary file
-* Copyright 2017-2021 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2022 GNU General Public License http://www.gnu.org/licenses
 ******************************************************************************/
 #include "stdafx.h"
 
@@ -578,7 +578,7 @@ void CAssembler::makeBinaryCode() {
                 }
                 else {
                     *(int32_t *)(instr_b + immPos) = int32_t(value);
-                    if (formatp->imm2 & 8) instr.a.im2 = uint16_t((uint64_t)value >> 32);
+                    if (formatp->imm2 & 8) instr.a.im4 = uint16_t((uint64_t)value >> 32);
                 }
                 break;
             case 8:    // 64 bits immediate
@@ -599,7 +599,7 @@ void CAssembler::makeBinaryCode() {
         }
         if (formatp->imm2 & 0x80) {  // various placements of OPJ
             if (formatp->imm2 & 0x10) {
-                instr.b[7] = instructionlistId[instructId].op1; // OPJ in high part of IM2
+                instr.b[7] = instructionlistId[instructId].op1; // OPJ in high part of IM6
             }
             else if (formatp->imm2 & 0x40) {    // no OPJ
             }
@@ -617,7 +617,7 @@ void CAssembler::makeBinaryCode() {
         // additional fields for format E
         if (templ == 0xE) {
             instr.a.mode2 = format & 7;
-            if (formatp->imm2 & 2) instr.a.im3 = codeBuffer[i].optionbits;
+            if (formatp->imm2 & 2) instr.a.im5 = codeBuffer[i].optionbits;
             if (!(formatp->imm2 & 0x100)) 
                 instr.a.op2 = instructionlistId[instructId].op2;
         }

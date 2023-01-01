@@ -136,7 +136,7 @@ static uint64_t compare_jump_generic(CThread * t) {
                 else {
                     if ((opj & 0xE) > 5) {
                         // compare absolute values
-                        a.q &= 0x7FFFFFFFFFFFFFFF;  b.q &= 0x7FFFFFFFFFFFFFFF;
+                        a.q &= nsign_d;  b.q &= nsign_d;
                         opj -= 4;
                     }
                     // select condition, float

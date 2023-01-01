@@ -1,13 +1,13 @@
 /****************************  emulator1.cpp  ********************************
 * Author:        Agner Fog
 * date created:  2018-02-18
-* Last modified: 2021-07-14
-* Version:       1.11
+* Last modified: 2022-12-22
+* Version:       1.12
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
 * Basic functionality of the emulator
 *
-* Copyright 2018-2021 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2018-2022 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 #include "stdafx.h"
@@ -46,6 +46,9 @@ void CEmulator::go() {
 
     // set up disassembler for output list
     if (cmd.outputListFile) disassemble();
+
+    // update list of number of operands and other attributes of instructions
+    updateNumOperands();
 
     // prepare main thread
     threads[0].setRegisters(this);
@@ -296,6 +299,73 @@ void CEmulator::disassemble() {              // make disassembly listing for deb
     }
 }
 
+void CEmulator::updateNumOperands() {        
+    // Update numOperands table in format_tables.cpp from instruction_list.csv.
+    // The tables in format_tables.cpp are supposed to be correct, but for the sake
+    // of easy changes, the number of operands and option bits in the file 
+    // instruction_list.csv may override these values.
+
+    CDynamicArray<SInstruction2> &instructionlist = disassembler.getInstructionList();
+    SInstruction2 const * iRecord;           // Pointer to instruction table entry
+    for (uint32_t i = 0; i < instructionlist.numEntries(); i++) {
+        iRecord = &(instructionlist[i]);
+        uint8_t category = iRecord->category;
+        //uint32_t id = iRecord->id;
+        uint64_t format = iRecord->format;
+        uint8_t op1 = iRecord->op1 & 0x3F;
+        uint8_t op2 = iRecord->op2;
+        uint64_t variant = iRecord->variant;
+        uint8_t  sourceoperands = iRecord->sourceoperands;
+        uint32_t tablei = 0;  // row index in numOperands matrix in format_tables.cpp
+        uint16_t * tableEntry = 0;
+
+        if (category == 3) {     // multi-format instruction
+            tablei = 1;
+            tableEntry = &numOperands[tablei][op1];
+        }
+        else if (category == 1 && op2 == 0) {  // single format instruction
+            switch (format >> 4) {
+            case 0x10: tablei = 4; break;
+            case 0x11: tablei = 5; break;
+            case 0x12: tablei = 6; break;
+            case 0x13: tablei = 7; break;
+            case 0x14: tablei = 8; break;
+            case 0x18: tablei = 9; break;
+            case 0x25: tablei = 10; break;
+            case 0x26: tablei = 11; break;
+            case 0x29: tablei = 12; break;
+            case 0x31: tablei = 13; break;
+            }
+            tableEntry = &numOperands[tablei][op1];
+        }
+        else if (category == 1 && op2 == 1) {
+            switch (format) {
+            case 0x207:
+                tableEntry = &numOperands2071[op1];  break;
+            case 0x226:
+                tableEntry = &numOperands2261[op1];  break;
+            case 0x227:
+                tableEntry = &numOperands2271[op1];  break;
+            }
+        }
+        uint16_t oldn = 0;  // old table entry
+        uint16_t newn = 0;  // new table entry
+        if (tableEntry) {
+            oldn = *tableEntry;                       // read from table in format_tables.cpp
+            // override old table with new information from external table instruction_list.csv
+            newn = sourceoperands & 7;                // number of source operands
+            if (variant & VARIANT_On) newn |= 1 << 8; // IM5 used for option bits
+            // replace old table entry bits by new ones from external table instruction_list.csv
+            *tableEntry = (oldn & 0xFFF8) | newn;
+            /* // write any discrepancies between tables
+            if ((oldn ^ newn) & 0x107) {
+                printf("\n%4X  %4X  %4i  %4X  %4X  %s", category, format, op1, oldn, newn, iRecord->name);
+            }*/
+        }
+    }
+}
+
+
 
 /////////////////
 // CThread class
@@ -394,11 +464,11 @@ static const uint8_t lengthList[8] = {1,1,1,1,2,2,3,4};
 
 // decode current instruction
 void CThread::decode() {
+    uint32_t operandOptions = 0;  // number of operands and options from numOperands tables in format_tables.cpp
 
     listInstruction(ip - ip0);            // make debug listing
     // decoding similar to CDisassembler::parseInstruction()
     op = pInstr->a.op1;
-    //rs = pInstr->a.rs;
 
     // Get format
     uint32_t format = (pInstr->a.il << 8) + (pInstr->a.mode << 4); // Construct format = (il,mode,submode)
@@ -427,7 +497,7 @@ void CThread::decode() {
             op = 63;
         }
         else if (fInstr->imm2 & 0x10) {
-            op = pInstr->b[7] & 0x3F;                      // OPJ is in high part of IM2 in format A2
+            op = pInstr->b[7] & 0x3F;                      // OPJ is in high part of IM6 in format A2
         }
     }
     if (fInstr->tmplate == 0xE && pInstr->a.op2 && !(fInstr->imm2 & 0x100)) {
@@ -437,22 +507,23 @@ void CThread::decode() {
         form.category = 1;                                 // change category
         fInstr = &form;                                    // point to static object
         // operand tables for single-format instructions
-        if (format == 0x207 && pInstr->a.op2 == 1) nOperands = numOperands2071[op]; // table for format 2.0.7
-        else if (format == 0x226 && pInstr->a.op2 == 1) nOperands = numOperands2261[op]; // table for format 2.2.6
-        else if (format == 0x227 && pInstr->a.op2 == 1) nOperands = numOperands2271[op]; // table for format 2.2.7
-        else nOperands = 0xB;                              // default value when there is no table
+        if (format == 0x207 && pInstr->a.op2 == 1) operandOptions = numOperands2071[op]; // table for format 2.0.7
+        else if (format == 0x226 && pInstr->a.op2 == 1) operandOptions = numOperands2261[op]; // table for format 2.2.6
+        else if (format == 0x227 && pInstr->a.op2 == 1) operandOptions = numOperands2271[op]; // table for format 2.2.7
+        else operandOptions = 0xB;                              // default value when there is no table
     }
     else {    
         // operand tables for multi-format instructions
-        nOperands = numOperands[fInstr->exeTable][op];     // number of source operands (see bit definitions in format_tables.cpp)
+        operandOptions = numOperands[fInstr->exeTable][op];     // number of source operands (see bit definitions in format_tables.cpp)
     }
 
-    ignoreMask     = (nOperands & 0x08) != 0;              // bit 3: ignore mask
-    noVectorLength = (nOperands & 0x10) != 0;              // bit 4: vector length determined by execution function
-    doubleStep     = (nOperands & 0x20) != 0;              // bit 5: take double steps
-    dontRead       = (nOperands & 0x40) != 0;              // bit 6: don't read source operand
-    unchangedRd    = (nOperands & 0x80) != 0;              // bit 7: RD is unchanged, not destination
-    nOperands &= 0x7;                                      // bit 0-2: number of operands
+    ignoreMask     = (operandOptions & 0x08) != 0;              // bit 3: ignore mask
+    noVectorLength = (operandOptions & 0x10) != 0;              // bit 4: vector length determined by execution function
+    doubleStep     = (operandOptions & 0x20) != 0;              // bit 5: take double steps
+    dontRead       = (operandOptions & 0x40) != 0;              // bit 6: don't read source operand
+    unchangedRd    = (operandOptions & 0x80) != 0;              // bit 7: RD is unchanged, not destination
+    nOperands      = operandOptions  & 0x7;                     // bit 0-2: number of operands
+    bool hasOptions = operandOptions & 0x100;                   // has option bits in format E for integer operands
 
     // Get operand type
     if (fInstr->ot == 0) {                                 // Operand type determined by OT field
@@ -655,8 +726,11 @@ void CThread::decode() {
             // to do
             break;
         default: // all integer types. shift value if needed
-            if (fInstr->imm2 & 4) parm[2].q <<= pInstr->a.im3;
-            else if (fInstr->imm2 & 8) parm[2].q <<= pInstr->a.im2;
+
+            if ((fInstr->imm2 & 4) && !hasOptions) {
+                parm[2].q <<= pInstr->a.im5;  // shift IM4 value left by IM5 if IM5 is not used for options
+            }
+            else if (fInstr->imm2 & 8) parm[2].q <<= pInstr->a.im4;
         }
         if (opAvail & 2) {
             // both memory and immediate operand
@@ -755,7 +829,9 @@ void CThread::execute() {
             if (vect & 4) break;  // stop loop
 
             // read nOperands operands
-            for (int iOp = 3 - nOperands; iOp <= 2; iOp++) {
+            int iOp = 3 - nOperands;
+            if (iOp < 0) iOp = 0; // limit if nOperands > 3
+            for (; iOp <= 2; iOp++) {
                 if (operands[iOp+3] & 0x20) { // immediate
                     // has already been read into parm[2]
                 }
@@ -1051,11 +1127,7 @@ uint64_t CThread::readMemoryOperand(uint64_t address) {
         interrupt(INT_ACCESS_READ);
     }
 
-    // check alignment
-
-
-    // return zero if any kind of error
-    if (memory_error) return 0;
+    // check alignment ?
 
     // save index for next time
     *indexp = index;

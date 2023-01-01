@@ -1,13 +1,13 @@
 /****************************  format_tables.cpp  ***************************
 * Author:        Agner Fog
 * date created:  2018-02-18
-* Last modified: 2021-06-30
-* Version:       1.11
+* Last modified: 2022-12-22
+* Version:       1.12
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
 * Format tables used by emulator, assembler, and disassembler
 *
-* Copyright 2018-2021 GN1 General Public License http://www.gnu.org/licenses
+* Copyright 2018-2022 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 #include "stdafx.h"
@@ -287,16 +287,16 @@ SFormatIndex formatJ[FJEND] = {
 
 const SFormat formatList[FXEND] = {
 //  form   cat tmpl  opav  ot     jump   addr  imm         v     mem   scl fi  xt
-    {0x000, 3, 0xA,  0xB0, 0x00,  0, 0,  0, 0, 0, 0, 0,    0,    0x00, 0,  0,  1},
-    {0x010, 3, 0xB,  0xA1, 0x00,  0, 0,  0, 0, 1, 0, 0,    0,    0x00, 0,  1,  1},
-    {0x020, 3, 0xA,  0xB0, 0x00,  0, 0,  0, 0, 0, 0, 0,    1,    0x00, 0,  2,  1},
-    {0x030, 3, 0xB,  0xA1, 0x00,  0, 0,  0, 0, 1, 0, 0,    1,    0x00, 0,  3,  1},
-    {0x040, 3, 0xA,  0x82, 0x00,  0, 0,  0, 0, 0, 0, 0,    3,    0x02, 0,  4,  1},
-    {0x050, 3, 0xA,  0x82, 0x00,  0, 0,  0, 0, 0, 0, 0,    3,    0x06, 4,  5,  1},
-    {0x060, 3, 0xA,  0x82, 0x00,  0, 0,  0, 0, 0, 0, 0,    1,    0x06, 2,  6,  1},
-    {0x070, 3, 0xB,  0x82, 0x00,  0, 0,  1, 0, 0, 0, 0,    1,    0x12, 1,  7,  1},
-    {0x080, 3, 0xA,  0x82, 0x00,  0, 0,  0, 0, 0, 0, 0,    0,    0x06, 2,  8,  1},
-    {0x090, 3, 0xB,  0x82, 0x00,  0, 0,  1, 0, 0, 0, 0,    0,    0x12, 1,  9,  1},
+    {0x000, 3, 0xA,  0xB0, 0x00,  0, 0,  0, 0, 0, 0, 0,    0,    0x00, 0,   0,  1},
+    {0x010, 3, 0xB,  0xA1, 0x00,  0, 0,  0, 0, 1, 0, 0,    0,    0x00, 0,   1,  1},
+    {0x020, 3, 0xA,  0xB0, 0x00,  0, 0,  0, 0, 0, 0, 0,    1,    0x00, 0,   2,  1},
+    {0x030, 3, 0xB,  0xA1, 0x00,  0, 0,  0, 0, 1, 0, 0,    1,    0x00, 0,   3,  1},
+    {0x040, 3, 0xA,  0x82, 0x00,  0, 0,  0, 0, 0, 0, 0,    3,    0x02, 0,   4,  1},
+    {0x050, 3, 0xA,  0x82, 0x00,  0, 0,  0, 0, 0, 0, 0,    3,    0x06, 4,   5,  1},
+    {0x060, 3, 0xA,  0x82, 0x00,  0, 0,  0, 0, 0, 0, 0,    1,    0x06, 2,   6,  1},
+    {0x070, 3, 0xB,  0x82, 0x00,  0, 0,  1, 0, 0, 0, 0,    1,    0x12, 1,   7,  1},
+    {0x080, 3, 0xA,  0x82, 0x00,  0, 0,  0, 0, 0, 0, 0,    0,    0x06, 2,   8,  1},
+    {0x090, 3, 0xB,  0x82, 0x00,  0, 0,  1, 0, 0, 0, 0,    0,    0x12, 1,   9,  1},
 
     // FX100
     {0x100, 1, 0xA,  0xB0, 0x00,  0, 0,  0, 0, 0, 0, 0,    0,    0x00, 0,   0,  4},  // Format 1.0 A
@@ -481,13 +481,20 @@ PFunc * metaFunctionTable[14] = {
 };
 
 // constants used in numOperands table below 
-const uint8_t D = 0x22;  // double size operation. take two vector elements at a time
-const uint8_t M = 0x0A;  // ignore mask. call instruction function even if mask = 0
-const uint8_t L = 0x1A;  // ignore mask. RT is not a vector, or destination is not a vector. vector length is determined by the instruction function
-const uint8_t l = 0x19;  // same as L, single operand
-const uint8_t N = 0x1B;  // same as L, three operands
-const uint8_t A = 0x41;  // one operand, don't read memory operand
-const uint8_t S = 0xC9;  // store: one operand, don't read memory operand, ignore mask, don't modify RD
+const uint16_t D = 0x022;  // double size operation. take two vector elements at a time
+const uint16_t M = 0x10A;  // ignore mask. call instruction function even if mask = 0. has option bits in E formats
+const uint16_t m = 0x00A;  // RT is not a vector register
+const uint16_t L = 0x01A;  // ignore mask. RT is not a vector, or destination is not a vector. vector length is determined by the instruction function
+const uint16_t l = 0x019;  // same as L, single operand
+const uint16_t N = 0x01B;  // same as L, three operands
+const uint16_t A = 0x041;  // one operand, don't read memory operand
+const uint16_t E = 0x05A;  // two operands, don't read memory operand
+const uint16_t S = 0x0C9;  // store: one operand, don't read memory operand, ignore mask, don't modify RD
+const uint16_t o = 0x301;  // one operand, has option bits
+const uint16_t O = 0x302;  // two operands, has option bits
+const uint16_t P = 0x303;  // three operands, has option bits
+const uint16_t B = 0x30B;  // three operands, has option bits, call even if mask 0
+const uint16_t C = 0x30C;  // four operands, has option bits, call even if mask 0
 
 // Table of number of operands for each instruction
 // bit 0-2: number of source operands
@@ -496,36 +503,38 @@ const uint8_t S = 0xC9;  // store: one operand, don't read memory operand, ignor
 // bit 5: take two vector elements at a time
 // bit 6: don't read memory operand before calling execution function
 // bit 7: RD is unchanged (not destination)
-uint8_t numOperands[15][64] = {
+// bit 8: IM5 in format E contains option bits, not shift count for integer operands
+// bit 9: IM5 in format E contains option bits for floating point operands (this info is not used)
+uint16_t numOperands[15][64] = {
     {0},  //          8                16               24               32               40               48               56
-    {8,S,1,1,1,1,2,M, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,M, M,M,2,2,2,2,2,2, 3,3,3,3,3,3,3,3, 2,2,2,2,2,2,2,2},  // 1:  multi-format instructions
+    {8,S,1,o,1,O,2,M, 2,2,2,2,2,2,O,O, O,O,2,2,O,O,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,M, M,M,2,2,2,2,2,2, P,P,P,P,3,3,3,2, 2,2,2,2,2,2,2,2},  // 1:  multi-format instructions
     {2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2},  // 2:  conditional and indirect jump instructions
     {1,1,1,1,1,1,1,1, 1,1,1,1,1,1,1,1, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0},  // 3:  simple jump and call instructions
     {0,1,1,1,1,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2},  // 4:  format 1.0
     {1,1,1,1,1,1,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2},  // 5:  format 1.1
-    {9,9,L,L,3,L,N,L, L,L,L,L,L,L,L,L, L,L,L,L,1,1,2,2, D,D,D,D,1,2,2,2, 2,2,2,2,2,2,D,D, D,D,D,D,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,L,L,L,L,L,L},  // 6:  format 1.2
-    {l,l,L,L,N,2,L,L, 2,2,2,2,2,2,2,2, 2,2,2,1,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, L,L,L,2,2,2,2,2},  // 7:  format 1.3
+    {9,9,L,L,3,L,L,L, l,L,L,L,L,L,L,L, L,L,L,L,1,1,2,2, D,D,D,D,1,2,2,2, 2,2,2,2,2,2,D,D, D,D,D,D,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,L,N,L,N,L,N},  // 6:  format 1.2
+    {l,l,L,L,N,2,L,L, 2,2,2,2,2,2,2,2, 2,2,2,1,2,2,1,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, N,N,L,2,2,2,2,2},  // 7:  format 1.3
     {1,2,2,2,2,2,2,2, 1,1,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 1,1,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2},  // 8:  format 1.4
-    {2,3,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, M,M,M,M,M,M,M,M, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,3},  // 9:  format 1.8
+    {2,3,2,2,1,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, m,m,m,m,m,m,m,m, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 3,3,2,2,2,2,2,3},  // 9:  format 1.8
 
-    {2,2,2,2,2,2,2,2, A,2,2,2,2,2,2,2, 2,2,3,2,2,2,2,2, 2,2,2,2,2,2,2,2, N,2,2,2,2,2,2,2,0x5A,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2},//10:  format 2.5
-    {l,L,2,2,2,2,L,2, L,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2},  //11:  format 2.6
+    {2,2,2,2,2,2,2,2, A,2,2,2,2,2,2,2, 2,2,3,2,2,2,2,2, 2,2,2,2,2,2,2,2, N,2,2,2,2,2,2,2, E,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2},  //10:  format 2.5
+    {l,L,2,2,2,2,L,2, N,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2},  //11:  format 2.6
     {1,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, A,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2},  //12:  format 2.9
     {2,2,2,l,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,L,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2, 2,2,2,2,2,2,2,2},  //13:  format 3.1
     {0}
 };
 
 // Table of number of operands for each instruction, Format 2.0.7, op2 = 1
-uint8_t numOperands2071[64] = {
+uint16_t numOperands2071[64] = {
   // 0                8                16               24               32               40               48               56
-     3,3,3,3,3,3,3,3, 3,3,3,3,3,3,3,3, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0};
+     P,3,3,3,3,3,3,3, 3,3,3,3,3,3,3,3, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0};
 
 // Table of number of operands for each instruction, Format 2.2.6, op2 = 1
-uint8_t numOperands2261[64] = {
+uint16_t numOperands2261[64] = {
   // 0                8                16               24               32               40               48               56
-     N,N,N,0,0,0,0,0, 0xB,3,3,3,3,3,3,3, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0};
+     N,N,N,0,0,0,0,0, C,3,3,3,3,3,3,3, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0};
 
 // Table of number of operands for each instruction, Format 2.2.7, op2 = 1
-uint8_t numOperands2271[64] = {
+uint16_t numOperands2271[64] = {
   // 0                8                16               24               32               40               48               56
-     3,3,3,3,3,3,3,3, N,N,3,3,3,3,3,3, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0};
+     P,P,3,3,3,3,3,3, N,N,3,3,3,3,3,3, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0};

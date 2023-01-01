@@ -1,8 +1,8 @@
 /****************************    assem5.cpp    ********************************
 * Author:        Agner Fog
 * Date created:  2017-09-19
-* Last modified: 2021-05-21
-* Version:       1.11
+* Last modified: 2022-11-30
+* Version:       1.12
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.cpp
 * Description:
@@ -10,7 +10,7 @@
 * This module contains functions for interpreting high level language constructs:
 * functions, branches, and loops
 *
-* Copyright 2017-2021 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2022 GNU General Public License http://www.gnu.org/licenses
 ******************************************************************************/
 #include "stdafx.h"
 
@@ -1407,17 +1407,6 @@ bool CAssembler::mergeJump(SCode & code2) {
     if (code1.etype & (XPR_MEM | XPR_SYM1 | XPR_MASK | XPR_OPTION | XPR_OPTIONS | XPR_JUMPOS | XPR_ERROR)) return false;
     if (!(code2.etype & XPR_JUMPOS)) return false;
 
-    /*if (code2.instruction == II_JUMP) {
-        // combine unconditional jump with add/sub
-        if (code2.etype & (XPR_MEM | XPR_OPTION | XPR_REG)) return false;
-        if ((code1.instruction & ~1) != II_ADD) return false;  // only add and sub
-        if (type & TYP_FLOAT) return false;
-        // successful combination of add/sub and jump
-        codeBuffer.pop();        // remove previous code from buffer
-        code2 = code3;
-        return true;
-    } */
-
     // second instruction must test the result of the first instruction
     if (code1.dest != code2.reg1) return false;
     // must have same operand type
@@ -1463,11 +1452,12 @@ bool CAssembler::mergeJump(SCode & code2) {
         // add/sub + compare
         if (!(code2.etype & XPR_INT) || code2.value.i != 0 || (code2.instruction & 0xFF) != II_COMPARE) return false; // must compare against zero
 
-        //??:
         if ((type & TYP_UNS) && (code3.instruction & 0xFFFE00) != II_JUMP_ZERO) return false;  // unsigned works only for == and !=
         // successful combination of add/sub and signed compare with zero
         code3.instruction = code1.instruction | (code2.instruction & 0xFFFF00);
         code3.etype = code1.etype | (code2.etype & ~(XPR_IMMEDIATE | XPR_OPTIONS));
+        code3.value.u = code1.value.u;
+
         codeBuffer.pop();        // remove previous code from buffer
         code2 = code3;
         return true;
@@ -1572,11 +1562,12 @@ void CAssembler::codePush() {
                                             // 8: after constant, 9: after ')'
     int32_t reg1 = -1;                      // register  1, stack pointer if specified
     int32_t reg2 = -1;                      // register  2
-    uint32_t imm = -1;                       // immediate operand
+    uint32_t imm = -1;                      // immediate operand
     uint32_t ot  = 3;                       // operand type
     uint32_t tok = 0;                       // token index
     SToken token;                           // token
     SCode code;                             // code structure
+    SExpression ex;                         // temporary expression 
     zeroAllMembers(code);
     code.section = section;
     // loop through tokens on line
@@ -1638,11 +1629,15 @@ void CAssembler::codePush() {
             else errors.report(token);
             break;
 
-        case 7:  // after second comma. expect constant
-            if (token.type == TOK_NUM || token.type == TOK_SYM) {
+        case 7:  // after second comma. expect constant expression
+            /*if (token.type == TOK_NUM || token.type == TOK_SYM) {
                 imm = expression(tok, 1, 0).value.w;  state = 8;
             }
-            else errors.report(token);
+            else errors.report(token); */
+            ex = expression(tok, tokenB + tokenN - tok - 1, 0);
+            tok += ex.tokens - 1;
+            imm = ex.value.w;
+            state = 8;
             break;
 
         case 8:  // after constant. expect ')'
@@ -1697,12 +1692,13 @@ void CAssembler::codePop() {
                                             // 8: after constant, 9: after ')'
     int32_t reg1 = -1;                      // register  1, stack pointer if specified
     int32_t reg2 = -1;                      // register  2
-    uint32_t imm = -1;                       // immediate operand
-    uint32_t ot = 3;                       // operand type
+    uint32_t imm = -1;                      // immediate operand
+    uint32_t ot = 3;                        // operand type
     uint32_t tok = 0;                       // token index
     SToken token;                           // token
     SCode code;                             // code structure
     zeroAllMembers(code);
+    SExpression ex;                         // temporary expression 
     code.section = section;
     // loop through tokens on line
     for (tok = tokenB; tok < tokenB + tokenN; tok++) {
@@ -1762,11 +1758,14 @@ void CAssembler::codePop() {
             else errors.report(token);
             break;
 
-        case 7:  // after second comma. expect constant
-            if (token.type == TOK_NUM || token.type == TOK_SYM) {
-                imm = expression(tok, 1, 0).value.w;  state = 8;
-            }
-            else errors.report(token);
+        case 7:  // after second comma. expect constant expression
+            /*if (token.type == TOK_NUM || token.type == TOK_SYM) {
+                imm = expression(tok, 1, 0).value.w;
+            }else errors.report(token);*/            
+            ex = expression(tok, tokenB + tokenN - tok - 1, 0);
+            tok += ex.tokens - 1;
+            imm = ex.value.w;
+            state = 8;
             break;
 
         case 8:  // after constant. expect ')'

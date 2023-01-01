@@ -1,13 +1,13 @@
 ﻿/****************************  emulator5.cpp  ********************************
 * Author:        Agner Fog
 * date created:  2018-02-18
-* Last modified: 2021-06-30
-* Version:       1.11
+* Last modified: 2022-12-28
+* Version:       1.12
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
 * Emulator: Execution functions for single format instructions, continued
 *
-* Copyright 2018-2021 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2018-2022 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 #include "stdafx.h"
@@ -928,52 +928,6 @@ static uint64_t abs_ (CThread * t) {
     return a.q;
 }
 
-static uint64_t fp_category (CThread * t) {
-    // Check if floating point numbers belong to the categories indicated by constant
-    //  0 ± NAN, 1 ± Zero, 2 −Subnormal, 3 +Subnormal, 4 −Normal, 5 +Normal, 6 −Infinite, 7 +Infinite
-    SNum a = t->parm[1];                         // x
-    SNum b = t->parm[4];                         // option
-    uint32_t exponent; 
-    uint8_t category = 0;                        // detected category bits
-    switch (t->operandType) {
-    case 2: case 5:                              // float
-        exponent = a.i >> 23 & 0xFF;             // isolate exponent
-        if (exponent == 0xFF) {                  // nan or inf
-            if (a.i << 9) category = 1;          // nan
-            else if (a.i >> 31) category = 0x40; // -inf
-            else category = 0x80;                // + inf
-        }
-        else if (exponent == 0) { 
-            if ((a.i << 9) == 0) category = 2;   // zero
-            else if (a.i >> 31)  category = 4;   // - subnormal
-            else category = 8;                   // + subnormal
-        }
-        else if (a.i >> 31) category = 0x10;     // - normal    
-        else category = 0x20;                    // + normal
-        break;
-    case 3: case 6:                              // double
-        exponent = a.q >> 52 & 0x7FF;            // isolate exponent
-        if (exponent == 0x7FF) {                 // nan or inf
-            if (a.q << 12) category = 1;         // nan
-            else if (a.q >> 63) category = 0x40; // -inf
-            else category = 0x80;                // + inf
-        }
-        else if (exponent == 0) { 
-            if ((a.q << 12) == 0) category = 2;  // zero
-            else if (a.q >> 63)  category = 4;   // - subnormal
-            else category = 8;                   // + subnormal
-        }
-        else if (a.q >> 63) category = 0x10;     // - normal    
-        else category = 0x20;                    // + normal
-        break;
-    default:    
-        t->interrupt(INT_WRONG_PARAMETERS);
-    }
-    uint8_t result = (category & b.b) != 0;                // test if a belongs to any of the indicated categories
-    if ((t->operandType & 7) >= 5) t->operandType -= 3;    // debug return type is integer
-    return (t->numContr & ~(uint64_t)1) | result;          // get remaining bits from NUMCONTR
-}
-
 static uint64_t broad_ (CThread * t) {
     // 18: Broadcast 8-bit signed constant into all elements of RD with length RS (31 in RS field gives scalar output).
     // 19: broadcast_max. Broadcast 8-bit constant into all elements of RD with maximum vector length.
@@ -1127,20 +1081,79 @@ static uint64_t bool2bits(CThread * t) {
     return 0;
 }
 
-static uint64_t bool_reduce(CThread * t) {
-    // integer vector: bool_reduce. The boolean vector RT is reduced by combining bit 0 of all elements.
-    // The output is a scalar integer where bit 0 is the AND combination of all the bits, 
-    // and bit 1 is the OR combination of all the bits. 
-    // The remaining bits are reserved for future use
-    // float vector: category_reduce: Each bit in RD indicates that at least one element in RT belongs
-    // to a certain category:
-    // bit 0: NAN, bit 1: zero, bit 2: - subnormal, bitt 3: + subnormal,
-    // bit 4: - normal, bit 5: + normal, bit 6: - INF, bit 7: + INF
-    uint8_t  rd = t->operands[0];                   // destination vector
-    uint8_t  rt = t->operands[4];                   // RT = source vector
-    //uint8_t  rs = t->operands[4];                   // RS indicates length
-    uint8_t bitOR = 0;                                     // OR combination of all bits
-    uint8_t bitAND = 1;                                    // AND combination of all bits
+static uint64_t fp_category (CThread * t) {
+    // Check if floating point numbers belong to the categories indicated by constant
+    //  0 ± NAN, 1 ± Zero, 2 −Subnormal, 3 +Subnormal, 4 −Normal, 5 +Normal, 6 −Infinite, 7 +Infinite
+    SNum a = t->parm[1];                         // x
+    SNum b = t->parm[4];                         // option
+    uint32_t exponent; 
+    uint8_t category = 0;                        // detected category bits
+    switch (t->operandType) {
+    case 1:                                      // float16
+        exponent = a.i >> 10 & 0x1F;             // isolate exponent
+        if (exponent == 0x1F) {                        // nan or inf
+            if (a.s & 0x3FF) category = 1;             // nan
+            else if (a.s & 0x8000) category = 0x40;    // -inf
+            else category = 0x80;                      // + inf
+        }
+        else if (exponent == 0) {
+            if ((a.s & 0x3FF) == 0) category = 2;      // zero
+            else if (a.s & 0x8000)  category = 4;      // - subnormal
+            else category = 8;                         // + subnormal
+        }
+        else if (a.s & 0x8000) category = 0x10;        // - normal    
+        else category = 0x20;                          // + normal
+        break;
+    case 2: case 5:                              // float
+        exponent = a.i >> 23 & 0xFF;             // isolate exponent
+        if (exponent == 0xFF) {                  // nan or inf
+            if (a.i << 9) category = 1;          // nan
+            else if (a.i >> 31) category = 0x40; // -inf
+            else category = 0x80;                // + inf
+        }
+        else if (exponent == 0) { 
+            if ((a.i << 9) == 0) category = 2;   // zero
+            else if (a.i >> 31)  category = 4;   // - subnormal
+            else category = 8;                   // + subnormal
+        }
+        else if (a.i >> 31) category = 0x10;     // - normal    
+        else category = 0x20;                    // + normal
+        break;
+    case 3: case 6:                              // double
+        exponent = a.q >> 52 & 0x7FF;            // isolate exponent
+        if (exponent == 0x7FF) {                 // nan or inf
+            if (a.q << 12) category = 1;         // nan
+            else if (a.q >> 63) category = 0x40; // -inf
+            else category = 0x80;                // + inf
+        }
+        else if (exponent == 0) { 
+            if ((a.q << 12) == 0) category = 2;  // zero
+            else if (a.q >> 63)  category = 4;   // - subnormal
+            else category = 8;                   // + subnormal
+        }
+        else if (a.q >> 63) category = 0x10;     // - normal    
+        else category = 0x20;                    // + normal
+        break;
+    default:    
+        t->interrupt(INT_WRONG_PARAMETERS);
+    }
+    uint8_t result = (category & b.b) != 0;                // test if a belongs to any of the indicated categories
+    //if ((t->operandType & 7) >= 5) t->operandType -= 3;    // debug return type is integer
+    if ((t->returnType & 7) >= 5) t->returnType -= 3;      // make return type integer
+    return (t->numContr & ~(uint64_t)1) | result;          // get remaining bits from NUMCONTR
+}
+
+static uint64_t fp_category_reduce(CThread * t) {
+    // fp_category_reduce: The output is a scalar where bit 0 is true if at least
+    // one element belongs to any floating point category specified by the immediate operand:
+    // bit 0: NAN, bit 1: zero, bit 2: -subnormal, bit 3: +subnormal,
+    // bit 4: -normal, bit 5: +normal, bit 6: -INF, bit 7: +INF
+    uint8_t  rd = t->operands[0];                          // destination vector
+    uint8_t  rt = t->operands[4];                          // RT = source vector
+    uint8_t IM1 = t->parm[4].b;                            // immediate operand
+
+    uint8_t bitOR = 0;                                     // OR combination of result bits
+
     uint64_t result = 0;                                   // result value
     uint8_t * source = (uint8_t*)t->vectors.buf() + rt*t->MaxVectorLength; // address of RT data
     //if (length > t->MaxVectorLength) length = t->MaxVectorLength; // limit length
@@ -1150,19 +1163,30 @@ static uint64_t bool_reduce(CThread * t) {
     //uint64_t length = t->registers[rs];                  // value of RS = length of destination
     uint32_t length = sourceLength;                        // length of source vector
     length = length >> dsizelog << dsizelog;               // round down to nearest multiple of element size
-    /*if (length > sourceLength) {
-        length = sourceLength;                             // limit to length of source vector
-        bitAND = 0;                                        // bits beyond vector are 0
-    } */
     switch (t->operandType) {
-    case 0: case 1: case 2: case 3: case 4:                // integer types: bool_reduce
+    case 1:                                                // float16
         for (uint32_t pos = 0; pos < length; pos += elementSize) { // loop through elements of source vector
-            uint8_t  bit = *(source + pos) & 1;            // get bit from source vector element
-            bitOR |= bit;  bitAND &= bit;
+            uint32_t val = *(uint16_t*)(source + pos);
+            uint8_t exponent = val >> 10 & 0x1F;           // isolate exponent
+            uint8_t category;
+            if (exponent == 0x1F) {                        // nan or inf
+                if (val & 0x3FF) category = 1;             // nan
+                else if (val & 0x8000) category = 0x40;    // -inf
+                else category = 0x80;                      // + inf
+            }
+            else if (exponent == 0) {
+                if ((val & 0x3FF) == 0) category = 2;      // zero
+                else if (val & 0x8000)  category = 4;      // - subnormal
+                else category = 8;                         // + subnormal
+            }
+            else if (val & 0x8000) category = 0x10;        // - normal    
+            else category = 0x20;                          // + normal
+            bitOR |= category;                             // combine categories
         }
-        result = bitAND | bitOR << 1;
+        result = (bitOR & IM1) != 0;
         break;
-    case 5:                                                // float type: category_reduce
+
+    case 5:                                                // float
         for (uint32_t pos = 0; pos < length; pos += elementSize) { // loop through elements of source vector
             uint32_t val = *(int32_t*)(source + pos);
             uint8_t exponent = val >> 23 & 0xFF;           // isolate exponent
@@ -1179,10 +1203,12 @@ static uint64_t bool_reduce(CThread * t) {
             }
             else if (val >> 31) category = 0x10;           // - normal    
             else category = 0x20;                          // + normal
-            result |= category;                            // combine categories
+            bitOR |= category;                             // combine categories
         }
+        result = (bitOR & IM1) != 0;
         break;
-    case 6:                                                // double type: category_reduce
+
+    case 6:                                                // double
         for (uint32_t pos = 0; pos < length; pos += elementSize) {    // loop through elements of source vector
             uint64_t val = *(int64_t*)(source + pos);
             uint32_t exponent = val >> 52 & 0x7FF;         // isolate exponent
@@ -1199,19 +1225,63 @@ static uint64_t bool_reduce(CThread * t) {
             }
             else if (val >> 63) category = 0x10;           // - normal    
             else category = 0x20;                          // + normal
-            result |= category;                            // combine categories
+            bitOR |= category;                             // combine categories
         }
+        result = (bitOR & IM1) != 0;
         break;
     default: 
         t->interrupt(INT_WRONG_PARAMETERS);
     }
-    t->vectorLength[rd] = 8;                               // set length of destination vector to 64 bits
+    t->vectorLength[rd] = elementSize;                     // set length of destination vector to elementSize
     uint8_t * destination = (uint8_t*)t->vectors.buf() + rd*t->MaxVectorLength; // address of RD data
     *(uint64_t*)destination = result;                      // write 64 bits to destination
     // (using writeVectorElement would possibly write less than 64 bits, leaving some of the destination vector unchanged)
     t->vect = 4;                                           // stop vector loop
     t->running = 2;                                        // don't save RD. It has already been saved
     if ((t->returnType & 7) >= 5) t->returnType -= 3;      // make return type integer
+    return result;
+}
+
+static uint64_t bool_reduce(CThread * t) {
+    // integer vector: bool_reduce. The boolean vector RT is reduced by combining bit 0 of all elements
+    // with an AND, NAND, OR, NOR function.
+    // The output is a scalar where bit 0 is the selected function.
+    // The remaining bits are reserved for future use.
+    uint8_t  rd = t->operands[0];                   // destination vector
+    uint8_t  rt = t->operands[4];                   // RT = source vector
+    uint8_t IM1 = t->parm[2].b;                  // immediate operand
+
+    uint8_t bitOR = 0;                                     // OR combination of result bits
+    uint8_t doAND = (~IM1 >> 1) & 1;                       // 1 if AND function
+    uint8_t doInvert = IM1 & 1;                            // invert result
+
+    uint64_t result = 0;                                   // result value
+    uint8_t * source = (uint8_t*)t->vectors.buf() + rt*t->MaxVectorLength; // address of RT data
+    //if (length > t->MaxVectorLength) length = t->MaxVectorLength; // limit length
+    uint32_t elementSize = dataSizeTable[t->operandType];  // vector element size
+    uint8_t  dsizelog = dataSizeTableLog[t->operandType];  // log2(elementsize)
+    uint32_t sourceLength = t->vectorLength[rt];           // length of source vector
+    //uint64_t length = t->registers[rs];                  // value of RS = length of destination
+    uint32_t length = sourceLength;                        // length of source vector
+    length = length >> dsizelog << dsizelog;               // round down to nearest multiple of element size
+
+    if (t->operandType < 5) {
+        for (uint32_t pos = 0; pos < length; pos += elementSize) { // loop through elements of source vector
+            uint8_t  bit = *(source + pos) & 1;            // get bit from source vector element
+            bitOR |= bit ^ doAND;
+        }
+        result = bitOR ^ doAND ^ doInvert;
+    }
+    else {
+        t->interrupt(INT_WRONG_PARAMETERS);
+    }
+    t->vectorLength[rd] = elementSize;                     // set length of destination vector to elementSize
+    uint8_t * destination = (uint8_t*)t->vectors.buf() + rd*t->MaxVectorLength; // address of RD data
+    *(uint64_t*)destination = result;                      // write 64 bits to destination
+    // (using writeVectorElement would possibly write less than 64 bits, leaving some of the destination vector unchanged)
+    t->vect = 4;                                           // stop vector loop
+    t->running = 2;                                        // don't save RD. It has already been saved
+    //if ((t->returnType & 7) >= 5) t->returnType -= 3;      // make return type integer
     return result;
 }
 
@@ -1428,31 +1498,31 @@ static uint64_t mul_half2double (CThread * t) {
 // Format 2.6 A. Three vector registers and a 32-bit immediate operand.
 
 static uint64_t load_hi (CThread * t) {
-    // Make vector of two elements. dest[0] = 0, dest[1] = IM2.
+    // Make vector of two elements. dest[0] = 0, dest[1] = IM6
     uint8_t rd = t->operands[0];
     uint8_t dsize = dataSizeTable[t->operandType];
     t->vectorLength[rd] = dsize * 2;             // set length of destination
     t->writeVectorElement(rd, 0, 0);             // write 0
-    t->writeVectorElement(rd, t->parm[2].q, dsize);// write IM2
+    t->writeVectorElement(rd, t->parm[2].q, dsize);// write IM6
     t->vect = 4;                                 // stop vector loop
     t->running = 2;                              // don't save RD
     return 0;
 }
 
 static uint64_t insert_hi (CThread * t) {
-    // Make vector of two elements. dest[0] = src1[0], dest[1] = IM2.
+    // Make vector of two elements. dest[0] = src1[0], dest[1] = IM6.
     uint8_t rd = t->operands[0];
     uint8_t dsize = dataSizeTable[t->operandType];
     t->vectorLength[rd] = dsize * 2;             // set length of destination
     t->writeVectorElement(rd, t->parm[1].q, 0);  // write src1
-    t->writeVectorElement(rd, t->parm[2].q, dsize);// write IM2
+    t->writeVectorElement(rd, t->parm[2].q, dsize);// write IM6
     t->vect = 4;                                 // stop vector loop
     t->running = 2;                              // don't save RD
     return 0;
 }
 
 static uint64_t make_mask (CThread * t) {
-    // Make vector where bit 0 of each element comes from bits in IM2, the remaining bits come from RT.
+    // Make vector where bit 0 of each element comes from bits in IM6, the remaining bits come from RT.
     SNum m = t->parm[3];                                   // mask or numcontr
     SNum b = t->parm[2];                                   // constant operand
     uint8_t  dsizelog = dataSizeTableLog[t->operandType];  // log2(elementsize)
@@ -1462,20 +1532,20 @@ static uint64_t make_mask (CThread * t) {
 }
 
 static uint64_t replace_ (CThread * t) {
-    // Replace elements in RT by constant IM2
+    // Replace elements in RT by constant IM6
     // format 2.6: 32 bits, format 3.1: 64 bits
     return t->parm[2].q;
 }
 
 static uint64_t replace_even (CThread * t) {
-    // Replace even-numbered elements in RT by constant IM2
+    // Replace even-numbered elements in RT by constant IM6
     uint8_t  dsizelog = dataSizeTableLog[t->operandType]; // log2(elementsize)
     uint32_t elementNum = t->vectorOffset >> dsizelog;    // index to vector element
     return (elementNum & 1) ? t->parm[1].q : t->parm[2].q;
 }
 
 static uint64_t replace_odd (CThread * t) {
-    // Replace odd-numbered elements in RT by constant IM2
+    // Replace odd-numbered elements in RT by constant IM6
     uint8_t  dsizelog = dataSizeTableLog[t->operandType]; // log2(elementsize)
     uint32_t elementNum = t->vectorOffset >> dsizelog;    // index to vector element
     return (elementNum & 1) ? t->parm[2].q : t->parm[1].q;
@@ -1508,13 +1578,13 @@ static uint64_t permute (CThread * t) {
     // The vector elements of RS are permuted within each block of size RT bytes. 
     // The number of elements in each block, n = RT / OS
     // format 2.2.6 op 1.1: index vector is last operand
-    // format 2.6   op   8: index vector is constant IM2, 4 bits for each element
+    // format 2.6   op   8: index vector is constant IM6, 4 bits for each element
     uint8_t  rd = t->operands[0];                          // destination
     uint8_t  rm = t->operands[1];                          // mask register
     uint8_t  vin;                                          // input data register
     uint8_t  vpat = 0;                                     // pattern register
     uint8_t  bs;                                           // block size, g.p. register
-    uint32_t pattern = 0;                                  // IM2 = pattern, if constant
+    uint32_t pattern = 0;                                  // IM6 = pattern, if constant
     bool     constPat = false;                             // pattern is a constant
     if (t->fInstr->format2 == 0x226) {
         vin  = t->operands[3];                             // ru = input data
@@ -1524,7 +1594,7 @@ static uint64_t permute (CThread * t) {
     else {                                                 // format 2.6
         vin = t->operands[3];                              // rs = input data
         bs  = t->operands[4];                              // block size, g.p. register
-        pattern = t->parm[4].i;                            // IM2 = pattern, if constant
+        pattern = t->parm[4].i;                            // IM6 = pattern, if constant
         constPat = true;
     }
     uint8_t  dsizelog = dataSizeTableLog[t->operandType];  // log2(elementsize)
@@ -1581,7 +1651,7 @@ static uint64_t replace_bits (CThread * t) {
 // Format 2.5 A. Single format instructions with memory operands or mixed register types
 
 static uint64_t store_i32 (CThread * t) {
-    // Store 32-bit constant IM2 to memory operand [RS+IM1] 
+    // Store 32-bit constant IM6 to memory operand [RS+IM1] 
     uint64_t value = t->parm[2].q;
     if ((t->parm[3].b & 1) == 0) value = 0;      // check mask
     t->writeMemoryOperand(value, t->memAddress);
@@ -1593,7 +1663,7 @@ static uint64_t store_i32 (CThread * t) {
 //static uint64_t fence_ (CThread * t) {return f_nop(t);}
 
 static uint64_t compare_swap (CThread * t) {
-    // Atomic compare and exchange with address [RS+IM2]
+    // Atomic compare and exchange with address [RS+IM6]
     uint64_t val1 = t->parm[0].q;
     uint64_t val2 = t->parm[1].q;
     // to do: use intrinsic compareandexchange or mutex or pause all threads if multiple threads
@@ -1608,7 +1678,7 @@ static uint64_t compare_swap (CThread * t) {
 }
 
 static uint64_t read_insert (CThread * t) {
-    // Replace one element in vector RD, starting at offset RT*OS, with scalar memory operand [RS+IM2]
+    // Replace one element in vector RD, starting at offset RT*OS, with scalar memory operand [RS+IM6]
     uint8_t  rd = t->operands[0];
     uint8_t  rs = t->operands[4];
     uint32_t elementSize = dataSizeTable[t->operandType];
@@ -1623,7 +1693,7 @@ static uint64_t read_insert (CThread * t) {
 }
 
 static uint64_t extract_store (CThread * t) {
-    // Extract one element from vector RD, starting at offset RT*OS, with size OS into memory operand [RS+IM2]
+    // Extract one element from vector RD, starting at offset RT*OS, with size OS into memory operand [RS+IM6]
     uint8_t  rd = t->operands[0];
     uint8_t  rs = t->operands[4];
     uint32_t elementSize = dataSizeTable[t->operandType];
@@ -1702,14 +1772,14 @@ static uint64_t move_bits (CThread * t) {
     // Replace one or more contiguous bits at one position of RS with contiguous bits from another position of RT
     // Format 2.0.7 E: general purpose registers
     // Format 2.2.7 E: vector registers
-    // The position in src2 is the lower 8 bits of IM2. a = IM2 & 0xFF.
-    // The position in src1 is the upper 8 bits of IM2. b = IM2 >> 0xFF.
-    // The number of bits to move is c = IM3.
+    // The position in src2 is the lower 8 bits of IM4. a = IM4 & 0xFF.
+    // The position in src1 is the upper 8 bits of IM4. b = IM4 >> 0xFF.
+    // The number of bits to move is c = IM5.
     SNum s1 = t->parm[0];                        // input operand src1
     SNum s2 = t->parm[1];                        // input operand src2
-    SNum im = t->parm[4];                        // input operand IM2
+    SNum im = t->parm[4];                        // input operand IM4
     SNum mask = t->parm[3];                      // 
-    uint8_t c = t->pInstr->a.im3;                // input operand IM3 = number of bits
+    uint8_t c = t->pInstr->a.im5;                // input operand IM5 = number of bits
     uint8_t pos1 = im.s >> 8;                    // bit position in src1. (can overflow, not handled)
     uint8_t pos2 = im.b;                         // bit position in src2. (can overflow, not handled)
     uint64_t bitmask = ((uint64_t)1 << c) - 1;   // mask of c bits. (cannot overflow because c is max 63)
@@ -1725,33 +1795,33 @@ static uint64_t mask_length (CThread * t) {
     // Make a boolean vector to mask the first n bytes of a vector.
     // The output vector RD will have the same length as the input vector RS. 
     // RT indicates the length of the part that is enabled by the mask (n).
-    // IM3 contains the following option bits:
+    // IM5 contains the following option bits:
     // bit 0 = 0: bit 0 will be 1 in the first n bytes in the output and 0 in the rest.
     // bit 0 = 1: bit 0 will be 0 in the first n bytes in the output and 1 in the rest.
     // bit 1 = 1: copy remaining bits from input vector RT into each vector element.
     // bit 2 = 1: copy remaining bits from the numeric control register.
-    // bit 4 = 1: broadcast remaining bits from IM2 into all 32-bit words of RD:
-    //    Bit 1-7 of IM2 go to bit 1-7 of RD. Bit 8-11 of IM2 go to bit 20-23 of RD. Bit 12-15 of IM2 go to bit 26-29 of RD.
+    // bit 4 = 1: broadcast remaining bits from IM4 into all 32-bit words of RD:
+    //    Bit 1-7 of IM4 go to bit 1-7 of RD. Bit 8-11 of IM4 go to bit 20-23 of RD. Bit 12-15 of IM4 go to bit 26-29 of RD.
     // Output bits that are not set by any of these options will be zero. If multiple options are specified, the results will be OR’ed.
     uint8_t rd = t->operands[0];                 // destination
     uint8_t rs = t->operands[3];                 // src2
     uint8_t rt = t->operands[4];                 // length
     SNum s2 = t->parm[0];                        // input operand src2
-    SNum im2 = t->parm[4];                       // input operand IM2
-    uint8_t im3 = t->pInstr->a.im3;              // input operand IM3 = options
+    SNum im4 = t->parm[4];                       // input operand IM4
+    uint8_t im5 = t->pInstr->a.im5;              // input operand IM5 = options
     t->vectorLengthR = t->vectorLength[rd] = t->vectorLength[rs]; // set length of destination
     uint8_t  dsizelog = dataSizeTableLog[t->operandType]; // log2(elementsize)
     uint64_t n = t->registers[rt];               // number of masked elements
     uint32_t i = t->vectorOffset >> dsizelog;    // current element index
     uint8_t bit = i < n;                         // element is within the first n
-    bit ^= im3 & 1;                              // invert option
+    bit ^= im5 & 1;                              // invert option
     uint64_t result = 0;
-    if (im3 & 2) result |= s2.q;                 // copy remaining bits from src1
-    if (im3 & 4) result |= t->numContr;          // copy remaining bits from NUMCONTR
-    if (im3 & 0x10) {                            // copy bits from IM2
-        uint32_t rr = (im2.b & ~1) | bit;        // bit 1-7 -> bit 1-7
-        rr |= (im2.s & 0xF00) << 12;             // bit 8-11 -> bit 20-23
-        rr |= (im2.s & 0xF000) << 14;            // bit 12-15 -> bit 26-29
+    if (im5 & 2) result |= s2.q;                 // copy remaining bits from src1
+    if (im5 & 4) result |= t->numContr;          // copy remaining bits from NUMCONTR
+    if (im5 & 0x10) {                            // copy bits from IM4
+        uint32_t rr = (im4.b & ~1) | bit;        // bit 1-7 -> bit 1-7
+        rr |= (im4.s & 0xF00) << 12;             // bit 8-11 -> bit 20-23
+        rr |= (im4.s & 0xF000) << 14;            // bit 12-15 -> bit 26-29
         result |= rr | ((uint64_t)rr << 32);     // copy these bits twice
     }
     result = (result & ~(uint64_t)1) | bit;      // combine
@@ -1764,8 +1834,8 @@ static uint64_t truth_tab3 (CThread * t) {
     SNum b = t->parm[1];                         // second operand
     SNum c = t->parm[2];                         // third operand
     SNum mask = t->parm[3];                      // mask register
-    uint32_t table = t->pInstr->a.im2;           // truth table
-    uint8_t  options = t->pInstr->a.im3;         // option bits
+    uint32_t table = t->pInstr->a.im4;           // truth table
+    uint8_t  options = t->pInstr->a.im5;         // option bits
 
     uint32_t dataSize = dataSizeTableBits[t->operandType]; // number of bits
     if (options & 3) dataSize = 1;               // only a single bit
@@ -1789,7 +1859,7 @@ static uint64_t truth_tab3 (CThread * t) {
 static uint64_t repeat_block (CThread * t) {
     // Repeat a block of data to make a longer vector. 
     // RS is input vector containing data block to repeat. 
-    // IM2 is length in bytes of the block to repeat (must be a multiple of 4). 
+    // IM4 is length in bytes of the block to repeat (must be a multiple of 4). 
     // RT is the length of destination vector RD.
     uint8_t  rd = t->operands[0];
     uint8_t  rs = t->operands[3];
@@ -1818,7 +1888,7 @@ static uint64_t repeat_block (CThread * t) {
 static uint64_t repeat_within_blocks (CThread * t) {
     // Broadcast the first element of each block of data in a vector to the entire block. 
     // RS is input vector containing data blocks. 
-    // IM2 is length in bytes of each block (must be a multiple of the operand size). 
+    // IM4 is length in bytes of each block (must be a multiple of the operand size). 
     // RT is length of destination vector RD. 
     // The operand size must be at least 4 bytes.
     uint8_t  rd = t->operands[0];
@@ -1856,7 +1926,7 @@ PFunc funcTab7[64] = {
     gp2vec, vec2gp, 0, make_sequence, insert_, extract_, compress, expand,          // 0  - 7
     0, 0, 0, 0, float2int, int2float, round_, round2n,                              // 8 - 15
     abs_, fp_category, broad_, broad_, byte_reverse, bitscan_, popcount_, 0,        // 16 - 23
-    0, bool2bits, bool_reduce, 0, 0, 0, 0, 0,                                       // 24 - 31
+    0, bool2bits, bool_reduce, fp_category_reduce, 0, 0, 0, 0,                      // 24 - 31
     0, 0, 0, 0, 0, 0, 0, 0,                                                         // 32 - 39
     0, 0, 0, 0, 0, 0, 0, 0,                                                         // 40 - 47
     0, 0, 0, 0, 0, 0, 0, 0,                                                         // 48 - 55
@@ -1909,7 +1979,7 @@ PFunc funcTab13[64] = {
 // Format 2.0.6 E. Four general purpose registers
 static uint64_t dispatch206_1 (CThread * t) {
     switch (t->op) {
-    case 8: return truth_tab3(t);
+    case 48: return truth_tab3(t);
     default:
         t->interrupt(INT_UNKNOWN_INST);
     }
@@ -1933,7 +2003,7 @@ static uint64_t dispatch226_1 (CThread * t) {
     case 0: return concatenate(t);
     case 1: return permute(t);
     case 2: return interleave(t);
-    case 8: return truth_tab3(t);
+    case 48: return truth_tab3(t);
     default:
         t->interrupt(INT_UNKNOWN_INST);
     }

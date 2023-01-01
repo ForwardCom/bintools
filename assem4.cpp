@@ -1,15 +1,15 @@
 /****************************    assem4.cpp    ********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2021-07-14
-* Version:       1.11
+* Last modified: 2022-12-28
+* Version:       1.12
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.cpp
 * Description:
-* Module for assembling ForwardCom .as files. 
+* Module for assembling ForwardCom .as files.
 * This module contains:
 * pass3(): Interpretation of code lines.
-* Copyright 2017-2021 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2022 GNU General Public License http://www.gnu.org/licenses
 ******************************************************************************/
 #include "stdafx.h"
 
@@ -1020,6 +1020,11 @@ int CAssembler::fitCode(SCode & code) {
         // get variant bits from instruction list
         variant = instructionlistId[ii].variant;  // instruction-specific variants
 
+        if ((variant & VARIANT_U3) && (code.dtype & TYP_UNS) && ii != II_COMPARE) {
+            code.optionbits |= 8;  // unsigned min, max
+            code.etype |= XPR_OPTIONS;
+        }
+
         switch (instructionlistId[ii].category) {
         case 1:   // single format. find entry in formatList
             formatIx = findFormat(instructionlistId[ii], code.value.w);
@@ -1262,7 +1267,7 @@ bool CAssembler::instructionFits(SCode const & code, SCode & codeTemp, uint32_t 
     bool hasImmediate = (code.etype & XPR_IMMEDIATE) != 0; // && !(code.etype & (XPR_OFFSET | XPR_LIMIT)));
 
     /*if ((variant & VARIANT_M1) && code.formatp->mem && code.formatp->tmplate == 0xE) {
-        // variant M1: immediate operand is in IM3. No further check needed
+        // variant M1: immediate operand is in IM5. No further check needed
         // to do: fail if relocation on immediate
         return hasImmediate;  // succeed if there is an immediate
     } */
@@ -1287,14 +1292,14 @@ bool CAssembler::instructionFits(SCode const & code, SCode & codeTemp, uint32_t 
             }
             return false;
         case OPI_INT16SH16: // im12 << 16
-            if (code.fitNum & (IFIT_I16 | IFIT_I16SH16)) {   // fits im2 << 16
+            if (code.fitNum & (IFIT_I16 | IFIT_I16SH16)) {   // fits im12 << 16
                 codeTemp.value.u = codeTemp.value.u >> 16;
                 codeTemp.fitNum |= IFIT_I16;  // make it accepted below
                 break;
             }
             return false;
-        case OPI_INT32SH32: // im2 << 32
-            if (code.fitNum & (IFIT_I32 | IFIT_I32SH32)) {   // fits im2 << 32
+        case OPI_INT32SH32: // im6 << 32
+            if (code.fitNum & (IFIT_I32 | IFIT_I32SH32)) {   // fits im6 << 32
                 codeTemp.value.u = codeTemp.value.u >> 32;
                 codeTemp.fitNum |= IFIT_I32;  // make it accepted below
                 break;
@@ -1331,7 +1336,7 @@ bool CAssembler::instructionFits(SCode const & code, SCode & codeTemp, uint32_t 
             if ((variant & VARIANT_U0) && (codeTemp.fitNum & IFIT_U16)) break; // unsigned fits
             if ((codeTemp.dtype & 0x1F) == (TYP_INT16 & 0x1F) && code.formatp->tmplate != 0xC && (codeTemp.fitNum & IFIT_U16)) break;  // 16 bit size fits unsigned with no sign extension
             if ((code.formatp->imm2 & 4) && !(variant & VARIANT_On) && (codeTemp.fitNum & IFIT_I16SHIFT)) {
-                // fits with im2 << im3
+                // fits with im4 << im5
                 shiftCount = bitScanForward(codeTemp.value.u);
                 codeTemp.value.u >>= shiftCount;
                 codeTemp.optionbits = shiftCount;
@@ -1340,18 +1345,23 @@ bool CAssembler::instructionFits(SCode const & code, SCode & codeTemp, uint32_t 
             if (variant & VARIANT_H0) break; // half precision fits
             return false;
         case 4:
+            if (code.formatp->imm2 & 8) {   // 32 bits with shift
+                if (codeTemp.fitNum & IFIT_I32SHIFT) { // fits IM7 << IM4
+                    shiftCount = bitScanForward(codeTemp.value.u);
+                    if (codeTemp.fitNum & IFIT_I32) shiftCount = 0; // don't use shift if it fits without
+                    codeTemp.value.u = ((codeTemp.value.u >> shiftCount) & 0xFFFFFFFF) | ((uint64_t)shiftCount << 32); // store shift count in upper half
+                    break;
+                }
+            }
+            else {  // set shift count to zero
+                codeTemp.value.u &= 0xFFFFFFFF;
+            }
             if ((code.dtype & 0xFF) == (TYP_FLOAT32 & 0xFF))  break;  // float32 must be rounded to fit
             if (codeTemp.fitNum & (IFIT_I32 | FFIT_32)) break;  // fits
             if ((codeTemp.fitNum & IFIT_U32) && (code.dtype & 0xFF) == (TYP_INT32 & 0xFF)) break;  // fits
             if ((variant & VARIANT_U0) && (codeTemp.fitNum & IFIT_U32)) break; // unsigned fits
             if (variant & VARIANT_H0) break; // half precision fits
             if ((codeTemp.dtype & 0x1F) == (TYP_INT32 & 0x1F) && (codeTemp.fitNum & IFIT_U32)) break;  // 32 bit size fits unsigned with no sign extension
-            if ((code.formatp->imm2 & 8) && (codeTemp.fitNum & IFIT_I32SHIFT)) {
-                // fits with im4 << im2
-                shiftCount = bitScanForward(codeTemp.value.u);
-                codeTemp.value.u = ((codeTemp.value.u >> shiftCount) & 0xFFFFFFFF) | ((uint64_t)shiftCount << 32); // store shift count in upper half
-                break;
-            }
             return false;
         case 8:
             break;            
@@ -1630,10 +1640,10 @@ void CAssembler::checkCode1(SCode & code) {
     // details for unsigned variants
     if (code.dtype & TYP_UNS) {  // an unsigned type is specified  
         switch (code.instruction) {
-        case II_DIV:  case II_DIV_EX:  
+        case II_DIV:  case II_DIV_REV:
+        case II_DIV_EX:  
         case II_MUL_HI:  case II_MUL_EX: 
         case II_REM:  case II_SHIFT_RIGHT_S:  
-        case II_MIN:  case II_MAX:
             code.instruction |= 1;  // change to unsigned version
             break;
         default:;  // other instructions: do nothing
@@ -1643,8 +1653,12 @@ void CAssembler::checkCode1(SCode & code) {
     // handle half precision
     if (uint8_t(code.dtype) == uint8_t(TYP_FLOAT16)) {
         switch (code.instruction) {
-        case II_ADD: case II_MUL: case II_DIV: case II_MUL_ADD:
-            code.instruction |= II_ADD_H & 0xFF000;    // change to half precision instruction
+        case II_MUL_ADD: case II_DIV: case II_MAX: case II_MIN:
+            code.optionbits |= 0x20;                   // add option bit 5
+            code.etype |= XPR_OPTIONS;
+            break;
+        case II_ADD: case II_MUL: case II_COMPARE:
+            code.instruction |= II_ADD_H & 0xFF000;    // change to half precision instruction code
             break;
         case II_SUB: 
             if ((code.etype & XPR_IMMEDIATE) && !(code.etype & (XPR_MEM | XPR_REG2))) {
@@ -1682,7 +1696,9 @@ void CAssembler::checkCode1(SCode & code) {
             code.dtype = TYP_INT16;
             code.etype = (code.etype & ~ XPR_FLT) | XPR_INT;
             break;
-        case II_ADD_H: case II_SUB_H: case II_MUL_H: case II_DIV_H: case II_MUL_ADD_H:
+        case II_ADD_H: case II_SUB_H: case II_MUL_H: case II_DIV_H: case II_SQRT:
+        case II_FLOAT2INT: case II_INT2FLOAT:
+        case II_COMPARE_H: case II_FP_CATEGORY: case II_FP_CATEGORY_REDUCE:
             break;
         default:
             // no other instructions support half precision
@@ -1899,6 +1915,8 @@ void CAssembler::checkCode2(SCode & code) {
         code.etype = (code.etype & ~XPR_FLT) | XPR_INT;
         //code.value.i = (int64_t)code.value.d;
         code.value.i = value0;
+        // reinterpret constant as integer
+        fitConstant(code);
     }
     if ((code.etype & XPR_INT) && !(code.etype & (XPR_LIMIT | XPR_INT2))) {
         // check if value fits specified operand type
@@ -1910,6 +1928,8 @@ void CAssembler::checkCode2(SCode & code) {
             ok = code.fitNum & (IFIT_I16 | IFIT_U16);  break;
         case TYP_INT32 & 0x1F:
             ok = code.fitNum & (IFIT_I32 | IFIT_U32);  break;
+        case TYP_INT64 & 0x1F:
+            break;
         }
         if (!ok && (instructionlistId[code.instr1].opimmediate & ~0x10) != OPI_INT32) {
             errors.reportLine(ERR_CONSTANT_TOO_LARGE);
@@ -1921,9 +1941,12 @@ void CAssembler::checkCode2(SCode & code) {
         errors.reportLine(ERR_CANNOT_HAVE_OPTION);
     }
 
-    // details for unsigned variants
+    // details for unsigned compare
     if (code.dtype & TYP_UNS) {  // an unsigned type is specified  
-        if ((variant & VARIANT_U3) && code.instruction == II_COMPARE && code.optionbits) code.optionbits |= 8;  // unsigned compare
+        if ((variant & VARIANT_U3) && code.optionbits && code.instruction == II_COMPARE) {
+            code.optionbits |= 8;  // compare needs unsigned bit only if there is at least one other option bit
+            code.etype |= XPR_OPTIONS;
+        }
     }
 
     if (section) code.section = section;  // insert section

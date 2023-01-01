@@ -1,14 +1,14 @@
 /****************************  disasm2.cpp   ********************************
 * Author:        Agner Fog
 * Date created:  2017-04-26
-* Last modified: 2021-07-16
-* Version:       1.11
+* Last modified: 2022-12-27
+* Version:       1.12
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        disassem.h
 * Description:
 * Disassembler for ForwardCom
 *
-* Copyright 2007-2021 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2007-2022 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 #include "stdafx.h"
 
@@ -763,7 +763,7 @@ void CDisassembler::writeInstruction() {
         if (fInstr->imm2 & 0x80) {
             iRecSearch.op1 = pInstr->b[0];                 // OPJ is in IM1
             if (fInstr->imm2 & 0x40) iRecSearch.op1 = 63;  // OPJ has fixed value
-            if (fInstr->imm2 & 0x10) iRecSearch.op1 = pInstr->b[7];  // OPJ is in upper part of IM2
+            if (fInstr->imm2 & 0x10) iRecSearch.op1 = pInstr->b[7];  // OPJ is in upper part of IM6
         }
         // Set op1 for template D
         if (fInstr->tmplate == 0xD) iRecSearch.op1 &= 0xF8;
@@ -925,8 +925,8 @@ void CDisassembler::writeNormalInstruction() {
         if ((variant & VARIANT_U0) && operandType < 5 && !debugMode) outFile.put('u');   // Unsigned
         else if (variant & VARIANT_U3 && operandType < 5) {                
             // Unsigned if option bit 5 is set. 
-            // Option bit is in IM3 in E formats
-            if (fInstr->tmplate == 0xE && (fInstr->imm2 & 2) && (pInstr->a.im3 & 0x8) && !debugMode) {
+            // Option bit is in IM5 in E formats
+            if (fInstr->tmplate == 0xE && (fInstr->imm2 & 2) && (pInstr->a.im5 & 0x8) && !debugMode) {
                 outFile.put('u');
             }
         }
@@ -1045,12 +1045,12 @@ void CDisassembler::writeNormalInstruction() {
                 }
             }
         }
-        // write options = IM3, if IM3 is used and not already written by writeImmediateOperand
+        // write options = IM5, if IM5 is used and not already written by writeImmediateOperand
         if ((variant & VARIANT_On) && (fInstr->imm2 & 2) 
         && (fInstr->category == 3 || (iRecord->opimmediate != 0 && iRecord->opimmediate != OPI_INT886))
             ) {
             outFile.put(", options="); 
-            outFile.putHex(pInstr->a.im3); 
+            outFile.putHex(pInstr->a.im5); 
         }
     }
 }
@@ -1155,7 +1155,7 @@ void CDisassembler::writeCodeComment() {
     }
 
     if (fInstr->tmplate == 0xE && instrLength > 1) {                       // format E
-        // Write format_template op1.op2 ot rd.rs.rt.ru mask IM2 IM3
+        // Write format_template op1.op2 ot rd.rs.rt.ru mask IM4 IM5
         outFile.putHex((format >> 8) & 0xF, 0); outFile.putHex(uint8_t(format), 2); outFile.put('_'); // format
         outFile.putHex(uint8_t(fInstr->tmplate), 0); outFile.put(' '); 
         outFile.putHex(uint8_t(pInstr->a.op1), 2); outFile.put('.'); // op1.op2
@@ -1170,11 +1170,11 @@ void CDisassembler::writeCodeComment() {
         if (pInstr->a.mask != 7) outFile.putHex(pInstr->a.mask, 0); // mask
         else outFile.put('_'); // no mask
         outFile.put(' ');
-        outFile.putHex(pInstr->s[2], 2);  outFile.put(' ');  // IM2
-        outFile.putHex(uint8_t(pInstr->a.im3), 2);           // IM3
+        outFile.putHex(pInstr->s[2], 2);  outFile.put(' ');  // IM4
+        outFile.putHex(uint8_t(pInstr->a.im5), 2);           // IM5
         if (instrLength == 3) {
             outFile.put(' ');
-            outFile.putHex(pInstr->i[2], 2);                 // IM4
+            outFile.putHex(pInstr->i[2], 2);                 // IM7
         }
     }
     else if (fInstr->tmplate == 0xD) {
@@ -1182,7 +1182,7 @@ void CDisassembler::writeCodeComment() {
         outFile.putHex((format >> 8) & 0xF, 0); outFile.putHex(uint8_t(format), 2); outFile.put('_');
         outFile.putHex(uint8_t(fInstr->tmplate), 0); outFile.put(' ');
         outFile.putHex(uint8_t(pInstr->a.op1), 2); outFile.put(' ');
-        outFile.putHex(uint32_t(pInstr->d.im2 & 0xFFFFFF), 0);
+        outFile.putHex(uint32_t(pInstr->d.im3 & 0xFFFFFF), 0);
     }
     else {
         // Write format_template op1 ot rd.rs.rt mask
@@ -1468,8 +1468,8 @@ void CDisassembler::writeImmediateOperand() {
     // Value is not relocated
     
     /*if ((variant & VARIANT_M1) && (fInstr->tmplate) == 0xE && (fInstr->opAvail & 2)) {
-        // VARIANT_M1: immediate operand is in IM3
-        outFile.putDecimal(pInstr->a.im3);
+        // VARIANT_M1: immediate operand is in IM5
+        outFile.putDecimal(pInstr->a.im5);
         return;
     } */
     const uint8_t * bb = pInstr->b;  // use this for avoiding pedantic warnings from Gnu compiler when type casting
@@ -1514,13 +1514,13 @@ void CDisassembler::writeImmediateOperand() {
                 else outFile.putHex(uint8_t(x), 1);   
                 break;
             case 2: 
-                if ((fInstr->imm2 & 4) && pInstr->a.im3 && !(variant & VARIANT_On)) {  // constant is IM2 << IM3
+                if ((fInstr->imm2 & 4) && pInstr->a.im5 && !(variant & VARIANT_On)) {  // constant is IM4 << IM5
                     if ((int16_t)x < 0) {
                         outFile.put('-');  x = -x;
                     }
                     outFile.putHex(uint16_t(x), 1);
                     outFile.put(" << ");
-                    outFile.putDecimal(pInstr->a.im3);
+                    outFile.putDecimal(pInstr->a.im5);
                 }
                 else if (operandType > 1) {
                     outFile.putDecimal((int32_t)x, 1);  // sign extend to larger size
@@ -1531,13 +1531,13 @@ void CDisassembler::writeImmediateOperand() {
                 break;
             default:
             case 4:  
-                if ((fInstr->imm2 & 8) && pInstr->a.im2) {  // constant is IM4 << IM2
+                if ((fInstr->imm2 & 8) && pInstr->a.im4) {  // constant is IM7 << IM4
                     if ((int32_t)x < 0) {
                         outFile.put('-');  x = -x;
                     }
                     outFile.putHex(uint32_t(x), 1);
                     outFile.put(" << ");
-                    outFile.putDecimal(pInstr->a.im2);
+                    outFile.putDecimal(pInstr->a.im4);
                 }
                 else if (operandType <= 2) outFile.putHex(uint32_t(x), 1);  
                 else if (operandType == 5 || operandType == 6) {
@@ -1599,10 +1599,10 @@ void CDisassembler::writeImmediateOperand() {
             outFile.putHex(uint8_t(x), 1);  outFile.put(", ");
             outFile.putHex(uint8_t(x >> 8), 1);
             break;
-        case OPI_INT886:                     // Three unsigned integers, including IM3
+        case OPI_INT886:                     // Three unsigned integers, including IM5
             outFile.putDecimal(uint8_t(x));  outFile.put(", ");
             outFile.putDecimal(uint8_t(x >> 8));  outFile.put(", ");
-            outFile.putDecimal(uint8_t(pInstr->a.im3));
+            outFile.putDecimal(uint8_t(pInstr->a.im5));
             break;
         case OPI_2INT16:                     // Two 16-bit unsigned integers
             outFile.putHex(uint16_t(x >> 16), 1);  outFile.put(", ");
@@ -1715,8 +1715,15 @@ static const char * operandTypeNames[8] = {
     "int8", "int16", "int32", "int64", "int128", "float", "double", "float128 "};
 
 void CDisassembler::writeOperandType(uint32_t ot) {
-    if ((variant & VARIANT_H0) && ot == 1) outFile.put("float16");
-    else outFile.put(operandTypeNames[ot & 7]);
+    if ((variant & VARIANT_H0) && ot == 1) {
+        outFile.put("float16");
+    }
+    else if ((variant & VARIANT_H5) && ot == 1 && fInstr->tmplate == 0xE && (pInstr->a.im5 & 0x20)) {
+        outFile.put("float16");
+    }
+    else {
+        outFile.put(operandTypeNames[ot & 7]);
+    }
 }
 
 

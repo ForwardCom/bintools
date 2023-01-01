@@ -1,14 +1,14 @@
 /****************************  disasm1.cpp   ********************************
 * Author:        Agner Fog
 * Date created:  2017-04-26
-* Last modified: 2021-03-30
-* Version:       1.11
+* Last modified: 2022-12-22
+* Version:       1.12
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        disassem.h
 * Description:   Disassembler
 * Disassembler for ForwardCom
 *
-* Copyright 2007-2021 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2007-2022 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 #include "stdafx.h"
 
@@ -58,6 +58,7 @@ uint64_t interpretTemplateVariants(const char * s) {
             continue;
         case 'H':
             if (d == '0') v |= VARIANT_H0; // H0
+            if (d == '5') v |= VARIANT_H5; // H5
             continue;
         case 'X':
             v |= uint64_t(((d-'0') & 0xF) | 0x10) << 32; // X0 - X9
@@ -1092,3 +1093,7 @@ void CDisassembler::getOutFile(CTextFileBuffer & buffer) {
     buffer.copy(outFile);
 }
 
+CDynamicArray<SInstruction2> & CDisassembler::getInstructionList() { 
+    // get instructionlist
+    return instructionlist;
+}

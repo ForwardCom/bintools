@@ -1,8 +1,8 @@
 /****************************  main.cpp   *******************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2020-11-25
-* Version:       1.11
+* Last modified: 2023-01-01
+* Version:       1.12
 * Project:       Binary tools for ForwardCom instruction set
 * Description:   This includes assembler, disassembler, linker, library
 *                manager, and emulator in one program
@@ -12,7 +12,7 @@
 *
 * For detailed instructions, see forwardcom.pdf
 *
-* (c) Copyright 2017-2020 GNU General Public License version 3
+* (c) Copyright 2017-2023 GNU General Public License version 3
 * http://www.gnu.org/licenses
 *****************************************************************************/
 
@@ -238,14 +238,14 @@ uint16_t float2half(float x, bool supportSubnormal) {
         };
     } v;
     u.f = x;
-    v.sign = u.sign;
+    v.expo = u.expo - 0x70;                      // adjust exponent bias
     v.mant = u.mant >> 13;                       // get upper part of mantissa
     if (u.mant & (1 << 12)) {                    // round to nearest or even
         if ((u.mant & ((1 << 12) - 1)) || (v.mant & 1)) { // round up if odd or remaining bits are nonzero
-            v.h++;                               // overflow here will give infinity
+            v.h++;                               // overflow here will carry into exponent
         }
     }
-    v.expo = u.expo - 0x70;
+    v.sign = u.sign;                             // copy sign bit
     if (u.expo == 0xFF) {                        // infinity or nan
         v.expo = 0x1F;
         if (u.mant != 0) {                       // Nan
@@ -260,7 +260,9 @@ uint16_t float2half(float x, bool supportSubnormal) {
         if (supportSubnormal) {
             u.expo += 24;
             u.sign = 0;
-            v.mant = int(u.f) & 0x3FF;
+            int mants = int(u.f);                // convert subnormal
+            v.mant = mants & 0x3FF;
+            if (mants == 0x400) v.expo = 1;      // rounded to normal
         }
         else {        
             v.mant = 0;                          // underflow -> 0
