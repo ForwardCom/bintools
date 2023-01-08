@@ -1,7 +1,7 @@
 /****************************    assem4.cpp    ********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2022-12-28
+* Last modified: 2023-01-07
 * Version:       1.12
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.cpp
@@ -9,7 +9,7 @@
 * Module for assembling ForwardCom .as files.
 * This module contains:
 * pass3(): Interpretation of code lines.
-* Copyright 2017-2022 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2023 GNU General Public License http://www.gnu.org/licenses
 ******************************************************************************/
 #include "stdafx.h"
 
@@ -466,7 +466,7 @@ int CAssembler::fitConstant(SCode & code) {
             // integer value in value0 so that we can undo the conversion in case an instruction with
             // floating point type needs an integer operand.
             dvalue = (double)value;  // value as float
-            if (code.etype & XPR_INT) {
+            if ((code.etype & XPR_INT) && !(variant & VARIANT_I2)) {
                 // convert integer constant to float
                 code.value.d = dvalue;
                 code.etype = (code.etype & ~XPR_IMMEDIATE) | XPR_FLT;
@@ -1353,8 +1353,8 @@ bool CAssembler::instructionFits(SCode const & code, SCode & codeTemp, uint32_t 
                     break;
                 }
             }
-            else {  // set shift count to zero
-                codeTemp.value.u &= 0xFFFFFFFF;
+            else if ((code.formatp->format2 & ~0x020) == 0x307) {
+                codeTemp.value.u &= 0xFFFFFFFF;                    // set shift count to zero for format 3.0.7 and 3.2.7
             }
             if ((code.dtype & 0xFF) == (TYP_FLOAT32 & 0xFF))  break;  // float32 must be rounded to fit
             if (codeTemp.fitNum & (IFIT_I32 | FFIT_32)) break;  // fits

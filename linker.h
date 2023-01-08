@@ -1,14 +1,14 @@
 /****************************  linker.h   ************************************
 * Author:        Agner Fog
 * date created:  2017-11-14
-* Last modified: 2020-05-19
-* Version:       1.10
+* Last modified: 2023-01-08
+* Version:       1.12
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        linker.h
 * Description:
 * header file for linker
 *
-* Copyright 2017-2020 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2023 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 // Structure for list of imported library modules
@@ -42,7 +42,7 @@ static inline bool operator < (SRelinkModule const & a, SRelinkModule const & b)
 
 // operator < for sorting event list
 static inline bool operator < (ElfFwcEvent const & a, ElfFwcEvent const & b) {
-    if (a.event != b.event) return a.event < b.event;
+    if (a.event_id != b.event_id) return a.event_id < b.event_id;
     if (a.key != b.key) return a.key < b.key;
     return a.priority > b.priority;
 }

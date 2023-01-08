@@ -1,7 +1,7 @@
 /****************************    elf_forwardcom.h    **************************
 * Author:              Agner Fog
 * Date created:        2016-06-25
-* Last modified:       2023-01-01
+* Last modified:       2023-01-08
 * ForwardCom version:  1.12
 * Program version:     1.12
 * Project:             ForwardCom binary tools
@@ -11,7 +11,7 @@
 * To do: define stack size and heap size information
 * To do: define memory reservation for runtime linking
 * To do: define formats for debug information
-* To do: define access rights of executable file or device driver
+* To do: define access rights for executable file or device driver
 *
 * Copyright 2016-2023 GNU General Public License v. 3
 * http://www.gnu.org/licenses/gpl.html
@@ -53,7 +53,7 @@ shared objects are not used in the ForwardCom system.
 ******************************************************************************/
 
 #ifndef ELF_FORW_H
-#define ELF_FORW_H  111    // version number
+#define ELF_FORW_H  112      // version number
 
 
 //--------------------------------------------------------------------------
@@ -61,32 +61,32 @@ shared objects are not used in the ForwardCom system.
 //--------------------------------------------------------------------------
 
 struct ElfFwcEhdr {
-  uint8_t   e_ident[16];   // Magic number and other info
-                           // e_ident[EI_CLASS] = ELFCLASS64: file class
-                           // e_ident[EI_DATA] = ELFDATA2LSB: 2's complement, little endian
-                           // e_ident[EI_VERSION] = EV_CURRENT: current ELF version
-                           // e_ident[EI_OSABI] = ELFOSABI_FORWARDCOM
-                           // e_ident[EI_ABIVERSION] = 0 
-                           // The rest is unused padding   
-  uint16_t  e_type;        // Object file type
-  uint16_t  e_machine;     // Architecture
-  uint32_t  e_version;     // Object file version
-  uint64_t  e_entry;       // Entry point virtual address
-  uint64_t  e_phoff;       // Program header table file offset
-  uint64_t  e_shoff;       // Section header table file offset
-  uint32_t  e_flags;       // Processor-specific flags. We may define any values for these flags
-  uint16_t  e_ehsize;      // ELF header size in bytes
-  uint16_t  e_phentsize;   // Program header table entry size
-  uint16_t  e_phnum;       // Program header table entry count
-  uint16_t  e_shentsize;   // Section header table entry size
-  uint32_t  e_shnum;       // Section header table entry count (was uint16_t)
-  uint32_t  e_shstrndx;    // Section header string table index (was uint16_t)
-  // additional fields for ForwardCom
-  uint32_t  e_stackvect;   // number of vectors to store on stack. multiply by max vector length and add to stacksize
-  uint64_t  e_stacksize;   // size of stack for main thread
-  uint64_t  e_ip_base;     // __ip_base relative to first ip based segment
-  uint64_t  e_datap_base;  // __datap_base relative to first datap based segment
-  uint64_t  e_threadp_base;// __threadp_base relative to first threadp based segment
+  uint8_t   e_ident[16];     // Magic number and other info
+                             // e_ident[EI_CLASS] = ELFCLASS64: file class
+                             // e_ident[EI_DATA] = ELFDATA2LSB: 2's complement, little endian
+                             // e_ident[EI_VERSION] = EV_CURRENT: current ELF version
+                             // e_ident[EI_OSABI] = ELFOSABI_FORWARDCOM
+                             // e_ident[EI_ABIVERSION] = 0 
+                             // The rest is unused padding   
+  uint16_t  e_type;          // Object file type
+  uint16_t  e_machine;       // Architecture
+  uint32_t  e_version;       // Object file version
+  uint64_t  e_entry;         // Entry point virtual address
+  uint64_t  e_phoff;         // Program header table file offset
+  uint64_t  e_shoff;         // Section header table file offset
+  uint32_t  e_flags;         // Processor-specific flags. We may define any values for these flags
+  uint16_t  e_ehsize;        // ELF header size in bytes
+  uint16_t  e_phentsize;     // Program header table entry size
+  uint16_t  e_phnum;         // Program header table entry count
+  uint16_t  e_shentsize;     // Section header table entry size
+  uint32_t  e_shnum;         // Section header table entry count (was uint16_t)
+  uint32_t  e_shstrndx;      // Section header string table index (was uint16_t)
+  // additional fields for ForwardCom:
+  uint32_t  e_stackvect;     // number of vectors to store on stack. multiply by max vector length and add to stacksize
+  uint64_t  e_stacksize;     // size of stack for main thread
+  uint64_t  e_ip_base;       // __ip_base relative to first ip based segment
+  uint64_t  e_datap_base;    // __datap_base relative to first datap based segment
+  uint64_t  e_threadp_base;  // __threadp_base relative to first threadp based segment
 };
 
 
@@ -94,129 +94,128 @@ struct ElfFwcEhdr {
 // The macros under each EI_* macro are the values the byte may have. 
 
 // Conglomeration of the identification bytes, for easy testing as a word.
-//#define ELFMAG        "\177ELF"
-#define ELFMAG        0x464C457F  // 0x7F 'E' 'L' 'F'
+#define ELFMAG   0x464C457F  // 0x7F 'E' 'L' 'F'
 
 // File class
-#define EI_CLASS      4    // File class byte index
-#define ELFCLASSNONE  0    // Invalid class
-#define ELFCLASS32    1    // 32-bit objects
-#define ELFCLASS64    2    // 64-bit objects *
+#define EI_CLASS      4      // File class byte index
+#define ELFCLASSNONE  0      // Invalid class
+#define ELFCLASS32    1      // 32-bit objects
+#define ELFCLASS64    2      // 64-bit objects *
 #define ELFCLASSNUM   3
 
-#define EI_DATA       5    // Data encoding byte index
-#define ELFDATANONE   0    // Invalid data encoding
-#define ELFDATA2LSB   1    // 2's complement, little endian *
-#define ELFDATA2MSB   2    // 2's complement, big endian
+#define EI_DATA       5      // Data encoding byte index
+#define ELFDATANONE   0      // Invalid data encoding
+#define ELFDATA2LSB   1      // 2's complement, little endian *
+#define ELFDATA2MSB   2      // 2's complement, big endian
 #define ELFDATANUM    3
 
-#define EI_VERSION    6    // File version byte index
+#define EI_VERSION    6      // File version byte index
 
-#define EI_OSABI               7  // OS ABI identification
-#define ELFOSABI_SYSV          0  // UNIX System V ABI
-#define ELFOSABI_HPUX          1  // HP-UX 
-#define ELFOSABI_ARM          97  // ARM 
-#define ELFOSABI_STANDALONE  255  // Standalone (embedded) application
-#define ELFOSABI_FORWARDCOM  250  // ForwardCom 
+#define EI_OSABI               7       // OS ABI identification
+#define ELFOSABI_SYSV          0       // UNIX System V ABI
+#define ELFOSABI_HPUX          1       // HP-UX 
+#define ELFOSABI_ARM          97       // ARM 
+#define ELFOSABI_STANDALONE  255       // Standalone (embedded) application
+#define ELFOSABI_FORWARDCOM  250       // ForwardCom 
 
-#define EI_ABIVERSION    8    // x86 ABI version
-#define EI_ABIVERSION_FORWARDCOM    1    // ForwardCom ABI version
+#define EI_ABIVERSION    8             // x86 ABI version
+#define EI_ABIVERSION_FORWARDCOM  1    // ForwardCom ABI version
 
-#define EI_PAD           9    // Byte index of padding bytes
+#define EI_PAD           9   // Byte index of padding bytes
 
 // Legal values for e_type (object file type). 
-#define ET_NONE          0    // No file type
-#define ET_REL           1    // Relocatable file
-#define ET_EXEC          2    // Executable file
-#define ET_DYN           3    // Shared object file (not used by ForwardCom)
-#define ET_CORE          4    // Core file 
-#define ET_NUM           5    // Number of defined types
-#define ET_LOOS     0xfe00    // OS-specific range start
-#define ET_HIOS     0xfeff    // OS-specific range end
-#define ET_LOPROC   0xff00    // Processor-specific range start
-#define ET_HIPROC   0xffff    // Processor-specific range end
+#define ET_NONE          0   // No file type
+#define ET_REL           1   // Relocatable file
+#define ET_EXEC          2   // Executable file
+#define ET_DYN           3   // Shared object file (not used by ForwardCom)
+#define ET_CORE          4   // Core file 
+#define ET_NUM           5   // Number of defined types
+#define ET_LOOS     0xfe00   // OS-specific range start
+#define ET_HIOS     0xfeff   // OS-specific range end
+#define ET_LOPROC   0xff00   // Processor-specific range start
+#define ET_HIPROC   0xffff   // Processor-specific range end
 
 // Legal values for e_machine (architecture)
-#define EM_NONE          0     // No machine
-#define EM_M32           1     // AT&T WE 32100
-#define EM_SPARC         2     // SUN SPARC
-#define EM_386           3     // Intel 80386
-#define EM_68K           4     // Motorola m68k family
-#define EM_88K           5     // Motorola m88k family
-#define EM_860           7     // Intel 80860
-#define EM_MIPS          8     // MIPS R3000 big-endian
-#define EM_S370          9     // IBM System/370
-#define EM_MIPS_RS3_LE  10     // MIPS R3000 little-endian
-#define EM_PARISC       15     // HPPA
-#define EM_VPP500       17     // Fujitsu VPP500
-#define EM_SPARC32PLUS  18     // Sun's "v8plus"
-#define EM_960          19     // Intel 80960
-#define EM_PPC          20     // PowerPC
-#define EM_PPC64        21     // PowerPC 64-bit
-#define EM_S390         22     // IBM S390
-#define EM_V800         36     // NEC V800 series
-#define EM_FR20         37     // Fujitsu FR20
-#define EM_RH32         38     // TRW RH-32
-#define EM_RCE          39     // Motorola RCE
-#define EM_ARM          40     // ARM
-#define EM_FAKE_ALPHA   41     // Digital Alpha
-#define EM_SH           42     // Hitachi SH
-#define EM_SPARCV9      43     // SPARC v9 64-bit
-#define EM_TRICORE      44     // Siemens Tricore
-#define EM_ARC          45     // Argonaut RISC Core
-#define EM_H8_300       46     // Hitachi H8/300
-#define EM_H8_300H      47     // Hitachi H8/300H
-#define EM_H8S          48     // Hitachi H8S
-#define EM_H8_500       49     // Hitachi H8/500
-#define EM_IA_64        50     // Intel Merced
-#define EM_MIPS_X       51     // Stanford MIPS-X
-#define EM_COLDFIRE     52     // Motorola Coldfire
-#define EM_68HC12       53     // Motorola M68HC12
-#define EM_MMA          54     // Fujitsu MMA Multimedia Accelerator
-#define EM_PCP          55     // Siemens PCP
-#define EM_NCPU         56     // Sony nCPU embeeded RISC
-#define EM_NDR1         57     // Denso NDR1 microprocessor
-#define EM_STARCORE     58     // Motorola Start*Core processor
-#define EM_ME16         59     // Toyota ME16 processor
-#define EM_ST100        60     // STMicroelectronic ST100 processor
-#define EM_TINYJ        61     // Advanced Logic Corp. Tinyj emb.fam
-#define EM_X86_64       62     // AMD x86-64 architecture
-#define EM_PDSP         63     // Sony DSP Processor
-#define EM_FX66         66     // Siemens FX66 microcontroller
-#define EM_ST9PLUS      67     // STMicroelectronics ST9+ 8/16 mc
-#define EM_ST7          68     // STmicroelectronics ST7 8 bit mc
-#define EM_68HC16       69     // Motorola MC68HC16 microcontroller
-#define EM_68HC11       70     // Motorola MC68HC11 microcontroller
-#define EM_68HC08       71     // Motorola MC68HC08 microcontroller
-#define EM_68HC05       72     // Motorola MC68HC05 microcontroller
-#define EM_SVX          73     // Silicon Graphics SVx
-#define EM_AT19         74     // STMicroelectronics ST19 8 bit mc
-#define EM_VAX          75     // Digital VAX
-#define EM_CRIS         76     // Axis Communications 32-bit embedded processor
-#define EM_JAVELIN      77     // Infineon Technologies 32-bit embedded processor
-#define EM_FIREPATH     78     // Element 14 64-bit DSP Processor
-#define EM_ZSP          79     // LSI Logic 16-bit DSP Processor
-#define EM_MMIX         80     // Donald Knuth's educational 64-bit processor
-#define EM_HUANY        81     // Harvard University machine-independent object files
-#define EM_PRISM        82     // SiTera Prism
-#define EM_AVR          83     // Atmel AVR 8-bit microcontroller
-#define EM_FR30         84     // Fujitsu FR30
-#define EM_D10V         85     // Mitsubishi D10V
-#define EM_D30V         86     // Mitsubishi D30V
-#define EM_V850         87     // NEC v850
-#define EM_M32R         88     // Mitsubishi M32R
-#define EM_MN10300      89     // Matsushita MN10300
-#define EM_MN10200      90     // Matsushita MN10200
-#define EM_PJ           91     // picoJava
-#define EM_OPENRISC     92     // OpenRISC 32-bit embedded processor
+#define EM_NONE          0   // No machine
+#define EM_M32           1   // AT&T WE 32100
+#define EM_SPARC         2   // SUN SPARC
+#define EM_386           3   // Intel 80386
+#define EM_68K           4   // Motorola m68k family
+#define EM_88K           5   // Motorola m88k family
+#define EM_860           7   // Intel 80860
+#define EM_MIPS          8   // MIPS R3000 big-endian
+#define EM_S370          9   // IBM System/370
+#define EM_MIPS_RS3_LE  10   // MIPS R3000 little-endian
+#define EM_PARISC       15   // HPPA
+#define EM_VPP500       17   // Fujitsu VPP500
+#define EM_SPARC32PLUS  18   // Sun's "v8plus"
+#define EM_960          19   // Intel 80960
+#define EM_PPC          20   // PowerPC
+#define EM_PPC64        21   // PowerPC 64-bit
+#define EM_S390         22   // IBM S390
+#define EM_V800         36   // NEC V800 series
+#define EM_FR20         37   // Fujitsu FR20
+#define EM_RH32         38   // TRW RH-32
+#define EM_RCE          39   // Motorola RCE
+#define EM_ARM          40   // ARM
+#define EM_FAKE_ALPHA   41   // Digital Alpha
+#define EM_SH           42   // Hitachi SH
+#define EM_SPARCV9      43   // SPARC v9 64-bit
+#define EM_TRICORE      44   // Siemens Tricore
+#define EM_ARC          45   // Argonaut RISC Core
+#define EM_H8_300       46   // Hitachi H8/300
+#define EM_H8_300H      47   // Hitachi H8/300H
+#define EM_H8S          48   // Hitachi H8S
+#define EM_H8_500       49   // Hitachi H8/500
+#define EM_IA_64        50   // Intel Merced
+#define EM_MIPS_X       51   // Stanford MIPS-X
+#define EM_COLDFIRE     52   // Motorola Coldfire
+#define EM_68HC12       53   // Motorola M68HC12
+#define EM_MMA          54   // Fujitsu MMA Multimedia Accelerator
+#define EM_PCP          55   // Siemens PCP
+#define EM_NCPU         56   // Sony nCPU embeeded RISC
+#define EM_NDR1         57   // Denso NDR1 microprocessor
+#define EM_STARCORE     58   // Motorola Start*Core processor
+#define EM_ME16         59   // Toyota ME16 processor
+#define EM_ST100        60   // STMicroelectronic ST100 processor
+#define EM_TINYJ        61   // Advanced Logic Corp. Tinyj emb.fam
+#define EM_X86_64       62   // AMD x86-64 architecture
+#define EM_PDSP         63   // Sony DSP Processor
+#define EM_FX66         66   // Siemens FX66 microcontroller
+#define EM_ST9PLUS      67   // STMicroelectronics ST9+ 8/16 mc
+#define EM_ST7          68   // STmicroelectronics ST7 8 bit mc
+#define EM_68HC16       69   // Motorola MC68HC16 microcontroller
+#define EM_68HC11       70   // Motorola MC68HC11 microcontroller
+#define EM_68HC08       71   // Motorola MC68HC08 microcontroller
+#define EM_68HC05       72   // Motorola MC68HC05 microcontroller
+#define EM_SVX          73   // Silicon Graphics SVx
+#define EM_AT19         74   // STMicroelectronics ST19 8 bit mc
+#define EM_VAX          75   // Digital VAX
+#define EM_CRIS         76   // Axis Communications 32-bit embedded processor
+#define EM_JAVELIN      77   // Infineon Technologies 32-bit embedded processor
+#define EM_FIREPATH     78   // Element 14 64-bit DSP Processor
+#define EM_ZSP          79   // LSI Logic 16-bit DSP Processor
+#define EM_MMIX         80   // Donald Knuth's educational 64-bit processor
+#define EM_HUANY        81   // Harvard University machine-independent object files
+#define EM_PRISM        82   // SiTera Prism
+#define EM_AVR          83   // Atmel AVR 8-bit microcontroller
+#define EM_FR30         84   // Fujitsu FR30
+#define EM_D10V         85   // Mitsubishi D10V
+#define EM_D30V         86   // Mitsubishi D30V
+#define EM_V850         87   // NEC v850
+#define EM_M32R         88   // Mitsubishi M32R
+#define EM_MN10300      89   // Matsushita MN10300
+#define EM_MN10200      90   // Matsushita MN10200
+#define EM_PJ           91   // picoJava
+#define EM_OPENRISC     92   // OpenRISC 32-bit embedded processor
 #define EM_RISCV        243    // RISC-V
 #define EM_OR32         0x8472 // Open RISC
 #define EM_ALPHA        0x9026 // Digital Alpha
 #define EM_FORWARDCOM   0x6233 // ForwardCom preliminary value (constructed from F=6, W=23, C=3)
 
 // Legal values for e_version (version).
-#define EV_NONE          0    // Invalid ELF version
-#define EV_CURRENT       1    // Current version
+#define EV_NONE          0   // Invalid ELF version
+#define EV_CURRENT       1   // Current version
 #define EV_NUM           2
 
 // Values for e_flags (file header flags)
@@ -261,12 +260,12 @@ struct ElfFwcShdr {
 #define SHT_STACKSIZE            0x41  // Records for calculation of stack size
 #define SHT_ACCESSRIGHTS         0x42  // Records for indicating desired access rights of executable file or device driver
 // obsolete types, not belonging to ForwardCom
-//#define SHT_REL                     9  // Relocation entries, no addends
-//#define SHT_HASH                    5  // Symbol hash table
-//#define SHT_DYNAMIC                 6  // Dynamic linking information
-//#define SHT_DYNSYM                0xB  // Dynamic linker symbol table
-//#define SHT_SHLIB                 0xA  // Reserved
-//#define SHT_GROUP                0x11  // Section group
+//#define SHT_REL                   9  // Relocation entries, no addends
+//#define SHT_HASH                  5  // Symbol hash table
+//#define SHT_DYNAMIC               6  // Dynamic linking information
+//#define SHT_DYNSYM              0xB  // Dynamic linker symbol table
+//#define SHT_SHLIB               0xA  // Reserved
+//#define SHT_GROUP              0x11  // Section group
 
 // Legal values for sh_flags (section flags). 
 #define SHF_EXEC                  0x1  // Executable
@@ -307,18 +306,18 @@ struct Elf64_Sym {
 
 // Symbol table entry, ForwardCom
 struct ElfFwcSym {
-  uint32_t  st_name;       // Symbol name (string table index)
-  uint8_t   st_type;       // Symbol type
-  uint8_t   st_bind;       // Symbol binding
+  uint32_t  st_name;         // Symbol name (string table index)
+  uint8_t   st_type;         // Symbol type
+  uint8_t   st_bind;         // Symbol binding
   uint8_t   unused1, unused2;// Alignment fillers
-  uint32_t  st_other;      // Symbol visibility and additional type information
-  uint32_t  st_section;    // Section header index (zero for external symbols)
-  uint64_t  st_value;      // Symbol value
-  uint32_t  st_unitsize;   // Size of array elements or data unit. Data type is given by st_unitsize and STV_FLOAT
-                           // st_unitsize is 4 or more for executable code
-  uint32_t  st_unitnum;    // Symbol size = st_unitsize * st_unitnum 
-  uint32_t  st_reguse1;    // Register use. bit 0-31 = r0-r31
-  uint32_t  st_reguse2;    // Register use. bit 0-31 = v0-v31
+  uint32_t  st_other;        // Symbol visibility and additional type information
+  uint32_t  st_section;      // Section header index (zero for external symbols)
+  uint64_t  st_value;        // Symbol value
+  uint32_t  st_unitsize;     // Size of array elements or data unit. Data type is given by st_unitsize and STV_FLOAT
+                             // st_unitsize is 4 or more for executable code
+  uint32_t  st_unitnum;      // Symbol size = st_unitsize * st_unitnum 
+  uint32_t  st_reguse1;      // Register use. bit 0-31 = r0-r31
+  uint32_t  st_reguse2;      // Register use. bit 0-31 = v0-v31
 };
 
 // Values for st_bind: symbol binding
@@ -344,28 +343,28 @@ struct ElfFwcSym {
 #define STT_TYPENAME     0x14     // Symbol is a type name used during assembly. Should not occur in object file
 
 // Symbol visibility specification encoded in the st_other field. 
-#define STV_DEFAULT         0     // Default symbol visibility rules
-//#define STV_INTERNAL        1     // Processor specific hidden class
-#define STV_HIDDEN         0x20     // Symbol unavailable in other modules
-//#define STV_PROTECTED       3     // Not preemptible, not exported
+#define STV_DEFAULT         0          // Default symbol visibility rules
+//#define STV_INTERNAL        1        // Processor specific hidden class
+#define STV_HIDDEN         0x20        // Symbol unavailable in other modules
+//#define STV_PROTECTED       3        // Not preemptible, not exported
 // st_other types added for ForwardCom:
-#define STV_EXEC         SHF_EXEC    // = 0x1. Executable code
-#define STV_WRITE        SHF_WRITE   // = 0x2. Writable data
-#define STV_READ         SHF_READ    // = 0x4. Readable data
-#define STV_IP           SHF_IP      // = 0x1000. Addressed relative to IP (in executable and read-only sections)
-#define STV_DATAP        SHF_DATAP   // = 0x2000. Addressed relative to DATAP (in writeable data sections)
-#define STV_THREADP      SHF_THREADP // = 0x4000. Addressed relative to THREADP (in thrad local data sections)
-#define STV_REGUSE       0x10000     // st_reguse field contains register use information
-#define STV_FLOAT        0x20000     // st_value is a double precision floating point (with STT_CONSTANT)
-#define STV_STRING       0x40000     // st_value is an assemble-time string. Should not occur in object file
-#define STV_COMMON      0x100000     // Symbol is communal. Multiple identical instances can be joined. Unreferenced instances can be removed
-#define STV_UNWIND      0x400000     // Symbol is a table with exception handling and stack unwind information
-#define STV_DEBUG       0x800000     // Symbol is a table with debug information
-#define STV_RELINK    SHF_RELINK     // Symbol in executable file can be relinked
-#define STV_AUTOGEN   SHF_AUTOGEN    // Symbol is generated by the linker. remake when relinking
-#define STV_MAIN      0x10000000     // Main entry point in executable file
-#define STV_EXPORTED  0x20000000     // Exported from executable file
-#define STV_THREAD    0x40000000     // Thread function. Requires own stack
+#define STV_EXEC         SHF_EXEC      // = 0x1. Executable code
+#define STV_WRITE        SHF_WRITE     // = 0x2. Writable data
+#define STV_READ         SHF_READ      // = 0x4. Readable data
+#define STV_IP           SHF_IP        // = 0x1000. Addressed relative to IP (in executable and read-only sections)
+#define STV_DATAP        SHF_DATAP     // = 0x2000. Addressed relative to DATAP (in writeable data sections)
+#define STV_THREADP      SHF_THREADP   // = 0x4000. Addressed relative to THREADP (in thrad local data sections)
+#define STV_REGUSE       0x10000       // st_reguse field contains register use information
+#define STV_FLOAT        0x20000       // st_value is a double precision floating point (with STT_CONSTANT)
+#define STV_STRING       0x40000       // st_value is an assemble-time string. Should not occur in object file
+#define STV_COMMON      0x100000       // Symbol is communal. Multiple identical instances can be joined. Unreferenced instances can be removed
+#define STV_UNWIND      0x400000       // Symbol is a table with exception handling and stack unwind information
+#define STV_DEBUG       0x800000       // Symbol is a table with debug information
+#define STV_RELINK    SHF_RELINK       // Symbol in executable file can be relinked
+#define STV_AUTOGEN   SHF_AUTOGEN      // Symbol is generated by the linker. remake when relinking
+#define STV_MAIN      0x10000000       // Main entry point in executable file
+#define STV_EXPORTED  0x20000000       // Exported from executable file
+#define STV_THREAD    0x40000000       // Thread function. Requires own stack
 #define STV_SECT_ATTR (SHF_EXEC | SHF_READ | SHF_WRITE | SHF_IP | SHF_DATAP | SHF_THREADP | SHF_RELINK | SHF_AUTOGEN) // section attributes to copy to symbol
 
 
@@ -441,8 +440,8 @@ struct ElfFwcReloc {
 // All relative relocations use signed values.
 // Instructions with self-relative (IP-relative) addressing are using the END of the instruction 
 // as reference point. The r_addend field must compensate for the distance between 
-// the end of the instruction and the beginning of the address field. This will be -7 for 
-// instructions with format 2.5.3 and -4 for all other jump and call instructions. 
+// the end of the instruction and the beginning of the address field. This will be -4 for most
+// jump and call instructions. 
 // Any offset of the target may be added to r_addend. The value of r_addend is not scaled.
 // Relocations relative to an arbitrary reference point can be used in jump tables.
 // The reference point is indicated by a symbol index in r_refsym.
@@ -519,7 +518,7 @@ struct ElfFwcPhdr {
 #define PT_NOTE             4    // Auxiliary information
 #define PT_SHLIB            5    // Reserved
 #define PT_PHDR             6    // Entry for header table itself
-//#define PT_NUM              7    // Number of defined types
+//#define PT_NUM            7    // Number of defined types
 #define PT_LOOS    0x60000000    // Start of OS-specific
 #define PT_HIOS    0x6fffffff    // End of OS-specific
 #define PT_LOPROC        0x10    // Start of processor-specific
@@ -529,7 +528,7 @@ struct ElfFwcPhdr {
 // see sh_flags above
 
 /*
-// Legal values for note segment descriptor types for core files.
+// Legal values for note segment descriptor types for core files. Not used
 #define NT_PRSTATUS    1    // Contains copy of prstatus struct
 #define NT_FPREGSET    2    // Contains copy of fpregset struct
 #define NT_PRPSINFO    3    // Contains copy of prpsinfo struct
@@ -601,7 +600,7 @@ struct ElfFwcEvent {
     int32_t  functionPtr;              // scaled relative pointer to event handler function = (function_address - __ip_base) / 4
     uint32_t priority;                 // priority. Highest values are called first. Normal priority = 0x1000
     uint32_t key;                      // keyboard hotkey, menu item, or icon id for user command events
-    uint32_t event;                    // event ID
+    uint32_t event_id;                 // event ID
 };
 
 
@@ -610,6 +609,7 @@ struct ElfFwcEvent {
 //--------------------------------------------------------------------------
 
 // SHT_STACKSIZE stack table entry
+// To do: Add information for recursive function calls and indirect calls to unknown functions
 struct ElfFwcStacksize {
   uint32_t  ss_syma;                   // Public symbol index
   uint32_t  ss_symb;                   // External symbol index. Zero for frame function or to indicate own stack use
