@@ -1,7 +1,7 @@
 /****************************    assem5.cpp    ********************************
 * Author:        Agner Fog
 * Date created:  2017-09-19
-* Last modified: 2022-11-30
+* Last modified: 2023-03-08
 * Version:       1.12
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.cpp
@@ -10,7 +10,7 @@
 * This module contains functions for interpreting high level language constructs:
 * functions, branches, and loops
 *
-* Copyright 2017-2022 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2023 GNU General Public License http://www.gnu.org/licenses
 ******************************************************************************/
 #include "stdafx.h"
 
@@ -1123,6 +1123,11 @@ void CAssembler::codeForIn() {
             else errors.report(token);
             break;
         case 7:  // after '['. expect base register
+            if (token.type == TOK_XPR && expressions[token.value.w].etype & XPR_REG) {
+                // this is an alias for a register. Translate to register
+                token.type = TOK_REG;
+                token.id = expressions[token.value.w].reg1;
+            }
             if (token.type == TOK_REG) {
                 // must be general purpose register
                 if (!(token.id & REG_R)) errors.report(token.pos, token.stringLength, ERR_WRONG_REG_TYPE);
@@ -1138,6 +1143,11 @@ void CAssembler::codeForIn() {
             else errors.report(token);
             break;
         case 9:  // after '-'. expect index register
+            if (token.type == TOK_XPR && expressions[token.value.w].etype & XPR_REG) {
+                // this is an alias for a register. Translate to register
+                token.type = TOK_REG;
+                token.id = expressions[token.value.w].reg1;
+            }
             if (token.type == TOK_REG) {
                 // must be general purpose register, except r31
                 if (!(token.id & REG_R) || token.id == (REG_R|31)) errors.report(token.pos, token.stringLength, ERR_WRONG_REG_TYPE);
