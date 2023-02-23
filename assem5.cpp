@@ -1,7 +1,7 @@
 /****************************    assem5.cpp    ********************************
 * Author:        Agner Fog
 * Date created:  2017-09-19
-* Last modified: 2023-03-08
+* Last modified: 2023-02-23
 * Version:       1.12
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.cpp
@@ -1102,7 +1102,12 @@ void CAssembler::codeForIn() {
             }
             else errors.report(token);
             break;
-        case 4:  // after type. expect vector register         
+        case 4:  // after type. expect vector register
+            if (token.type == TOK_XPR && expressions[token.value.w].etype & XPR_REG) {
+                // this is an alias for a register. Translate to register
+                token.type = TOK_REG;
+                token.id = expressions[token.value.w].reg1;
+            }
             if (token.type == TOK_REG) {
                 // must be vector register
                 if (!(token.id & REG_V)) errors.report(token.pos, token.stringLength, ERR_WRONG_REG_TYPE);

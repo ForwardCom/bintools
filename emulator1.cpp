@@ -1,13 +1,13 @@
 /****************************  emulator1.cpp  ********************************
 * Author:        Agner Fog
 * date created:  2018-02-18
-* Last modified: 2022-12-22
+* Last modified: 2022-02-23
 * Version:       1.12
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
 * Basic functionality of the emulator
 *
-* Copyright 2018-2022 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2018-2023 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 #include "stdafx.h"
@@ -590,17 +590,17 @@ void CThread::decode() {
             switch (fInstr->immSize) {
             case 1:
                 parm[2].qs = parm[4].qs = *(int8_t*)pi;              // sign extend
-                if (pInstr->a.ot == 5) parm[2].f = parm[4].bs;       // convert to float
-                if (pInstr->a.ot == 6) parm[2].d = parm[4].bs;       // convert to double
+                if (operandType == 5) parm[2].f = parm[4].bs;        // convert to float
+                if (operandType == 6) parm[2].d = parm[4].bs;        // convert to double
                 break;
             case 2:
                 parm[2].qs = parm[4].qs = *(int16_t*)pi;             // sign extend
-                if (pInstr->a.ot == 5) parm[2].f = half2float(*(uint16_t*)pi); // convert from half precision
-                if (pInstr->a.ot == 6) parm[2].d = half2float(*(uint16_t*)pi); // convert from half precision
+                if (operandType == 5) parm[2].f = half2float(*(uint16_t*)pi); // convert from half precision
+                if (operandType == 6) parm[2].d = half2float(*(uint16_t*)pi); // convert from half precision
                 break;
             case 4:
                 parm[2].qs = parm[4].qs = *(int32_t*)pi;             // sign extend
-                if (pInstr->a.ot == 6) parm[2].d = *(float*)pi;      // convert to double
+                if (operandType == 6) parm[2].d = *(float*)pi;       // convert to double
                 break;
             case 8:
                 parm[2].qs = parm[4].qs = *(int64_t*)pi;  break;     // just copy
