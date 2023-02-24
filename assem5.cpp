@@ -1,7 +1,7 @@
 /****************************    assem5.cpp    ********************************
 * Author:        Agner Fog
 * Date created:  2017-09-19
-* Last modified: 2023-02-23
+* Last modified: 2023-02-24
 * Version:       1.12
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.cpp
@@ -1067,6 +1067,12 @@ void CAssembler::codeForIn() {
         if (lineError) break;
         token = tokens[tok];
 
+        if (token.type == TOK_XPR && expressions[token.value.w].etype & XPR_REG) {
+            // this is an alias for a register. Translate to register
+            token.type = TOK_REG;
+            token.id = expressions[token.value.w].reg1;
+        }
+
         switch (state) {
         case 0:  // start. expect type or 'for'
             if (token.type == TOK_TYP) {
@@ -1103,11 +1109,6 @@ void CAssembler::codeForIn() {
             else errors.report(token);
             break;
         case 4:  // after type. expect vector register
-            if (token.type == TOK_XPR && expressions[token.value.w].etype & XPR_REG) {
-                // this is an alias for a register. Translate to register
-                token.type = TOK_REG;
-                token.id = expressions[token.value.w].reg1;
-            }
             if (token.type == TOK_REG) {
                 // must be vector register
                 if (!(token.id & REG_V)) errors.report(token.pos, token.stringLength, ERR_WRONG_REG_TYPE);
@@ -1128,11 +1129,6 @@ void CAssembler::codeForIn() {
             else errors.report(token);
             break;
         case 7:  // after '['. expect base register
-            if (token.type == TOK_XPR && expressions[token.value.w].etype & XPR_REG) {
-                // this is an alias for a register. Translate to register
-                token.type = TOK_REG;
-                token.id = expressions[token.value.w].reg1;
-            }
             if (token.type == TOK_REG) {
                 // must be general purpose register
                 if (!(token.id & REG_R)) errors.report(token.pos, token.stringLength, ERR_WRONG_REG_TYPE);
@@ -1148,11 +1144,6 @@ void CAssembler::codeForIn() {
             else errors.report(token);
             break;
         case 9:  // after '-'. expect index register
-            if (token.type == TOK_XPR && expressions[token.value.w].etype & XPR_REG) {
-                // this is an alias for a register. Translate to register
-                token.type = TOK_REG;
-                token.id = expressions[token.value.w].reg1;
-            }
             if (token.type == TOK_REG) {
                 // must be general purpose register, except r31
                 if (!(token.id & REG_R) || token.id == (REG_R|31)) errors.report(token.pos, token.stringLength, ERR_WRONG_REG_TYPE);
@@ -1439,6 +1430,10 @@ bool CAssembler::mergeJump(SCode & code2) {
     if ((type & XPR_INT) && !(type & TYP_UNS) && (code1.value.i < (int32_t)0x80000000 || code1.value.i > (int32_t)0x7FFFFFFF)) return false;
     if ((type & XPR_INT) && (type & TYP_UNS) && (code1.value.u > (uint64_t)0xFFFFFFFF)) return false;
     if ((type & XPR_FLT) && (type & 0xFF) > TYP_FLOAT32) return false;
+
+#if defined(__GNUC__) && !defined(__clang__)  // fix bug in g++ version 9.3.0 failing to merge into increment_compare
+    volatile uint32_t dummy = code3.instruction;
+#endif
 
     switch (code1.instruction) {
     case II_ADD: case II_SUB:
