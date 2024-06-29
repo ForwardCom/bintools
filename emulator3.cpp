@@ -1,13 +1,13 @@
 /****************************  emulator3.cpp  ********************************
 * Author:        Agner Fog
 * date created:  2018-02-18
-* Last modified: 2022-12-27
+* Last modified: 2024-06-29
 * Version:       1.12
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
 * Emulator: Execution functions for multiformat instructions
 *
-* Copyright 2018-2022 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2018-2024 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 #include "stdafx.h"
@@ -39,7 +39,7 @@
 void errorFpControlMissing() {
     static int repeated = 0;
     if (!repeated) {
-        fprintf(stderr, "Error: Cannot control floating point exceptions and rounding mode on this platform");
+        fprintf(stderr, "Warning: Emulator cannot control floating point exceptions and rounding mode on this platform");
         repeated = 1;
     }
 }
