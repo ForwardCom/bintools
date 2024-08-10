@@ -1,4 +1,4 @@
-Instruction list for ForwardCom instruction set. Version 1.12. 2023-01-01,,,,,,,,,,,,,
+Instruction list for ForwardCom instruction set. Version 1.13. 2024-08-06,,,,,,,,,,,,,
 Name,Id,Category,Formats,Template,Template variant,Source operands,OP1,OP2,Operand types general purpose registers,Operand types scalar,Operand types vectors,Immediate operand type,Description
 nop,0x30000,3,0x00000FFF,0,D0,0,0,0,0x000F,0xFF,0,0,no operation
 nop2,0x30200,3,0xFFFFF000,0,D0,0,0,0,0x000F,0xFF,0,0,no operation
@@ -16,7 +16,7 @@ sub_rev,10,3,-1,0,,2,10,0,0x000F,0x906F,0x906F,0,subtraction. Operands swapped
 mul,11,3,-1,0,,2,11,0,0x000F,0x906F,0x9867,0,multiply (low part of result for integer operands)
 mul_hi,12,3,-1,0,,2,12,0,0x0B04,0x1B04,0x1F00,0,"multiply signed integers, high part of result"
 mul_hi_u,13,3,-1,0,U0,2,13,0,0x0B04,0x1B04,0x1F00,0,"multiply unsigned integers, high part of result"
-div,14,3,-1,0,O6H5,2,14,0,0x000F,0x906F,0xFF00,0,division
+div,14,3,-1,0,O6H5,2,14,0,0x000F,0x906F,0x9867,0,division
 div_u,15,3,-1,0,O4U0,2,15,0,0x000F,0x100F,0x100F,0,unsigned integer division
 div_rev,16,3,-1,0,O6H5,2,16,0,0x000F,0x906F,0xFF00,0,division. Operands swapped
 div_rev_u,17,3,-1,0,O4U0,2,17,0,0x000F,0x906F,0xFF00,0,unsigned integer division. Operands swapped
@@ -28,7 +28,7 @@ and,26,3,-1,0,,2,26,0,0x000F,0x906F,0x906F,0,bitwise and
 or,27,3,-1,0,,2,27,0,0x000F,0x906F,0x906F,0,bitwise and
 xor,28,3,-1,0,,2,28,0,0x000F,0x906F,0x906F,0,bitwise exclusive or
 shift_left,32,3,0x7F7F0FFFFAFFF,0,I2,2,32,0,0x100F,0x100F,0x100F,0,shift integer bits left
-mul_2pow,32,3,0x7F7F0FFFFAFFF,0,I2,2,32,0,0x0000,0x8060,0x8060,0,Multiply float by power of 2
+mul_pow2,32,3,0x7F7F0FFFFAFFF,0,I2,2,32,0,0x0000,0x8060,0x8060,0,Multiply float by integer power of 2
 rotate,33,3,0x7F7F0FFFFAFFF,0,I2,2,33,0,0x100F,0x100F,0x100F,0,"rotate bits left if src2 positive, right if negative"
 shift_right_s,34,3,0x7F7F0FFFFAFFF,0,I2,2,34,0,0x100F,0x100F,0x100F,0,shift integer bits right with sign extension
 shift_right_u,35,3,0x7F7F0FFFFAFFF,0,I2U0,2,35,0,0x100F,0x100F,0x100F,0,shift integer bits right with sign extension
@@ -272,6 +272,8 @@ compare/jump_below_uo,0x109407,4,0xFFFD,0,D1O4,3,2,0,0,0x8060,0,0,"compare float
 compare/jump_aboveeq_uo,0x109507,4,0xFFFD,0,D1O4,3,3,0,0,0x8060,0,0,"compare float, jump if above or equal or unordered"
 compare/jump_above_uo,0x109607,4,0xFFFD,0,D1O4,3,4,0,0,0x8060,0,0,"compare float, jump if above or unordered"
 compare/jump_beloweq_uo,0x109707,4,0xFFFD,0,D1O4,3,5,0,0,0x8060,0,0,"compare float, jump if below or equal or unordered"
+compare/jump_unordered,0x109E07,4,0xFFFD,0,D1O4,3,22,0,0,0x8060,0,0,"compare float, jump if unordered"
+compare/jump_ordered,0x109F07,4,0xFFFD,0,D1O4,3,23,0,0,0x8060,0,0,"compare float, jump if no operand is NaN"
 compare/jump_abs_below_uo,0x10A007,4,0xFFFD,0,D1O4,3,6,0,0,0x8060,0,0,"compare abs float, jump if below or unordered"
 compare/jump_abs_aboveeq_uo,0x10A107,4,0xFFFD,0,D1O4,3,7,0,0,0x8060,0,0,"compare abs float, jump if above or equal or unordered"
 compare/jump_abs_above_uo,0x10A207,4,0xFFFD,0,D1O4,3,8,0,0,0x8060,0,0,"compare abs float, jump if above or unordered"
@@ -353,6 +355,10 @@ jump_below_uo,0x109400,4,0,0,D1,2,-1,0,0,0,0,0,partial instruction name. jump if
 jump_aboveeq_uo,0x109500,4,0,0,D1,2,-1,0,0,0,0,0,partial instruction name. jump if above or equal or unordered
 jump_above_uo,0x109600,4,0,0,D1,2,-1,0,0,0,0,0,partial instruction name. jump if above or unordered
 jump_beloweq_uo,0x109700,4,0,0,D1,2,-1,0,0,0,0,0,partial instruction name. jump if below or equal or unordered
+jump_unordered,0x109E00,4,0,0,D1,2,-1,0,0,0,0,0,partial instruction name. jump if unordered
+jump_uo,0x109E00,4,0,0,D1,2,-1,0,0,0,0,0,partial instruction name. jump if unordered
+jump_ordered,0x109F00,4,0,0,D1,2,-1,0,0,0,0,0,partial instruction name. jump if not unordered
+jump_nuo,0x109F00,4,0,0,D1,2,-1,0,0,0,0,0,partial instruction name. jump if not unordered
 jump_abs_below,0x102000,4,0,0,D1U0,2,-1,0,0,0,0,0,partial instruction name. jump if absolute value below
 jump_abs_aboveeq,0x102100,4,0,0,D1U0,2,-1,0,0,0,0,0,partial instruction name. jump if absolute value below or equal
 jump_abs_above,0x102200,4,0,0,D1U0,2,-1,0,0,0,0,0,partial instruction name. jump if absolute value above
