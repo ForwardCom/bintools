@@ -1,13 +1,13 @@
 ﻿/****************************  emulator5.cpp  ********************************
 * Author:        Agner Fog
 * date created:  2018-02-18
-* Last modified: 2022-12-28
-* Version:       1.12
+* Last modified: 2024-07-31
+* Version:       1.13
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
 * Emulator: Execution functions for single format instructions, continued
 *
-* Copyright 2018-2022 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2018-2024 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 #include "stdafx.h"
@@ -89,8 +89,6 @@ static uint64_t compress(CThread * t) {
     uint8_t  rd = t->operands[0];
     uint8_t  rs = t->operands[4];
     uint8_t IM1 = t->parm[4].b;
-    if (IM1 & 0xC0) t->interrupt(INT_WRONG_PARAMETERS);
-    //uint32_t initLength = t->vectorLength[rt];
     uint32_t oldLength = t->vectorLength[rs]; // (uint32_t)t->registers[rs];
     uint32_t newLength = oldLength / 2;
     uint32_t pos;  // position in destination vector
@@ -103,15 +101,13 @@ static uint64_t compress(CThread * t) {
     int8_t * source = t->vectors.buf() + (uint64_t)rs * t->MaxVectorLength;      // address of RS data
     int8_t * destination = t->vectors.buf() + (uint64_t)rd * t->MaxVectorLength; // address of RD data
 
-    uint8_t roundingMode = (IM1 >> 3) & 7;       // floating point rounding mode
-    if (roundingMode == 0) roundingMode = ((t->parm[3].i >> MSKI_ROUNDING) & 7) | 4;
-    uint8_t exceptionControl = IM1 & 7;          // floating point exception enable bits:
-                                                 // 1: overflow, 2: underflow, 4: inexact
-    if (exceptionControl == 0) {                 // floating point exception control
-        exceptionControl = mask.i >> (MSKI_EXCEPTIONS + 1) & 7; // exceptions from NUMCONTR
-    }
-    else if (exceptionControl == 7) {
-        exceptionControl = 0;                    // 7 means none (5 means all)
+    uint8_t roundingMode = (IM1 >> 4) & 7;       // floating point rounding mode
+    if ((IM1 & 0x80) == 0) roundingMode = (mask.i >> MSKI_ROUNDING) & 7;
+
+    uint8_t exceptionControl = IM1 & 7;          // floating point exception enable bits
+    if ((IM1 & 8) == 0) {                 // floating point exception control
+        //exceptionControl = mask.i >> (MSKI_EXCEPTIONS + 1) & 7; // exceptions from NUMCONTR
+        exceptionControl = (mask.i >> MSKI_EXCEPTIONS) & 7; // exceptions from NUMCONTR
     }
 
     switch (t->operandType) {                    //  source operand type
@@ -257,37 +253,11 @@ static uint64_t compress(CThread * t) {
         for (pos = 0; pos < newLength; pos += 2) {
             SNum val;
             val.i = *(uint32_t*)(source + 2 * pos);        // value to convert
-            uint16_t val2 = float2half(val.f);             // convert to half precision
-            if (!isnan_or_inf_f(val.i)) {
-                // check rounding mode
-                switch (roundingMode) {
-                case 1:          // odd if not exact
-                    if (half2float(val2) != val.f) val2 |= 1;
-                    break;
-                case 4: default: // nearest or even
-                    break;
-                case 5:          // down
-                    if (half2float(val2) > val.f) {
-                        if (val2 << 1 == 0) val2 = 0x8001; // 0 -> subnormal negative
-                        else if (int16_t(val2) > 0) val2--;
-                        else val2++;
-                    }
-                    break;
-                case 6:          // up
-                    if (half2float(val2) < val.f) {
-                        if (val2 << 1 == 0) val2 = 0x0001; // 0 -> subnormal positive
-                        else if (int16_t(val2) > 0) val2++;
-                        else val2--;
-                    }
-                    break;
-                case 7:          // towards zero
-                    if (half2float(val2) != val.f && (val2 << 1 != 0)) {
-                        val2--;
-                    }
-                    break;
-                }
+
+            uint32_t val2 = roundToHalfPrecision(val.f, t);
+            if (!isnan_h(val2)) {
                 // check overflow
-                overflowS = (val2 & 0x7FFF) == 0x7C00 && !isinf_f(val.i);// detect overflow
+                overflowS = isinf_h(val2) && !isinf_f(val.i);// detect overflow
                 overflowF2 |= overflowS;
                 if (overflowS) {                               // check for overflow
                     if (exceptionControl & 1) {                // overflow exception -> NAN
@@ -311,52 +281,39 @@ static uint64_t compress(CThread * t) {
             val1.q = *(uint64_t*)(source + 2 * pos);       // value to convert
             // check NAN and INF
             if (isnan_or_inf_d(val1.q)) {
-                union {                                    // single precision float
-                    float f;
-                    struct {                               // structure of a NAN
-                        uint32_t payload : 22;
-                        uint32_t quiet : 1;
-                        uint32_t expo : 8;
-                        uint32_t sign : 1;
-                    };
-                } u;
-                u.payload = val1.i & ((1 << 22) - 1);      // ForwardCom has right-justified NAN payload, unlike other binary systems
-                u.quiet = val1.q >> 51 & 1;
-                u.expo = 0xFF;
-                u.sign = val1.q >> 63 & 1;
-                val2.f = u.f;
+                val2.f = float(val1.d);                    // convert to single precision, no rounding
             }
             else {
                 val2.f = float(val1.d);                    // convert to single precision
                 // check rounding mode
-                uint8_t roundingMode = (IM1 >> 3) & 7;
-                if (roundingMode == 0) roundingMode = ((t->parm[3].i >> MSKI_ROUNDING) & 7) | 4;
                 switch (roundingMode) {
-                case 1:          // odd if not exact
-                    if (val2.f != val1.d) {
-                        val2.i |= 1;
-                    }
+                case 0: default: // nearest or even
                     break;
-                case 4: default: // nearest or even
-                    break;
-                case 5:          // down
+                case 1:          // down
                     if (val2.f > val1.d) {
                         if (val2.f == 0.f) val2.i = 0x80000001; // 0 -> subnormal negative
                         else if (val2.i > 0) val2.i--;
                         else val2.i++;
                     }
                     break;
-                case 6:          // up
+                case 2:          // up
                     if (val2.f < val1.d) {
                         if (val2.f == 0.f) val2.i = 0x00000001; // 0 -> subnormal positive
                         else if (val2.i > 0) val2.i++;
                         else val2.i--;
                     }
                     break;
-                case 7:         // towards zero
-                    if (val2.f != val1.d && val2.f != 0.f) {
+                case 3:         // towards zero
+                    if (val1.d > 0. && val2.f > val1.d && (val2.i & 0x7FFFFFFF) > 0) {
                         val2.i--;
                     }
+                    if (val1.d < 0. && val2.f < val1.d && (val2.i & 0x7FFFFFFF) > 0) {
+                        val2.i--;
+                    }
+                    break;
+                case 4:          // odd if not exact
+                    if (val2.f > val1.d && (val2.i & 1) == 0 && (val2.i & 0x7FFFFFFF) > 0) val2.i--;
+                    if (val2.f < val1.d && (val2.i & 1) == 0 && (val2.i & 0x7FFFFFFF) < 0x7F7FFFFF) val2.i++;
                     break;
                 }
                 // check overflow
@@ -480,24 +437,7 @@ static uint64_t expand(CThread * t) {
             SNum val1;
             val1.i = *(uint32_t*)(source + pos);           // value to convert
             double val2 = val1.f;                          // convert to double precision
-            // check NAN
-            // ForwardCom has right-justified NAN payload, unlike other binary systems
-            if (isnan_f(val1.i)) {
-                union {                                    // single precision float
-                    double d;
-                    struct {                               // structure of a NAN
-                        uint64_t payload : 51;
-                        uint64_t quiet   : 1;
-                        uint64_t expo    : 11;
-                        uint64_t sign    : 1;
-                    };
-                } u;
-                u.payload = val1.q & ((1 << 22) - 1);
-                u.quiet = val1.i >> 22 & 1;
-                u.expo = 0x7FF;
-                u.sign = val1.q >> 63 & 1;
-                val2 = u.d;
-            }
+            // (assume that this platform follows the undocumented standard of left-justifying NaN payloads)
             *(double*)(destination + pos*2) = val2;        // store value
         }
         break;
@@ -517,67 +457,109 @@ static uint64_t float2int (CThread * t) {
     SNum b = t->parm[4];
     int64_t result = 0;
     uint32_t dataSize = dataSizeTable[t->operandType];
-    uint8_t roundingMode = b.b >> 3 & 3;
-    uint8_t signMode = roundingMode | (b.b & 2) << 1; // bit 0-1: rounding mode, bit 2: usigned
+    uint8_t roundingMode = b.b >> 4;
+    if ((roundingMode & 8) == 0) { // rounding mode determined by NUMCONTR
+        SNum mask = t->parm[3];                      // options mask
+        roundingMode = mask.i >> MSKI_ROUNDING;
+    }
+    roundingMode &= 7;
+
+    uint8_t signMode = b.b & 7; // bit 0: unsigned, bit 1-2 overflow control
     bool overflow = false;
-    bool invalid = false; 
 
     if (dataSize == 2) {  // float16 -> int16
         const float max = (float)(int32_t)0x7FFF;
         const float min = -max - 1.0f;
         const float umax = (float)(uint32_t)0xFFFFu;
         if (isnan_h(a.s)) {
-            invalid = true;
+            result = (b.b & 0x08) ? 0x8000u : 0;
         }
         else {
             float f = half2float(a.s);
-            switch (signMode) { // rounding mode:
-            case 0: // nearest or even
-                if (f >= max + 0.5f || f < min - 0.5f) overflow = true;
-                result = (int)(nearbyint(f));
-                break;
-            case 1: // down 
-                if (f >= max + 1.0f || f <= min) overflow = true;
-                result = (int)(floor(f));
-                break;
-            case 2: // up
-                if (f > max || f <= min - 1.0f) overflow = true;
-                result = (int)(ceil(f));
-                break;
-            case 3: // towards zero
-                if (f >= max + 1.0f || f <= min - 1.0f) overflow = true;
-                result = (int)(f);
-                break;
-            case 4: // unsigned nearest or even
-                if (f >= umax + 0.5f || f < - 0.5f) overflow = true;
-                result = (int)(nearbyint(f));
-                break;
-            case 5: case 7: // unsigned down
-                if (f >= umax + 1.0f || f < 0.0f) overflow = true;
-                result = (int)(floor(f));
-                break;
-            case 6: // unsigned up
-                if (f > umax || f <= -1.0f) overflow = true;
-                else result = (int)(ceil(f));
-            }
-            if (overflow) {
-                switch (b.b & 7) { // overflow options
-                case 0: default: // wrap around
-                    result &= 0xFFFFu;
+            if ((signMode & 1) == 0) { // signed float16
+                switch (roundingMode) { // rounding mode:
+                case 0: // nearest or even
+                    overflow = f >= max + 0.5f || f < min - 0.5f;
+                    result = (int)(nearbyint(f));
                     break;
-                case 4: case 6:
-                    result = 0;
+                case 1: // down 
+                    overflow = f >= max + 1.0f || f < min;
+                    result = (int)(floor(f));
                     break;
-                case 5: // signed saturation
-                    result = 0x7FFF + int(f < 0);
+                case 2: // up
+                    overflow = f > max || f <= min - 1.0f;
+                    result = (int)(ceil(f));
                     break;
-                case 7: // unsigned saturation
-                    result = 0xFFFFu;
+                case 3: // towards zero
+                    overflow = f >= max + 1.0f || f <= min - 1.0f;
+                    result = (int)(f);
+                    break;
+                case 4:  // odd if not exact
+                    overflow = f >= max + 0.5f || f < min;
+                    result = (int)(nearbyint(f));
+                    if (float(result) < f && !(result & 1)) result++;
+                    if (float(result) > f && !(result & 1)) result--;
+                    break;
+                case 5:  // nearest, with ties away from zero
+                    overflow = f >= max + 0.5f || f < min - 0.5f;
+                    result = (int)(nearbyint(f));
+                    if (result >= 0 && float(result) == f - 0.5f) result++;
+                    if (result <= 0 && float(result) == f + 0.5f) result--;
                     break;
                 }
+                if (overflow) {
+                    switch (signMode >> 1) {
+                    case 0: // overflow gives INT_MIN
+                    default:
+                        result = 0x8000u;  break;                        
+                    case 1: // overflow gives zero
+                        result = 0;  break;
+                    case 2:  // overflow saturates
+                        if (result < 0) result = 0x8000u; 
+                        else result = 0x7FFFu;
+                        break;                    
+                    }
+                }
             }
-            if (invalid) {
-                result = (b.b & 0x20) ? 0x8000u : 0;
+            else {   // unsigned float16
+                switch (roundingMode) { // rounding mode:
+                case 0: // nearest or even
+                    overflow = f >= umax + 0.5f || f < - 0.5f;
+                    result = (int)(nearbyint(f));
+                    break;
+                case 1: // down 
+                case 3: // towards zero
+                    overflow = f >= umax + 1.0f || f < 0;
+                    result = (int)(floor(f));
+                    break;
+                case 2: // up
+                    overflow = f > umax || f <= - 1.0f;
+                    result = (int)(ceil(f));
+                    break;
+                    overflow = f >= max + 1.0f || f <= min - 1.0f;
+                    result = (int)(f);
+                    break;
+                case 4:  // odd if not exact
+                    overflow = f > umax || f < 0.f;
+                    result = (int)(nearbyint(f));
+                    if (float(result) < f && !(result & 1)) result++;
+                    if (float(result) > f && !(result & 1)) result--;
+                    break;
+                case 5:  // nearest, with ties away from zero
+                    overflow = f >= umax + 0.5f || f <= - 0.5f;
+                    result = (int)(nearbyint(f));
+                    if (float(result) == f - 0.5f) result++;
+                    break;
+                }
+                if (overflow) {
+                    switch (signMode >> 1) {
+                    case 0: // overflow gives UINT_MAX
+                    default:
+                        result = 0xFFFFu;  break;                        
+                    case 1: // overflow gives zero
+                        result = 0;  break;
+                    }
+                }
             }
         }
     }
@@ -586,56 +568,90 @@ static uint64_t float2int (CThread * t) {
         const float min = -max - 1.0f;
         const float umax = (float)(uint32_t)0xFFFFFFFFu;
         if (isnan_f(a.i)) {
-            invalid = true;
+            result = (b.b & 0x08) ? 0x80000000u : 0;
         }
         else {
-            switch (signMode) { // rounding mode:
-            case 0: // nearest or even
-                if (a.f >= max + 0.5f || a.f < min - 0.5f) overflow = true;
-                result = (int64_t)(nearbyint(a.f));
-                break;
-            case 1: // down 
-                if (a.f >= max + 1.0f || a.f <= min) overflow = true;
-                result = (int64_t)(floor(a.f));
-                break;
-            case 2: // up
-                if (a.f > max || a.f <= min - 1.0f) overflow = true;
-                result = (int64_t)(ceil(a.f));
-                break;
-            case 3: // towards zero
-                if (a.f >= max + 1.0f || a.f <= min - 1.0f) overflow = true;
-                result = (int64_t)(a.f);
-                break;
-            case 4: // unsigned nearest or even
-                if (a.f >= umax + 0.5f || a.f < - 0.5f) overflow = true;
-                result = (int64_t)(nearbyint(a.f));
-                break;
-            case 5: case 7: // unsigned down
-                if (a.f >= umax + 1.0f || a.f < 0.0f) overflow = true;
-                result = (int64_t)(floor(a.f));
-                break;
-            case 6: // unsigned up
-                if (a.f > umax || a.f <= -1.0f) overflow = true;
-                else result = (int64_t)(ceil(a.f));
-            }
-            if (overflow) {
-                switch (b.b & 7) { // overflow options
-                case 0:  // wrap around
-                    result &= 0xFFFFFFFFu;
+            if ((signMode & 1) == 0) { // signed float32
+                switch (roundingMode) { // rounding mode:
+                case 0: // nearest or even
+                    if (a.f >= max + 0.5f || a.f < min - 0.5f) overflow = true;
+                    result = (int64_t)(nearbyint(a.f));
                     break;
-                case 4: case 6:
-                    result = 0;
+                case 1: // down 
+                    if (a.f >= max + 1.0f || a.f <= min) overflow = true;
+                    result = (int64_t)(floor(a.f));
                     break;
-                case 5: // signed saturation
-                    result = 0x7FFFFFFF + int(a.f < 0);
+                case 2: // up
+                    if (a.f > max || a.f <= min - 1.0f) overflow = true;
+                    result = (int64_t)(ceil(a.f));
                     break;
-                case 7: // unsigned saturation
-                    result = 0xFFFFFFFFu;
+                case 3: // towards zero
+                    if (a.f > max || a.f <= min - 1.0f) overflow = true;
+                    result = (int64_t)(a.f);
+                    break;
+                case 4:  // odd if not exact
+                    overflow = a.f >= max + 0.5f || a.f < min;
+                    result = (int)(nearbyint(a.f));
+                    if (double(result) < a.f && !(result & 1)) result++;
+                    if (double(result) > a.f && !(result & 1)) result--;
+                    break;
+                case 5:  // nearest, with ties away from zero
+                    overflow = a.f >= max + 0.5f || a.f < min - 0.5f;
+                    result = (int)(nearbyint(a.f));
+                    if (result >= 0 && double(result) == a.f - 0.5) result++;
+                    if (result <= 0 && double(result) == a.f + 0.5) result--;
                     break;
                 }
+                if (overflow) {
+                    switch (signMode >> 1) {
+                    case 0: // overflow gives INT_MIN
+                    default:
+                        result = 0x80000000u;  break;                        
+                    case 1: // overflow gives zero
+                        result = 0;  break;
+                    case 2:  // overflow saturates
+                        if (result < 0) result = 0x80000000u; 
+                        else result = 0x7FFFFFFFu;
+                        break;                    
+                    }
+                }                
             }
-            if (invalid) {
-                result = (b.b & 0x20) ? sign_f : 0;
+            else {  // unsigned float32
+                switch (roundingMode) { // rounding mode:
+                case 0: // nearest or even
+                    overflow = a.f >= umax + 0.5f || a.f < - 0.5f;
+                    result = (int64_t)(nearbyint(a.f));
+                    break;
+                case 1: // down 
+                case 3: // towards zero
+                    overflow = a.f >= umax + 1.0f || a.f < 0.0f;
+                    result = (int64_t)(floor(a.f));
+                    break;
+                case 2: // up
+                    overflow = a.f > umax || a.f <= -1.0f;
+                    result = (int64_t)(ceil(a.f));
+                    break;
+                case 4:  // odd if not exact
+                    overflow = a.f > umax || a.f < 0.f;
+                    result = (int64_t)(nearbyint(a.f));
+                    if (double(result) < a.f && !(result & 1)) result++;
+                    if (double(result) > a.f && !(result & 1)) result--;
+                    break;
+                case 5:  // nearest, with ties away from zero
+                    overflow = a.f >= umax + 0.5f || a.f <= - 0.5f;
+                    result = (int64_t)(nearbyint(a.f));
+                    if (double(result) == a.f - 0.5) result++;
+                    break;
+                }
+                if (overflow) {
+                    switch (signMode >> 1) {
+                    case 0: // overflow gives UINT_MAX
+                    default:
+                        result = 0xFFFFFFFFu;  break;                        
+                    case 1: // overflow gives zero
+                        result = 0;  break;
+                    }
+                }
             }
         }
     }
@@ -644,56 +660,91 @@ static uint64_t float2int (CThread * t) {
         const double min = -max - 1.0f;
         const double umax = (double)0xFFFFFFFFFFFFFFFFu;
         if (isnan_d(a.q)) {
-            invalid = true;
+            result = (b.b & 0x08) ? sign_d : 0;
         }
         else {
-            switch (signMode) { // rounding mode:
-            case 0: // nearest or even
-                if (a.d >= max + 0.5 || a.d < min - 0.5) overflow = true;
-                result = (int64_t)(nearbyint(a.d));
-                break;
-            case 1: // down 
-                if (a.d >= max + 1.0 || a.d <= min) overflow = true;
-                result = (int64_t)(floor(a.d));
-                break;
-            case 2: // up
-                if (a.d > max || a.d <= min - 1.0) overflow = true;
-                result = (int64_t)(ceil(a.d));
-                break;
-            case 3: // towards zero
-                if (a.d >= max + 1.0 || a.d <= min - 1.0) overflow = true;
-                result = (int64_t)(a.d);
-                break; 
-            case 4: // unsigned nearest or even
-                if (a.d >= umax + 0.5 || a.d < - 0.5) overflow = true;
-                result = (uint64_t)(nearbyint(a.d));
-                break;
-            case 5: case 7: // unsigned down
-                if (a.d >= umax + 1.0 || a.d < 0.0) overflow = true;
-                result = (uint64_t)(floor(a.d));
-                break;
-            case 6: // unsigned up
-                if (a.d > umax || a.d <= -1.0) overflow = true;
-                result = (uint64_t)(ceil(a.d));
+            if ((signMode & 1) == 0) { // signed float64
+                switch (roundingMode) { // rounding mode:
+                case 0: // nearest or even
+                    if (a.d >= max + 0.5 || a.d < min - 0.5) overflow = true;
+                    result = (int64_t)(nearbyint(a.d));
+                    break;
+                case 1: // down 
+                    if (a.d >= max + 1.0 || a.d <= min) overflow = true;
+                    result = (int64_t)(floor(a.d));
+                    break;
+                case 2: // up
+                    if (a.d > max || a.d <= min - 1.0) overflow = true;
+                    result = (int64_t)(ceil(a.d));
+                    break;
+                case 3: // towards zero
+                    if (a.d >= max + 1.0 || a.d <= min - 1.0) overflow = true;
+                    result = (int64_t)(a.d);
+                    break; 
+                case 4:  // odd if not exact
+                    overflow = a.d > max || a.d < min;
+                    result = (int64_t)(nearbyint(a.d));
+                    if (double(result) < a.d && !(result & 1)) result++;
+                    if (double(result) > a.d && !(result & 1)) result--;
+                    break;
+                case 5:  // nearest, with ties away from zero
+                    overflow = a.d >= max + 0.5 || a.d < min - 0.5;
+                    result = (int64_t)(nearbyint(a.d));
+                    if (result >= 0 && double(result) == a.d - 0.5) result++;
+                    if (result <= 0 && double(result) == a.d + 0.5) result--;
+                    break;
+                }
+                if (overflow) {
+                    switch (signMode >> 1) {
+                    case 0: // overflow gives INT_MIN
+                    default:
+                        result = sign_d;  break;                        
+                    case 1: // overflow gives zero
+                        result = 0;  break;
+                    case 2:  // overflow saturates
+                        if (result < 0) result = sign_d; 
+                        else result = nsign_d;
+                        break;                    
+                    }
+                }
             }
-        }
-        if (overflow) {
-            switch (b.b & 7) { // overflow options
-            case 0:  // wrap around
-                break;
-            case 4: case 6:
-                result = 0;
-                break;
-            case 5: // signed saturation
-                result = nsign_d + int(a.d < 0);
-                break;
-            case 7: // unsigned saturation
-                result = 0xFFFFFFFFFFFFFFFFu;
-                break;
+            else {  // unsigned float64
+                switch (roundingMode) { // rounding mode:
+                case 0: // nearest or even
+                    overflow = a.d >= umax + 0.5 || a.d < - 0.5;
+                    result = (uint64_t)(nearbyint(a.d));
+                    break;
+                case 1: case 3: // down                                                        
+                    overflow = a.d >= umax + 1.0 || a.d < 0.0;
+                    result = (uint64_t)(floor(a.d));
+                    break;
+                case 2: // up
+                    overflow = a.d > umax || a.d <= -1.0;
+                    result = (uint64_t)(ceil(a.d));
+                    break;
+                case 4: // odd of not exact
+                    overflow = a.d >= umax || a.d < 0;
+                    result = (int64_t)(nearbyint(a.d));
+                    if (double(result) < a.d && !(result & 1)) result++;
+                    if (double(result) > a.d && !(result & 1)) result--;
+                    break;
+                case 5:  // nearest with ties away from zero
+                    overflow = a.d >= umax + 0.5 || a.f <= - 0.5;
+                    result = (int64_t)(nearbyint(a.d));
+                    if (double(result) == a.d - 0.5) result++;
+                    break;
+                }
+
+                if (overflow) {
+                    switch (signMode >> 1) {
+                    case 0: // overflow gives UINT_MAX
+                    default:
+                        result = 0xFFFFFFFFFFFFFFFFu;  break;                        
+                    case 1: // overflow gives zero
+                        result = 0;  break;
+                    }
+                }
             }
-        }
-        if (invalid) {
-            result = (b.b & 0x20) ? sign_d : 0;
         }
     }
     else t->interrupt(INT_WRONG_PARAMETERS);
@@ -782,10 +833,16 @@ static uint64_t round_ (CThread * t) {
     // The rounding mode is specified in IM1.
     SNum a = t->parm[1];
     SNum b = t->parm[4];
-    SNum result;
+    SNum result;  result.q = 0;
     uint32_t dataSize = dataSizeTable[t->operandType];
+    uint32_t roundingMode = b.i & 7;
+    if ((b.i & 8) == 0) {
+        // rounding mode determined by NUMCONTR
+        SNum mask = t->parm[3];                      // options mask
+        roundingMode = (mask.i >> MSKI_ROUNDING) & 7;
+    }
     if (dataSize == 4) {  // float -> int32
-        switch (b.b) { // rounding mode:
+        switch (roundingMode) { // rounding mode:
         case 0: // nearest or even
             result.f = nearbyintf(a.f);
             break;
@@ -798,11 +855,16 @@ static uint64_t round_ (CThread * t) {
         case 3: // towards zero
             result.f = truncf(a.f);
             break;
+        case 4: // odd if not exact
+            result.f = nearbyintf(a.f);
+            if (result.f < a.f && (result.i & 1) == 0) result.f += 1.0f;
+            if (result.f > a.f && (result.i & 1) == 0) result.f -= 1.0f;
+            break;
         default: t->interrupt(INT_WRONG_PARAMETERS);
         }
     }
     else if (dataSize == 8) {   // double -> int64
-        switch (b.b) { // rounding mode:
+        switch (roundingMode) { // rounding mode:
         case 0: // nearest or even
             result.d = nearbyint(a.d);
             break;
@@ -814,6 +876,11 @@ static uint64_t round_ (CThread * t) {
             break;
         case 3: // towards zero
             result.d = trunc(a.d);
+            break;
+        case 4: // odd if not exact
+            result.d = nearbyint(a.d);
+            if (result.d < a.d && (result.i & 1) == 0) result.d += 1.0;
+            if (result.d > a.d && (result.i & 1) == 0) result.d -= 1.0;
             break;
         default: t->interrupt(INT_WRONG_PARAMETERS);
         }

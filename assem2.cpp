@@ -2,7 +2,7 @@
 * Author:        Agner Fog
 * Date created:  2017-04-17
 * Last modified: 2021-08-11
-* Version:       1.11
+* Version:       1.13
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.cpp
 * Description:
@@ -10,7 +10,7 @@
 * This module contains:
 * - expression(): Interpretation of expressions containing operators and 
 *                 any type of operands.
-* Copyright 2017-2021 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2024 GNU General Public License http://www.gnu.org/licenses
 ******************************************************************************/
 #include "stdafx.h"
 

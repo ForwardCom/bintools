@@ -1,8 +1,8 @@
 /****************************    assem5.cpp    ********************************
 * Author:        Agner Fog
 * Date created:  2017-09-19
-* Last modified: 2023-02-24
-* Version:       1.12
+* Last modified: 2023-02-25
+* Version:       1.13
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.cpp
 * Description:
@@ -10,7 +10,7 @@
 * This module contains functions for interpreting high level language constructs:
 * functions, branches, and loops
 *
-* Copyright 2017-2023 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2024 GNU General Public License http://www.gnu.org/licenses
 ******************************************************************************/
 #include "stdafx.h"
 
@@ -1431,7 +1431,9 @@ bool CAssembler::mergeJump(SCode & code2) {
     if ((type & XPR_INT) && (type & TYP_UNS) && (code1.value.u > (uint64_t)0xFFFFFFFF)) return false;
     if ((type & XPR_FLT) && (type & 0xFF) > TYP_FLOAT32) return false;
 
-#if defined(__GNUC__) && !defined(__clang__)  // fix bug in g++ version 9.3.0 failing to merge into increment_compare
+#if defined(__GNUC__) && !defined(__clang__) && (__GNUC__ * 0x100 + __GNUC_MINOR__) < 0x905
+    // fix unknown optimization bug in g++ version 9.3.0 failing to merge into increment_compare
+    // https://gcc.gnu.org/bugzilla/show_bug.cgi?id=108920
     volatile uint32_t dummy = code3.instruction;
 #endif
 
@@ -1462,7 +1464,7 @@ bool CAssembler::mergeJump(SCode & code2) {
         // add/sub + compare
         if (!(code2.etype & XPR_INT) || code2.value.i != 0 || (code2.instruction & 0xFF) != II_COMPARE) return false; // must compare against zero
 
-        if ((type & TYP_UNS) && (code3.instruction & 0xFFFE00) != II_JUMP_ZERO) return false;  // unsigned works only for == and !=
+        if ((type & TYP_UNS) /* && (code3.instruction & 0xFFFE00) != II_JUMP_ZERO*/) return false;  // unsigned works only for == and !=
         // successful combination of add/sub and signed compare with zero
         code3.instruction = code1.instruction | (code2.instruction & 0xFFFF00);
         code3.etype = code1.etype | (code2.etype & ~(XPR_IMMEDIATE | XPR_OPTIONS));

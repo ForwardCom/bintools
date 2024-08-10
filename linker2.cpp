@@ -2,12 +2,12 @@
 * Author:        Agner Fog
 * date created:  2017-12-07
 * Last modified: 2018-03-30
-* Version:       1.10
+* Version:       1.13
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
 * This module contains the relinking feature of the linker.
 *
-* Copyright 2017-2020 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2024 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 #include "stdafx.h"

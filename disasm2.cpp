@@ -1,14 +1,14 @@
 /****************************  disasm2.cpp   ********************************
 * Author:        Agner Fog
 * Date created:  2017-04-26
-* Last modified: 2022-12-27
-* Version:       1.12
+* Last modified: 2024-08-02
+* Version:       1.13
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        disassem.h
 * Description:
 * Disassembler for ForwardCom
 *
-* Copyright 2007-2022 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2007-2024 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 #include "stdafx.h"
 
@@ -930,6 +930,39 @@ void CDisassembler::writeNormalInstruction() {
                 outFile.put('u');
             }
         }
+        // special cases
+        if (iRecord->id == II_COMPRESS) {
+            switch (operandType & 0xFF) {  // change OT of input ot OT of output
+            case TYP_FLOAT16 & 0xFF:
+                operandType = 0;
+                break;
+            case 5:
+                operandType = TYP_FLOAT16 & 0xFF;
+                break;
+            case 6:
+                operandType = TYP_FLOAT32 & 0xFF;
+                break;
+            case 7:
+                operandType = TYP_FLOAT64 & 0xFF;
+                break;
+            case 0:
+                operandType = TYP_INT128 & 0xFF;  // actually INT4
+                break;
+            case 1:
+                operandType = TYP_INT8 & 0xFF;
+                break;
+            case 2:
+                operandType = TYP_INT16 & 0xFF;
+                break;
+            case 3:
+                operandType = TYP_INT32 & 0xFF;
+                break;
+            case 4:
+                operandType = TYP_INT64 & 0xFF;
+                break; 
+            }
+        }
+
         outFile.tabulate(asmTab0);
         writeOperandType(operandType); outFile.put(' ');
     }
@@ -1719,6 +1752,9 @@ void CDisassembler::writeOperandType(uint32_t ot) {
         outFile.put("float16");
     }
     else if ((variant & VARIANT_H5) && ot == 1 && fInstr->tmplate == 0xE && (pInstr->a.im5 & 0x20)) {
+        outFile.put("float16");
+    }
+    else if (ot == (TYP_FLOAT16 & 0xFF)){
         outFile.put("float16");
     }
     else {

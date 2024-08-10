@@ -2,14 +2,14 @@
 * Author:        Agner Fog
 * Date created:  2017-04-17
 * Last modified: 2020-05-17
-* Version:       1.10
+* Version:       1.13
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.cpp
 * Description:
 * Module for assembling ForwardCom .as files. 
 * This module contains:
 * Assemble-time variable assignments and metaprogramming features,
-* Copyright 2017-2020 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2024 GNU General Public License http://www.gnu.org/licenses
 ******************************************************************************/
 #include "stdafx.h"
 

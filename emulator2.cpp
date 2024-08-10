@@ -1,13 +1,13 @@
 /****************************  emulator2.cpp  ********************************
 * Author:        Agner Fog
 * date created:  2018-02-18
-* Last modified: 2021-02-19
-* Version:       1.11
+* Last modified: 2024-08-06
+* Version:       1.13
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
 * Emulator: Execution functions for jump instructions
 *
-* Copyright 2018-2021 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2018-2024 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 #include "stdafx.h"
@@ -98,30 +98,39 @@ static uint64_t compare_jump_generic(CThread * t) {
         }
         else {
             bool unordered;
-            uint8_t opj = t->op;
+            uint8_t opj = t->op;                           // jump operation
             if (t->operandType == 5) {
                 // float
                 unordered = isnan_f(a.i) || isnan_f(b.i);  // check if unordered
                 if (unordered) {
-                    // a or b is NAN. Don't check the condition. Branch only if unordered version of instruction.
-                    branch = t->op < 32;
+                    // a or b is NAN. 
+                    if (opj == 23) branch = 0;             // compare/jump_ordered
+                    else {
+                        // Don't check the condition. Branch only if unordered version of instruction.
+                        branch = t->op < 32;
+                    }
                 }
                 else {
-                    if ((opj & 0xE) > 5) {
+                    if ((opj & 0xDE) >= 6 && (opj & 0xDE) <= 9) {
                         // compare absolute values
                         a.i &= 0x7FFFFFFF;  b.i &= 0x7FFFFFFF;
                         opj -= 4;
                     }
                     // select condition, float
-                    switch (opj & 0xE) {   // mask out bits for ordered/unordered and invert
-                    case 0:    // jump if equal
-                        branch = a.f == b.f;  break;
-                    case 2:    // jump if below
-                        branch = a.f < b.f;  break;
-                    case 4:    // jump if above
-                        branch = a.f > b.f;  break;
-                    default:
-                        t->interrupt(INT_WRONG_PARAMETERS);
+                    if ((opj & 0xFE) == 22) {
+                        branch = 0;                             // compare/jump_unordered
+                    }
+                    else {
+                        switch (opj & 0xE) {   // mask out bits for ordered/unordered and invert
+                        case 0:    // jump if equal
+                            branch = a.f == b.f;  break;
+                        case 2:    // jump if below
+                            branch = a.f < b.f;  break;
+                        case 4:    // jump if above
+                            branch = a.f > b.f;  break;
+                        default:
+                            t->interrupt(INT_WRONG_PARAMETERS);
+                        }
                     }
                     branch ^= t->op;                               // invert branch condition if op odd
                 }
@@ -130,25 +139,35 @@ static uint64_t compare_jump_generic(CThread * t) {
                 // double
                 unordered = isnan_d(a.q) || isnan_d(b.q);  // check if unordered
                 if (unordered) {
-                    // a or b is NAN. Don't check the condition. Branch only if unordered version of instruction.
-                    branch = t->op < 32;
+                    // a or b is NAN. 
+                    if (opj == 23) branch = 0;             // compare/jump_ordered
+                    else {
+                        // Don't check the condition. Branch only if unordered version of instruction.
+                        branch = t->op < 32;
+                    }
                 }
                 else {
-                    if ((opj & 0xE) > 5) {
+                    if ((opj & 0xDE) >= 6 && (opj & 0xDE) <= 9) {
                         // compare absolute values
                         a.q &= nsign_d;  b.q &= nsign_d;
                         opj -= 4;
                     }
                     // select condition, float
-                    switch (opj & 0xE) {                 // mask out bits for ordered/unordered and invert
-                    case 0:    // jump if equal
-                        branch = a.d == b.d;  break;
-                    case 2:    // jump if below
-                        branch = a.d < b.d;  break;
-                    case 4:    // jump if above
-                        branch = a.d > b.d;  break;
-                    default:
-                        t->interrupt(INT_WRONG_PARAMETERS);
+                    if ((opj & 0xFE) == 22) {
+                        branch = 0;                             // compare/jump_unordered
+                    }
+                    else {
+                        // select condition, float
+                        switch (opj & 0xE) {                 // mask out bits for ordered/unordered and invert
+                        case 0:    // jump if equal
+                            branch = a.d == b.d;  break;
+                        case 2:    // jump if below
+                            branch = a.d < b.d;  break;
+                        case 4:    // jump if above
+                            branch = a.d > b.d;  break;
+                        default:
+                            t->interrupt(INT_WRONG_PARAMETERS);
+                        }
                     }
                     branch ^= t->op;                       // invert branch condition if op odd
                 }
@@ -159,7 +178,7 @@ static uint64_t compare_jump_generic(CThread * t) {
         t->ip += t->addrOperand * 4;                       // add relative offset to IP
         t->returnType = 0x2000;                            // debug output jump taken
     }
-    else t->returnType = 0x1000;                           // debug output jump taken
+    else t->returnType = 0x1000;                           // debug output jump not taken
     if (t->vect) t->vect = 4;                              // stop vector loop
     t->running = 2;                                        // don't save result
     return 0; 

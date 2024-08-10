@@ -2,13 +2,13 @@
 * Author:        Agner Fog
 * date created:  2017-11-08
 * Last modified: 2018-03-30
-* Version:       1.10
+* Version:       1.13
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
 * This module contains code for reading, writing and manipulating function
 * libraries (archives) of the UNIX type
 *
-* Copyright 2017-2020 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2024 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 #include "stdafx.h" 

@@ -2,12 +2,12 @@
 * Author:        Agner Fog
 * date created:  2018-02-18
 * Last modified: 2022-12-22
-* Version:       1.12
+* Version:       1.13
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
 * Format tables used by emulator, assembler, and disassembler
 *
-* Copyright 2018-2022 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2018-2024 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 #include "stdafx.h"

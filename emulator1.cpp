@@ -1,13 +1,13 @@
 /****************************  emulator1.cpp  ********************************
 * Author:        Agner Fog
 * date created:  2018-02-18
-* Last modified: 2022-02-23
-* Version:       1.12
+* Last modified: 2024-08-10
+* Version:       1.13
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
 * Basic functionality of the emulator
 *
-* Copyright 2018-2023 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2018-2024 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 #include "stdafx.h"
@@ -434,6 +434,14 @@ void CThread::run() {
     }
     // write debug output
     if (listFileName) {
+        // write number of instructions executed
+        listOut.newLine();
+        listOut.tabulate(emulator->disassembler.asmTab0);
+        listOut.putDecimal(uint32_t(perfCounters[perf_instructions])); // Write number of instructions executed
+        listOut.put(" instructions executed.");
+        listOut.newLine();
+
+        // write output buffer to file
         listOut.write(cmd.getFilename(listFileName));
     }
 }
@@ -1331,16 +1339,17 @@ uint64_t CThread::makeNan(uint32_t code, uint32_t operandTyp) {
     uint64_t retval = 0;
     uint8_t instrLength = lengthList[pInstr->a.il];  // instruction length
     uint64_t iaddress = ((ip - ip0) >> 2) - instrLength;     // instruction address
-    iaddress = ~iaddress;                            // invert bits
+    uint32_t exception_code = code & 0x3FF;          // exception code
+
     switch (operandTyp) {
     case 1:  // half precision
-        retval = (uint8_t)code | 0x7E00 | (iaddress & 1) << 8;
+        retval = 0x7E00 | exception_code;
         break;
     case 5:  // single precision
-        retval = (uint8_t)code | 0x7FC00000 | uint32_t(iaddress & ((1 << 14) - 1)) << 8;
+        retval = 0x7FC00000 | exception_code << 13;
         break;
     case 6:  // double precision
-        retval = (uint8_t)code | 0x7FF8000000000000 | (iaddress & (((uint64_t)1 << 43) - 1)) << 8;
+        retval = 0x7FF8000000000000 | uint64_t(exception_code) << 42 | iaddress & 0xFFFFFFFF;
         break;
     }
     return retval;

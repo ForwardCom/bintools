@@ -1,14 +1,14 @@
 /****************************  cmdline.cpp  **********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2023-01-01
-* Version:       1.12
+* Last modified: 2024-08-10
+* Version:       1.13
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
 * This module is for interpretation of command line options
 * Also contains symbol change function
 *
-* Copyright 2017-2023 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2024 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 #include "stdafx.h"
@@ -875,7 +875,7 @@ const char * CCommandLineInterpreter::getFilename(uint32_t n) {
 void CCommandLineInterpreter::help() {
     // Print help message
     printf("\nBinary tools version %i.%02i for ForwardCom instruction set.", FORWARDCOM_VERSION, FORWARDCOM_SUBVERSION);
-    printf("\nCopyright (c) 2023 by Agner Fog. Gnu General Public License.");
+    printf("\nCopyright (c) 2024 by Agner Fog. Gnu General Public License.");
     printf("\n\nUsage: forw command [options] inputfile [outputfile] [options]");
     printf("\n\nCommand:");
     printf("\n-ass       Assemble\n");

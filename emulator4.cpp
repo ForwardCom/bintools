@@ -1,13 +1,13 @@
 ﻿/****************************  emulator4.cpp  ********************************
 * Author:        Agner Fog
 * date created:  2018-02-18
-* Last modified: 2023-01-01
-* Version:       1.12
+* Last modified: 2024-07-31
+* Version:       1.13
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
 * Emulator: Execution functions for single format instructions, part 1
 *
-* Copyright 2018-2023 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2018-2024 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 #include "stdafx.h"
@@ -1155,7 +1155,7 @@ static uint64_t sqrt_ (CThread * t) {
     uint32_t mask = t->parm[3].i;
     uint8_t operandType = t->operandType;
     bool detectExceptions = (mask & (0xF << MSKI_EXCEPTIONS)) != 0;  // make NAN if exceptions
-    bool roundingMode = (mask & (3 << MSKI_ROUNDING)) != 0;  // non-standard rounding mode
+    uint32_t roundingMode = (mask >> MSKI_ROUNDING) & 7;
     bool error = false;
     switch (operandType) {
     /*case 0:   // int8
@@ -1181,10 +1181,8 @@ static uint64_t sqrt_ (CThread * t) {
         else {
             float x = half2float(a.s);
             if (detectExceptions) clearExceptionFlags();   // clear previous exceptions
-            //if (roundingMode) setRoundingMode(mask >> MSKI_ROUNDING); // cannot set rounding mode for float2half
             float y = sqrtf(x);                            // calculate square root
-            result.i = float2half(y);                      // convert to float16
-            //if (roundingMode) setRoundingMode(0);
+            result.i = roundToHalfPrecision(y, t);         // round with specified rounding mode
             if (detectExceptions) {
                 uint32_t x = getExceptionFlags();          // read exceptions
                 if (result.i == 0 && y != 0) x = 0x10;     // underflow
@@ -1200,9 +1198,16 @@ static uint64_t sqrt_ (CThread * t) {
         }
         else {
             if (detectExceptions) clearExceptionFlags();   // clear previous exceptions
-            if (roundingMode) setRoundingMode(mask >> MSKI_ROUNDING);
+            if (roundingMode != 0) setRoundingMode(roundingMode);
             result.f = sqrtf(a.f);                         // calculate square root
-            if (roundingMode) setRoundingMode(0);
+            if (roundingMode == 4) {
+                // special case for rounding mode 4 (odd if not exact)
+                setRoundingMode(2);                            // try with both round up and round down
+                SNum roundUpResult;
+                roundUpResult.f = sqrtf(a.f);
+                if (roundUpResult.i & 1) result = roundUpResult; // choose the odd result
+            }
+            if (roundingMode != 0) setRoundingMode(0);
             if (detectExceptions) {
                 uint32_t x = getExceptionFlags();          // read exceptions
                 if ((mask & (1<<MSK_UNDERFLOW)) && (x & 0x10)) result.q = t->makeNan(nan_underflow, operandType);
@@ -1216,9 +1221,16 @@ static uint64_t sqrt_ (CThread * t) {
         }
         else {
             if (detectExceptions) clearExceptionFlags();   // clear previous exceptions
-            if (roundingMode) setRoundingMode(mask >> MSKI_ROUNDING);
+            if (roundingMode != 0) setRoundingMode(roundingMode);
             result.d = sqrt(a.d);                          // calculate square root
-            if (roundingMode) setRoundingMode(0);
+            if (roundingMode == 4) {
+                // special case for rounding mode 4 (odd if not exact)
+                setRoundingMode(2);                            // try with both round up and round down
+                SNum roundUpResult;
+                roundUpResult.d = sqrt(a.d);
+                if (roundUpResult.i & 1) result = roundUpResult; // choose the odd result
+            }
+            if (roundingMode != 0) setRoundingMode(0);
             if (detectExceptions) {
                 uint32_t x = getExceptionFlags();          // read exceptions
                 if ((mask & (1<<MSK_UNDERFLOW)) && (x & 0x10)) result.q = t->makeNan(nan_underflow, operandType);

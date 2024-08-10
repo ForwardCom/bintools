@@ -2,7 +2,7 @@
 * Author:        Agner Fog
 * Date created:  2017-08-07
 * Last modified: 2022-12-16
-* Version:       1.12
+* Version:       1.13
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.cpp
 * Description:
@@ -10,7 +10,7 @@
 * This module contains:
 * - pass4(): Resolve internal cross references, optimize forward references
 * - pass5(): Make binary file
-* Copyright 2017-2022 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2024 GNU General Public License http://www.gnu.org/licenses
 ******************************************************************************/
 #include "stdafx.h"
 

@@ -2,13 +2,13 @@
 * Author:        Agner Fog
 * Date created:  2017-11-03
 * Last modified: 2021-03-30
-* Version:       1.11
+* Version:       1.13
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        error.cpp
 * Description:
 * Standard procedure for error reporting to stderr
 *
-* Copyright 2006-2021 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2006-2024 GNU General Public License http://www.gnu.org/licenses
 ******************************************************************************
 
 You may set breakpoints here to trace errors (use stack trace)

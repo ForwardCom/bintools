@@ -1,15 +1,15 @@
 /****************************  containers.cpp  **********************************
 * Author:        Agner Fog
 * Date created:  2006-07-15
-* Last modified: 2018-03-30
-* Version:       1.10
+* Last modified: 2024-08-04
+* Version:       1.13
 * Project:       Binary tools for ForwardCom instruction set
 *
 * This module contains container classes CMemoryBuffer and CFileBuffer for
 * dynamic memory allocation and file read/write. See containers.h for
 * further description.
 *
-* Copyright 2006-2020 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2006-2024 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 #include "stdafx.h"
@@ -514,22 +514,52 @@ void CTextFileBuffer::putHex(uint64_t x, int ox) {
 
 void CTextFileBuffer::putFloat16(uint16_t x) {
     // Write half precision floating point number to buffer
-    char text[32];
-    sprintf(text, "%.3G", half2float(x));
+    char text[100];
+    if (isnan_h(x)) { // NaN
+        //sprintf(text, "NaN(%s 0x%X)", exceptionCodeName(x & 0x1FF), x & 0x1FF);
+        sprintf(text, "NaN(%s)", exceptionCodeName(x & 0x1FF));
+    }
+    else { // normal number or INF
+        sprintf(text, "%.3G", half2float(x));
+    }
     put(text);
 }
 
 
 void CTextFileBuffer::putFloat(float x) {
     // Write floating point number to buffer
-    char text[64];
-    sprintf(text, "%.7G", x);
+    char text[100];
+    union {
+        float f;
+        uint32_t i;
+    } u;
+    u.f = x;
+    if (isnan_f(u.i)) { // NaN
+        uint32_t exception_code = u.i >> 13 & 0x1FF;
+        //sprintf(text, "NaN(%s 0x%X)", exceptionCodeName(exception_code), exception_code);
+        sprintf(text, "NaN(%s)", exceptionCodeName(exception_code));
+    }
+    else {  // normal number or INF
+        sprintf(text, "%.7G", x);
+    }
     put(text);
 }
 
 void CTextFileBuffer::putFloat(double x) {
     // Write floating point number to buffer
-    char text[64];
-    sprintf(text, "%.12G", x);
+    char text[100];
+    union {
+        double f;
+        uint64_t i;
+    } u;
+    u.f = x;
+    if (isnan_d(u.i)) { // NaN
+        uint32_t exception_code = uint32_t(u.i >> 42 & 0x1FF);
+        //sprintf(text, "NaN(%s 0x%X)", exceptionCodeName(exception_code), exception_code);
+        sprintf(text, "NaN(%s)", exceptionCodeName(exception_code));
+    }
+    else {  // normal number or INF
+        sprintf(text, "%.12G", x);
+    }
     put(text);
 }

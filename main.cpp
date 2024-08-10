@@ -1,8 +1,8 @@
 /****************************  main.cpp   *******************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2023-01-01
-* Version:       1.12
+* Last modified: 2024-07-29
+* Version:       1.13
 * Project:       Binary tools for ForwardCom instruction set
 * Description:   This includes assembler, disassembler, linker, library
 *                manager, and emulator in one program
@@ -12,8 +12,8 @@
 *
 * For detailed instructions, see forwardcom.pdf
 *
-* (c) Copyright 2017-2023 GNU General Public License version 3
-* http://www.gnu.org/licenses
+* (c) Copyright 2017-2024 GNU General Public License version 3
+* https://www.gnu.org/licenses
 *****************************************************************************/
 
 #include "stdafx.h"
@@ -209,7 +209,7 @@ float half2float(uint32_t half, bool supportSubnormal) {
     if ((half & 0x7C00) == 0x7C00) {             // infinity or nan
         u.expo = 0xFF;
         if (half & 0x3FF) {  // nan
-            u.mant = 1 << 22 | (half & 0x1FF);   // NAN payload is right-justified only in ForwardCom
+            u.mant = (half & 0x3FF) << 13;       // left-justify NaN payload
         }
     }
     u.hhh |= (half & 0x8000) << 16;              // sign bit
@@ -246,10 +246,11 @@ uint16_t float2half(float x, bool supportSubnormal) {
         }
     }
     v.sign = u.sign;                             // copy sign bit
-    if (u.expo == 0xFF) {                        // infinity or nan
+    if (u.expo == 0xFF) {                        // infinity or NaN
         v.expo = 0x1F;
-        if (u.mant != 0) {                       // Nan
-            v.mant = (u.mant & 0x1FF) | 0x200;   // NAN payload is right-justified only in ForwardCom        
+        if (u.mant != 0) {                       // NaN
+            v.mant = u.mant >> 13;               // No rounding
+            if (v.mant == 0) v.mant = 0x200;     // make sure it is still a NaN
         }
     }
     else if (u.expo > 0x8E) {
@@ -385,4 +386,66 @@ const char * timestring(uint32_t t) {
     const char * string = ctime(&utime.t);
     if (string == 0) string = "?";
     return string;
+}
+
+const char * exceptionCodeName(uint32_t code) {
+    // get the name of an exception code from a NaN payload
+    switch (code) {
+    case nan_data_error:
+        return "data unavailable";
+    case nan_div0: 
+        return "division by zero";
+    case nan_overflow_div:
+        return "division overflow";
+    case nan_overflow_mul:
+        return "multiplication overflow";
+    case nan_overflow_fma:
+        return "FMA overflow";        
+    case nan_overflow_add:
+        return "addition/subtraction overflow";
+    case nan_overflow_conv:
+        return "conversion overflow";
+    case nan_overflow_other:
+        return "other overflow";
+    case nan_invalid_0div0:
+        return "zero/zero";
+    case nan_invalid_infdivinf:
+        return "INF/INF";
+    case nan_invalid_0mulinf:
+        return "zero*INF";
+    case nan_invalid_inf_sub_inf:
+        return "INF-INF";
+    case nan_underflow:
+        return "underflow exception";
+    case nan_inexact:
+        return "inexact exception";
+    case nan_invalid_sqrt:
+        return "sqrt of negative";
+    case nan_invalid_log:
+        return "log of non-positive";
+    case nan_invalid_pow:
+        return "pow of invalid arguments";
+    case nan_invalid_rem:
+        return "remainder or modulo of invalid arguments";
+    case nan_invalid_asin:
+        return "asin of invalid argument";
+    case nan_invalid_acos:
+        return "acos of invalid argument";
+    case nan_invalid_acosh:
+        return "acosh of invalid argument";
+    case nan_invalid_atanh:
+        return "atanh of invalid argument";
+    }
+    // none of the above:
+    if (code > nan_div0) return "unknown data error";
+    if (code > nan_overflow_div) return "div 0 error";
+    if (code > nan_invalid_0div0) return "overflow";
+    if (code > nan_underflow) return "invalid calculation";
+    if (code > nan_inexact) return "underflow";
+    if (code > nan_invalid_sqrt) return "inexact";
+    if (code >= 0b110000000) return "invalid argument to standard math function";
+    if (code >= 0b101000000) return "invalid argument to math function";
+    if (code >= 0b100000000) return "invalid operation in other function";
+    if (code > 0) return "user-defined error code";
+    return "no error code";
 }

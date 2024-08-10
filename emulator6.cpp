@@ -1,13 +1,13 @@
 /****************************  emulator6.cpp  ********************************
 * Author:        Agner Fog
 * date created:  2018-02-18
-* Last modified: 2021-02-19
-* Version:       1.11
+* Last modified: 2024-08-05
+* Version:       1.13
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
 * Emulator: System functions
 *
-* Copyright 2018-2021 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2018-2024 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 #include "stdafx.h"
@@ -197,6 +197,7 @@ int CThread::fprintfEmulated(FILE * stream, const char * format, uint64_t * argu
     char * startp;                               // start of current substring in format string
     char * percentp1;                            // percent sign in current substring
     char * percentp2;                            // next percent sign starting next substring
+    char * trailing = 0;                         // any text following format specifier
     startp = fstringbuf.getString(0);            // start of string buffer
     percentp1 = startp;                          // search for first % sign
     while (true) {
@@ -221,6 +222,7 @@ int CThread::fprintfEmulated(FILE * stream, const char * format, uint64_t * argu
             int i = 1;
             while (true) {
                 c = percentp1[i++];                  // read character in format specifier
+                trailing = percentp1+i;              // point to next character
                 if (c == 0) break;                   // end of string
                 if (c == '*') asterisks++;           // count asterisks
                 c |= 0x20;                           // lower case
@@ -259,7 +261,17 @@ int CThread::fprintfEmulated(FILE * stream, const char * format, uint64_t * argu
             if (c == 'a' || c == 'e' || c == 'f' || c == 'g') {
                 // floating point argument
                 uu.a = argument;
-                returnValue = fprintf(stream, startp, uu.d);
+                if (isnan_d(uu.a)) { // NaN. write diagnostic exception code
+                    uint32_t exceptionCode = uint32_t(uu.a >> 42) & 0x1FF;
+                    returnValue = fprintf(stream, "NaN(%s)", exceptionCodeName(exceptionCode));
+                    if (trailing != 0 && trailing < percentp2) {
+                        // there is text following the format specifier
+                        returnValue += fprintf(stream, trailing);
+                    }
+                }
+                else {
+                    returnValue = fprintf(stream, startp, uu.d);
+                }
             }
             else {            
                 returnValue = fprintf(stream, startp, argument);

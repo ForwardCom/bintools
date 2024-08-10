@@ -1,15 +1,15 @@
 /****************************    assem4.cpp    ********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2023-01-07
-* Version:       1.12
+* Last modified: 2024-08-02
+* Version:       1.13
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.cpp
 * Description:
 * Module for assembling ForwardCom .as files.
 * This module contains:
 * pass3(): Interpretation of code lines.
-* Copyright 2017-2023 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2024 GNU General Public License http://www.gnu.org/licenses
 ******************************************************************************/
 #include "stdafx.h"
 
@@ -1696,6 +1696,9 @@ void CAssembler::checkCode1(SCode & code) {
             code.dtype = TYP_INT16;
             code.etype = (code.etype & ~ XPR_FLT) | XPR_INT;
             break;
+        case II_COMPRESS:
+            // code.dtype = TYP_FLOAT32;  // handled below
+            break;
         case II_ADD_H: case II_SUB_H: case II_MUL_H: case II_DIV_H: case II_SQRT:
         case II_FLOAT2INT: case II_INT2FLOAT:
         case II_COMPARE_H: case II_FP_CATEGORY: case II_FP_CATEGORY_REDUCE:
@@ -1712,6 +1715,34 @@ void CAssembler::checkCode1(SCode & code) {
         if ((code.dtype & TYP_FLOAT) && (code.etype & XPR_FLT) && !(code.reg1)) {
             // store float constant
           //  code.dtype = code.dtype + (TYP_INT32 - TYP_FLOAT32) | TYP_UNS;
+        }
+        break;
+    case II_COMPRESS:
+        switch (uint8_t(code.dtype)) {  // replace output type by input type
+        case TYP_FLOAT16 & 0xFF:
+            code.dtype = TYP_FLOAT32;
+            break;
+        case TYP_FLOAT32 & 0xFF:
+            code.dtype = TYP_FLOAT64;
+            break;
+        case TYP_FLOAT64 & 0xFF:
+            code.dtype = TYP_FLOAT128;
+            break;
+        case TYP_INT8 & 0xFF:
+            code.dtype = TYP_INT16;
+            break;
+        case TYP_INT16 & 0xFF: 
+            code.dtype = TYP_INT32;
+            break;
+        case TYP_INT32 & 0xFF: 
+            code.dtype = TYP_INT64;
+            break;
+        case TYP_INT64 & 0xFF: 
+            code.dtype = TYP_INT128;
+            break;
+        case TYP_INT128 & 0xFF: 
+            code.dtype = TYP_INT8; // actually TYP_INT4
+            break;
         }
     }
 
@@ -2110,12 +2141,15 @@ void CAssembler::optimizeCode(SCode & code) {
                 }
             }
             if (shiftCount == (int)0xFFFFFFFF) return;  // not a power of 2. cannot optimize
+            if (code.value.i <= 0) return;              // cannot optimize negative factor
             if (shiftCount >= 0 || cmd.optiLevel >= 3) {
-                // replace by mul_2pow instruction
+                // replace by mul_pow2 instruction
                 // use negative powers of 2 only in optimization level 3, because subnormals are ignored
-                code.instruction = II_MUL_2POW;
+                code.instruction = II_MUL_POW2;
                 code.value.i = shiftCount;
                 code.etype = (code.etype & ~XPR_IMMEDIATE) | XPR_INT;
+                if (shiftCount > -128 && shiftCount < 127) code.fitNum = IFIT_I8;
+                else code.fitNum = IFIT_I16;
             }
             else if (code.instruction == II_DIV) {
                 // replace division by power of 2 to multiplication by the reciprocal
