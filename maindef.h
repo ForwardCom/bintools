@@ -1,13 +1,13 @@
 /****************************  maindef.h   **********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2023-01-01
-* Version:       1.12
+* Last modified: 2024-07-29
+* Version:       1.13
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        maindef.h
 * Original location: https://github.com/forwardcom/binutils
 * License: GPL-3.0. https://www.gnu.org/licenses/#GPL
-* Copyright 2016-2023 by Agner Fog
+* Copyright 2016-2024 by Agner Fog
 *
 * Description:
 * Header file for type definitions and other main definitions.
@@ -16,7 +16,7 @@
 
 // Program version
 #define FORWARDCOM_VERSION         1
-#define FORWARDCOM_SUBVERSION      12
+#define FORWARDCOM_SUBVERSION      13
 
 
 // Get high part of a 64-bit integer
@@ -85,7 +85,7 @@ static inline char const * lookupText(SIntTxt const * p, int n, uint32_t x) {
 // Bit scan reverse. Returns floor(log2(x)), 0 if x = 0
 uint32_t bitScanReverse(uint64_t x);
 
-// // Bit scan forward. Returns index to the lowest set bit, 0 if x = 0
+// Bit scan forward. Returns index to the lowest set bit, 0 if x = 0
 uint32_t bitScanForward(uint64_t x);
 
 // Convert 32 bit time stamp to string
@@ -97,3 +97,6 @@ float half2float(uint32_t half, bool supportSubnormal = true);
 // Convert floating point number to half precision
 uint16_t float2half(float x, bool supportSubnormal = true);
 uint16_t double2half(double x, bool supportSubnormal = true);
+
+// Get the name of an exception code from a NaN payload
+const char * exceptionCodeName(uint32_t code);

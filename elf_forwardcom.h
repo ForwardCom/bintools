@@ -1,9 +1,9 @@
 /****************************    elf_forwardcom.h    **************************
 * Author:              Agner Fog
 * Date created:        2016-06-25
-* Last modified:       2023-01-08
-* ForwardCom version:  1.12
-* Program version:     1.12
+* Last modified:       2024-07-29
+* ForwardCom version:  1.13
+* Program version:     1.13
 * Project:             ForwardCom binary tools
 * Description:         Definition of ELF file format. See below
 *
@@ -13,7 +13,7 @@
 * To do: define formats for debug information
 * To do: define access rights for executable file or device driver
 *
-* Copyright 2016-2023 GNU General Public License v. 3
+* Copyright 2016-2024 GNU General Public License v. 3
 * http://www.gnu.org/licenses/gpl.html
 *******************************************************************************
 
@@ -628,48 +628,58 @@ struct ElfFwcStacksize {
 
 #define MSK_ENABLE                    0     // the instruction is not executed if bit number 0 is 0
 #define MSKI_OPTIONS                 18     // bit number 18-23 contain instruction-specific options. currently unused
-#define MSKI_ROUNDING                10     // bit number 10-11 indicate rounding mode:
+#define MSKI_ROUNDING                10     // bit number 10-12 indicate rounding mode:
                                             // 00: round to nearest or even
                                             // 01: round down
                                             // 10: round up
                                             // 11: truncate towards zero
+                                            // 100: odd if not exact
 #define MSKI_EXCEPTIONS               2     // bit number 2-5 enable exceptions for division by zero, overflow, underflow, inexact
 #define MSK_DIVZERO                   2     // enable NAN exception for floating point division by zero
 #define MSK_OVERFLOW                  3     // enable NAN exception for floating point overflow
 #define MSK_UNDERFLOW                 4     // enable NAN exception for floating point underflow
 #define MSK_INEXACT                   5     // enable NAN exception for floating point inexact
-#define MSK_SUBNORMAL                13     // enable subnormal numbers for float32 and float64
+#define MSK_SUBNORMAL                13     // bit 13-14 enable subnormal numbers for float32 and float64
 #define MSK_CONST_TIME               31     // constant execution time, independent of data (for cryptographic security)
 
 
 //--------------------------------------------------------------------------
-//                         EXCEPTION INDICATORS (preliminary list)
+//                            EXCEPTION CODES
 //--------------------------------------------------------------------------
 
 // NAN payloads are used for indicating that floating point exceptions have occurred.
-// These values are generated in the lower 8 bits of NAN payloads.
-// The remaining payload bits may contain information about the code address where the exception occurred.
+// These values are left-justified in the NaN payload after the 'quiet' bit.
+const uint32_t nan_data_error        = 0b111111111;  // data not available
+const uint32_t nan_div0              = 0b111110111;  // division by 0 (mask bit 2)
+const uint32_t nan_overflow_div      = 0b111101111;  // division overflow (mask bit 3)
+const uint32_t nan_overflow_mul      = 0b111101110;  // multiplication overflow (mask bit 3)
+const uint32_t nan_overflow_fma      = 0b111101101;  // FMA overflow (mask bit 3)
+const uint32_t nan_overflow_add      = 0b111101100;  // addition and subtraction overflow (mask bit 3)
+const uint32_t nan_overflow_conv     = 0b111101011;  // conversion overflow (mask bit 3)
+const uint32_t nan_overflow_other    = 0b111101010;  // other overflow (mask bit 3)
 
-// The nan exception indicators are generated only when the corresponding exceptions are enabled in mask bits:
-const uint32_t nan_inexact           = 0x01;  // inexact result
-const uint32_t nan_underflow         = 0x02;  // underflow
-const uint32_t nan_div0              = 0x03;  // division by 0
-const uint32_t nan_overflow_div      = 0x04;  // division overflow
-const uint32_t nan_overflow_mul      = 0x05;  // multiplication overflow
-const uint32_t nan_overflow_add      = 0x06;  // addition and subtraction overflow
-const uint32_t nan_overflow_conv     = 0x07;  // conversion overflow
-const uint32_t nan_overflow_other    = 0x08;  // other overflow
+const uint32_t nan_invalid_0div0     = 0b111100111;  // 0/0
+const uint32_t nan_invalid_infdivinf = 0b111100110;  // inf/inf
+const uint32_t nan_invalid_0mulinf   = 0b111100101;  // 0*inf
+const uint32_t nan_invalid_inf_sub_inf = 0b111100100;// inf-inf
 
-// The nan_invalid indicators are generated in case of invalid operations,
-// regardless of whether exceptions are enabled or not:
-const uint32_t nan_invalid_sub       = 0x20;  // inf-inf
-const uint32_t nan_invalid_0div0     = 0x21;  // 0/0
-const uint32_t nan_invalid_divinf    = 0x22;  // inf/inf
-const uint32_t nan_invalid_0mulinf   = 0x23;  // 0*inf
-const uint32_t nan_invalid_rem       = 0x24;  // inf rem 1, 1 rem 0
-const uint32_t nan_invalid_sqrt      = 0x25;  // sqrt(-1)
-const uint32_t nan_invalid_pow       = 0x28;  // pow(-1, 2.3)
-const uint32_t nan_invalid_log       = 0x29;  // log(-1)
+const uint32_t nan_underflow         = 0b111011111;  // underflow (mask bit 4)
+const uint32_t nan_inexact           = 0b111010111;  // inexact result (mask bit 5)
+
+const uint32_t nan_invalid_sqrt      = 0b111001111;  // sqrt(-1)
+const uint32_t nan_invalid_log       = 0b111001110;  // log(-1)
+const uint32_t nan_invalid_pow       = 0b111001101;  // pow(-1, 2.3)
+const uint32_t nan_invalid_rem       = 0b111001100;  // inf rem 1, 1 rem 0
+
+const uint32_t nan_invalid_asin      = 0b111000111;  // asin(2)
+const uint32_t nan_invalid_acos      = 0b111000110;  // acos(2)
+const uint32_t nan_invalid_acosh     = 0b111000011;  // acosh(0)
+const uint32_t nan_invalid_atanh     = 0b111000010;  // atanh(2)
+
+// other standard math functions: 0b110xxxxxx 
+// other math functions:          0b101xxxxxx
+// other functions:               0b100xxxxxx
+// user-defined:                  0b0xxxxxxxx
 
 
 //--------------------------------------------------------------------------

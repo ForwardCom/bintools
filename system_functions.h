@@ -2,7 +2,7 @@
 * Author:        Agner Fog
 * Date created:  2018-03-20
 * Last modified: 2020-11-25
-* Version:       1.11
+* Version:       1.13
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        system_functions.h
 * Description:
@@ -10,7 +10,7 @@
 *
 * Note: id values are preliminary, they may change
 *
-* Copyright 2018-2020 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2018-2024 GNU General Public License http://www.gnu.org/licenses
 ******************************************************************************/
 
 // Event ID's. System-specific and user-defined ID numbers may be added

@@ -1,14 +1,14 @@
 /****************************    assem.h    ***********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2022-12-26
-* Version:       1.12
+* Last modified: 2024-08-02
+* Version:       1.13
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        assem.h
 * Description:
 * Header file for assembler
 *
-* Copyright 2017-2022 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2024 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 #pragma once
 
@@ -199,7 +199,7 @@ const uint32_t II_AND            =       26;
 const uint32_t II_OR             =       27; 
 const uint32_t II_XOR            =       28; 
 const uint32_t II_SHIFT_LEFT     =       32;
-const uint32_t II_MUL_2POW       =       32;
+const uint32_t II_MUL_POW2       =       32;
 const uint32_t II_ROTATE         =       33;
 const uint32_t II_SHIFT_RIGHT_S  =       34;
 const uint32_t II_SHIFT_RIGHT_U  =       35;  // must be = II_SHIFT_RIGHT_S | 1
@@ -216,6 +216,7 @@ const uint32_t II_SELECT_BITS    =       52;
 const uint32_t II_FUNNEL_SHIFT   =       53;
 const uint32_t II_SHIFT_U_ADD    =   0x0101;
 const uint32_t II_SQRT           =  0x1201C;
+const uint32_t II_COMPRESS       =  0x12004;
 const uint32_t II_FLOAT2INT      =  0x1300C;
 const uint32_t II_INT2FLOAT      =  0x1300D;
 const uint32_t II_COMPARE_H      =  0x50007;  // float16

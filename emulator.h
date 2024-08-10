@@ -1,14 +1,14 @@
 /****************************  emulator.h   **********************************
 * Author:        Agner Fog
 * date created:  2018-02-18
-* Last modified: 2022-12-22
-* Version:       1.12
+* Last modified: 2024-07-31
+* Version:       1.13
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        emulator.h
 * Description:
 * Header file for emulator
 *
-* Copyright 2018-2022 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2018-2024 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 // structure for memory map
@@ -246,6 +246,7 @@ uint64_t bitscan_(CThread * t);
 uint64_t popcount_(CThread * t);
 int64_t  mul64_128s(uint64_t * low, int64_t a, int64_t b);
 uint64_t mul64_128u(uint64_t * low, uint64_t a, uint64_t b);
+uint32_t roundToHalfPrecision(float fresult, CThread * t);
 
 // constants and functions for detecting NAN and infinity
 const uint16_t inf_h   = 0x7C00;                 // float16 infinity

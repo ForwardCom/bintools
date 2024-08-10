@@ -2,13 +2,13 @@
 * Author:        Agner Fog
 * Date created:  2017-04-17
 * Last modified: 2018-03-30
-* Version:       1.10
+* Version:       1.13
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        converters.h
 * Description:
 * Header file for file conversion classes.
 *
-* Copyright 2006-2020 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2006-2024 GNU General Public License https://www.gnu.org/licenses
 *****************************************************************************/
 
 /*******************************   Classes   ********************************

@@ -2,13 +2,13 @@
 * Author:        Agner Fog
 * date created:  2017-11-14
 * Last modified: 2023-01-08
-* Version:       1.12
+* Version:       1.13
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        linker.h
 * Description:
 * header file for linker
 *
-* Copyright 2017-2023 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2024 GNU General Public License www.gnu.org/licenses
 *****************************************************************************/
 
 // Structure for list of imported library modules

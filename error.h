@@ -2,13 +2,13 @@
 * Author:        Agner Fog
 * Date created:  2017-04-17
 * Last modified: 2021-03-30
-* Version:       1.11
+* Version:       1.13
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        error.h
 * Description:
 * Header file for error handler error.cpp
 *
-* Copyright 2006-2021 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2006-2024 GNU General Public License https://www.gnu.org/licenses
 *****************************************************************************/
 #pragma once
 

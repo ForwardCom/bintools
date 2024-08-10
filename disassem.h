@@ -2,13 +2,13 @@
 * Author:        Agner Fog
 * Date created:  2017-04-26
 * Last modified: 2022-12-26
-* Version:       1.12
+* Version:       1.13
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        disassem.h
 * Description:
 * Header file for disassembler
 *
-* Copyright 2006-2022 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2006-2024 GNU General Public License www.gnu.org/licenses
 *****************************************************************************/
 
 

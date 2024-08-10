@@ -2,13 +2,13 @@
 * Author:        Agner Fog
 * Date created:  2017-04-17
 * Last modified: 2021-05-08
-* Version:       1.11
+* Version:       1.13
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        stdafx.h
 * Description:
 * Header file for ForwardCom tools
 *
-* Copyright 2017-2021 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2017-2024 GNU General Public License https://www.gnu.org/licenses
 *****************************************************************************/
 
 #pragma once

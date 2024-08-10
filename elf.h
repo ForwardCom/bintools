@@ -2,14 +2,14 @@
 * Author:        Agner Fog
 * Date created:  2006-07-18
 * Last modified: 2017-04-17
-* Version:       1.00
+* Version:       1.13
 * Project:       Assembler and disassembler for ForwardCom instruction set
 * Module:        elf.h
 * Description:
 * Header file for definition of structures in 32 and 64 bit ELF object file 
 * format.
 *
-* Copyright 2006-2017 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2006-2024 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 #pragma once
 
