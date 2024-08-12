@@ -1334,7 +1334,7 @@ void CThread::listResult(uint64_t result) {
     listOut.newLine();
 }
 
-// make a NAN with exception code and address in payload
+// make a NaN with exception code and address in payload
 uint64_t CThread::makeNan(uint32_t code, uint32_t operandTyp) {
     uint64_t retval = 0;
     uint8_t instrLength = lengthList[pInstr->a.il];  // instruction length

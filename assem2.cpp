@@ -1754,7 +1754,7 @@ double interpretFloat(const char * s, uint32_t length) {
             uint64_t i;
             double d;
         } nan = {0xFFFFC00000000000};
-        return nan.d; // return NAN
+        return nan.d; // return NaN
     }
     memcpy(buffer, s, length);
     buffer[length] = 0;          // terminate string

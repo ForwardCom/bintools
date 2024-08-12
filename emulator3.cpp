@@ -322,7 +322,7 @@ static uint64_t f_compare(CThread * t) {
     }
     else if (operandType == 5) {    // float
         //half2float(b.s)
-        isnan = isnan_f(a.i) || isnan_f(b.i);              // check for NAN
+        isnan = isnan_f(a.i) || isnan_f(b.i);              // check for NaN
         if (!isnan) {
             switch (cond1) {  // select condition
             case 0:   // a == b
@@ -363,10 +363,10 @@ static uint64_t f_compare(CThread * t) {
     // invert result
     if (cond & 1) result ^= 1;
 
-    // check for NAN
+    // check for NaN
     if (isnan) {
         result = (cond >> 3) & 1;                          // bit 3 tells what to get if unordered
-        //if (t->parm[3].i & MSK_FLOAT_NAN_LOSS) t->interrupt(INT_FLOAT_NAN_LOSS); // mask bit 29: trap if NAN loss
+        //if (t->parm[3].i & MSK_FLOAT_NAN_LOSS) t->interrupt(INT_FLOAT_NAN_LOSS); // mask bit 29: trap if NaN loss
     }
 
     // mask and fallback
@@ -404,7 +404,7 @@ uint64_t f_add(CThread * t) {
     uint32_t mask = t->parm[3].i;
     SNum result;
     uint32_t roundingMode = (mask >> MSKI_ROUNDING) & 7;
-    bool detectExceptions = (mask & (0xF << MSKI_EXCEPTIONS)) != 0;  // make NAN if exceptions
+    bool detectExceptions = (mask & (0xF << MSKI_EXCEPTIONS)) != 0;  // make NaN if exceptions
     uint8_t operandType = t->operandType;
 
     if (((mask ^ t->lastMask) & (1<<MSK_SUBNORMAL)) != 0) {
@@ -418,9 +418,9 @@ uint64_t f_add(CThread * t) {
         result.q = a.q + b.q;
     }
     else if (operandType == 5) {                           // float
-        bool nana = isnan_f(a.i);                          // check for NAN input
+        bool nana = isnan_f(a.i);                          // check for NaN input
         bool nanb = isnan_f(b.i);   
-        if (nana && nanb) {                                // both are NAN
+        if (nana && nanb) {                                // both are NaN
             return (a.i << 1) > (b.i << 1) ? a.i : b.i;    // return the biggest payload
         }
         else if (nana) return a.q;
@@ -436,7 +436,7 @@ uint64_t f_add(CThread * t) {
             if (roundUpResult.i & 1) result = roundUpResult; // choose the odd result
         }
         if (isnan_f(result.i)) {
-            // the result is NAN but neither input is NAN. This must be INF-INF
+            // the result is NaN but neither input is NaN. This must be INF-INF
             result.q = t->makeNan(nan_invalid_inf_sub_inf, operandType);
         }
         if (detectExceptions) {
@@ -449,9 +449,9 @@ uint64_t f_add(CThread * t) {
     }
 
     else if (operandType == 6) {                           // double
-        bool nana = isnan_d(a.q);                          // check for NAN input
+        bool nana = isnan_d(a.q);                          // check for NaN input
         bool nanb = isnan_d(b.q);   
-        if (nana && nanb) {                                // both are NAN
+        if (nana && nanb) {                                // both are NaN
             return (a.q << 1) > (b.q << 1) ? a.q : b.q;    // return the biggest payload
         }
         else if (nana) return a.q;
@@ -467,7 +467,7 @@ uint64_t f_add(CThread * t) {
             if (roundUpResult.q & 1) result = roundUpResult; // choose the odd result
         }
         if (isnan_d(result.q)) {
-            // the result is NAN but neither input is NAN. This must be INF-INF
+            // the result is NaN but neither input is NaN. This must be INF-INF
             result.q = t->makeNan(nan_invalid_inf_sub_inf, operandType);
         }
         if (detectExceptions) {
@@ -493,7 +493,7 @@ uint64_t f_sub(CThread * t) {
     uint32_t mask = t->parm[3].i;
     SNum result;
     uint32_t roundingMode = (mask >> MSKI_ROUNDING) & 7;
-    bool detectExceptions = (mask & (0xF << MSKI_EXCEPTIONS)) != 0;  // make NAN if exceptions
+    bool detectExceptions = (mask & (0xF << MSKI_EXCEPTIONS)) != 0;  // make NaN if exceptions
     uint8_t operandType = t->operandType;
     if (((mask ^ t->lastMask) & (1<<MSK_SUBNORMAL)) != 0) {
         // subnormal status changed
@@ -504,9 +504,9 @@ uint64_t f_sub(CThread * t) {
         result.q = a.q - b.q;   // subtract
     }
     else if (operandType == 5) { // float
-        bool nana = isnan_f(a.i);                          // check for NAN input
+        bool nana = isnan_f(a.i);                          // check for NaN input
         bool nanb = isnan_f(b.i);   
-        if (nana && nanb) {                                // both are NAN
+        if (nana && nanb) {                                // both are NaN
             return (a.i << 1) > (b.i << 1) ? a.i : b.i;    // return the biggest payload
         }
         else if (nana) return a.q;
@@ -522,7 +522,7 @@ uint64_t f_sub(CThread * t) {
             if (roundUpResult.i & 1) result = roundUpResult; // choose the odd result
         }
         if (isnan_f(result.i)) {
-            // the result is NAN but neither input is NAN. This must be INF-INF
+            // the result is NaN but neither input is NaN. This must be INF-INF
             result.q = t->makeNan(nan_invalid_inf_sub_inf, operandType);
         }
         if (detectExceptions) {
@@ -534,9 +534,9 @@ uint64_t f_sub(CThread * t) {
         if (roundingMode != 0) setRoundingMode(0);              // reset rounding mode
     }
     else if (operandType == 6) {// double
-        bool nana = isnan_d(a.q);                          // check for NAN input
+        bool nana = isnan_d(a.q);                          // check for NaN input
         bool nanb = isnan_d(b.q);   
-        if (nana && nanb) {                                // both are NAN
+        if (nana && nanb) {                                // both are NaN
             return (a.q << 1) > (b.q << 1) ? a.q : b.q;    // return the biggest payload
         }
         else if (nana) return a.q;
@@ -552,7 +552,7 @@ uint64_t f_sub(CThread * t) {
             if (roundUpResult.q & 1) result = roundUpResult; // choose the odd result
         }
         if (isnan_d(result.q)) {
-            // the result is NAN but neither input is NAN. This must be INF-INF
+            // the result is NaN but neither input is NaN. This must be INF-INF
             result.q = t->makeNan(nan_invalid_inf_sub_inf, operandType);
         }
         if (detectExceptions) {
@@ -588,7 +588,7 @@ uint64_t f_mul(CThread * t) {
     uint32_t mask = t->parm[3].i;
     SNum result;
     uint32_t roundingMode = (mask >> MSKI_ROUNDING) & 7;
-    bool detectExceptions = (mask & (0xF << MSKI_EXCEPTIONS)) != 0;  // make NAN if exceptions
+    bool detectExceptions = (mask & (0xF << MSKI_EXCEPTIONS)) != 0;  // make NaN if exceptions
     uint8_t operandType = t->operandType;
     if (((mask ^ t->lastMask) & (1<<MSK_SUBNORMAL)) != 0) {
         // subnormal status changed
@@ -600,9 +600,9 @@ uint64_t f_mul(CThread * t) {
         result.q = a.q * b.q;
     }
     else if (operandType == 5) {                           // float
-        bool nana = isnan_f(a.i);                          // check for NAN input
+        bool nana = isnan_f(a.i);                          // check for NaN input
         bool nanb = isnan_f(b.i);   
-        if (nana && nanb) {                                // both are NAN
+        if (nana && nanb) {                                // both are NaN
             return (a.i << 1) > (b.i << 1) ? a.i : b.i;    // return the biggest payload
         }
         else if (nana) return a.q;
@@ -618,7 +618,7 @@ uint64_t f_mul(CThread * t) {
             if (roundUpResult.i & 1) result = roundUpResult; // choose the odd result
         }
         if (isnan_f(result.i)) {
-            // the result is NAN but neither input is NAN. This must be 0*INF
+            // the result is NaN but neither input is NaN. This must be 0*INF
             result.q = t->makeNan(nan_invalid_0mulinf, operandType);
         }
         if (detectExceptions) {
@@ -631,9 +631,9 @@ uint64_t f_mul(CThread * t) {
     }
 
     else if (operandType == 6) { // double
-        bool nana = isnan_d(a.q);                          // check for NAN input
+        bool nana = isnan_d(a.q);                          // check for NaN input
         bool nanb = isnan_d(b.q);   
-        if (nana && nanb) {                                // both are NAN
+        if (nana && nanb) {                                // both are NaN
             return (a.q << 1) > (b.q << 1) ? a.q : b.q;    // return the biggest payload
         }
         else if (nana) return a.q;
@@ -649,7 +649,7 @@ uint64_t f_mul(CThread * t) {
             if (roundUpResult.q & 1) result = roundUpResult; // choose the odd result
         }
         if (isnan_d(result.q)) {
-            // the result is NAN but neither input is NAN. This must be 0*INF
+            // the result is NaN but neither input is NaN. This must be 0*INF
             result.q = t->makeNan(nan_invalid_0mulinf, operandType);
         }
         if (detectExceptions) {
@@ -677,8 +677,8 @@ uint64_t f_div(CThread * t) {
     SNum result;
     bool overflow = false;
     uint32_t roundingMode = (mask >> MSKI_ROUNDING) & 7;   // floating point rounding mode
-    bool detectExceptions = (mask & (0xF << MSKI_EXCEPTIONS)) != 0;  // make NAN if exceptions
-    bool nana, nanb;                                       // inputs are NAN
+    bool detectExceptions = (mask & (0xF << MSKI_EXCEPTIONS)) != 0;  // make NaN if exceptions
+    bool nana, nanb;                                       // inputs are NaN
     uint8_t operandType = t->operandType;
     uint8_t options = 0;
     uint8_t intRounding = 0;                              // integer rounding mode
@@ -755,9 +755,9 @@ uint64_t f_div(CThread * t) {
             // float16
             float aa = half2float(a.s);
             float bb = half2float(b.s);
-            nana = isnan_h(a.s);                                // check for NAN input
+            nana = isnan_h(a.s);                                // check for NaN input
             nanb = isnan_h(b.s);
-            if (nana && nanb) {                                 // both are NAN
+            if (nana && nanb) {                                 // both are NaN
                 result.i = (a.s << 1) > (b.s << 1) ? a.s : b.s; // return the biggest payload
             }
             else if (nana) result.i = a.i;
@@ -853,9 +853,9 @@ uint64_t f_div(CThread * t) {
         }
         break;
     case 5:  // float
-        nana = isnan_f(a.i);                                // check for NAN input
+        nana = isnan_f(a.i);                                // check for NaN input
         nanb = isnan_f(b.i);   
-        if (nana && nanb) {                                 // both are NAN
+        if (nana && nanb) {                                 // both are NaN
             result.i = (a.i << 1) > (b.i << 1) ? a.i : b.i; // return the biggest payload
         }
         else if (nana) result.i = a.i;
@@ -892,13 +892,13 @@ uint64_t f_div(CThread * t) {
                 else if ((mask & (1<<MSK_UNDERFLOW)) && (x & 0x10)) result.q = t->makeNan(nan_underflow, operandType);
                 else if ((mask & (1<<MSK_INEXACT)) && (x & 0x20)) result.q = t->makeNan(nan_inexact, operandType);
             }
-            if (roundingMode != 0) setRoundingMode(0);              // reset rounding mode
+            if (roundingMode != 0) setRoundingMode(0);         // reset rounding mode
         }
         break;
     case 6:  // double
-        nana = isnan_d(a.q);                          // check for NAN input
+        nana = isnan_d(a.q);                                   // check for NaN input
         nanb = isnan_d(b.q);   
-        if (nana && nanb) {                                // both are NAN
+        if (nana && nanb) {                                    // both are NaN
             result.q = (a.q << 1) > (b.q << 1) ? a.q : b.q;    // return the biggest payload
         }
         else if (nana) result.q = a.q;
@@ -1225,7 +1225,7 @@ static uint64_t f_rem(CThread * t) {
         else result.qs = a.qs % b.qs;
         break;
     case 5:  // float
-        if (isnan_f(a.i) && isnan_f(b.i)) {    // both are NAN
+        if (isnan_f(a.i) && isnan_f(b.i)) {    // both are NaN
             result.i = (a.i << 1) > (b.i << 1) ? a.i : b.i; // return the biggest payload
         }
         else if (b.i << 1 == 0 || isinf_f(a.i)) { // rem(1,0) or rem(inf,1)
@@ -1237,7 +1237,7 @@ static uint64_t f_rem(CThread * t) {
         }
         break;
     case 6:  // double
-        if (isnan_d(a.q) && isnan_d(b.q)) {    // both are NAN
+        if (isnan_d(a.q) && isnan_d(b.q)) {    // both are NaN
             result.q = (a.q << 1) > (b.q << 1) ? a.q : b.q; // return the biggest payload
         }
         else if (b.q << 1 == 0 || isinf_d(a.q)) { // rem(1,0) or rem(inf,1)
@@ -1328,11 +1328,11 @@ static uint64_t f_min(CThread * t) {
                 a.i &= 0x7FFF;  b.i &= 0x7FFF; // remove sign bits
             }
             result.i = half2float(a.s) < half2float(b.s) ? a.i : b.i;
-            // check NANs
-            isnan  = isnan_h(a.s);           // a is nan
-            isnan |= isnan_h(b.s) << 1;      // b is nan
+            // check NaNs
+            isnan  = isnan_h(a.s);           // a is NaN
+            isnan |= isnan_h(b.s) << 1;      // b is NaN
             if (isnan && propagateNAN) {
-                // propagate NAN according to the 2019 revision of the IEEE-754 standard
+                // propagate NaN according to the 2019 revision of the IEEE-754 standard
                 if (isnan == 1) result.i = a.i;
                 else if (isnan == 2) result.i = b.i;
                 else result.i = (a.s & 0x7FFF) > (b.s & 0x7FFF) ? a.i : b.i; // return the biggest payload
@@ -1355,10 +1355,10 @@ static uint64_t f_min(CThread * t) {
             a.i &= 0x7FFFFFFF;  b.i &= 0x7FFFFFFF; // remove sign bits
         }
         result.f = a.f < b.f ? a.f : b.f;
-        // check NANs
-        isnan  = isnan_f(a.i);           // a is nan
-        isnan |= isnan_f(b.i) << 1;      // b is nan
-        if (isnan && propagateNAN) { // propagate NAN according to the 2019 revision of the IEEE-754 standard
+        // check NaNs
+        isnan  = isnan_f(a.i);           // a is NaN
+        isnan |= isnan_f(b.i) << 1;      // b is NaN
+        if (isnan && propagateNAN) { // propagate NaN according to the 2019 revision of the IEEE-754 standard
             if (isnan == 1) result.i = a.i;
             else if (isnan == 2) result.i = b.i;
             else result.i = (a.i << 1) > (b.i << 1) ? a.i : b.i; // return the biggest payload
@@ -1370,9 +1370,9 @@ static uint64_t f_min(CThread * t) {
         }
         result.d = a.d < b.d ? a.d : b.d;
         // check NANs
-        isnan  = isnan_d(a.q);           // a is nan
-        isnan |= isnan_d(b.q) << 1;      // b is nan
-        if (isnan && propagateNAN) { // propagate NAN according to the 2019 revision of the IEEE-754 standard
+        isnan  = isnan_d(a.q);           // a is NaN
+        isnan |= isnan_d(b.q) << 1;      // b is NaN
+        if (isnan && propagateNAN) { // propagate NaN according to the 2019 revision of the IEEE-754 standard
             if (isnan == 1) result.q = a.q;
             else if (isnan == 2) result.q = b.q;
             else result.q = (a.q << 1) > (b.q << 1) ? a.q : b.q; // return the biggest payload
@@ -1413,10 +1413,10 @@ static uint64_t f_max(CThread * t) {
             }
             result.i = half2float(a.s) > half2float(b.s) ? a.i : b.i;
             // check NANs
-            isnan  = isnan_h(a.s);           // a is nan
-            isnan |= isnan_h(b.s) << 1;      // b is nan
+            isnan  = isnan_h(a.s);           // a is NaN
+            isnan |= isnan_h(b.s) << 1;      // b is NaN
             if (isnan && propagateNAN) {
-                // propagate NAN according to the 2019 revision of the IEEE-754 standard
+                // propagate NaN according to the 2019 revision of the IEEE-754 standard
                 if (isnan == 1) result.i = a.i;
                 else if (isnan == 2) result.i = b.i;
                 else result.i = (a.s & 0x7FFF) > (b.s & 0x7FFF) ? a.i : b.i; // return the biggest payload
@@ -1438,10 +1438,10 @@ static uint64_t f_max(CThread * t) {
         }
         result.f = a.f > b.f ? a.f : b.f;
         // check NANs
-        isnan  = isnan_f(a.i);           // a is nan
-        isnan |= isnan_f(b.i) << 1;      // b is nan
+        isnan  = isnan_f(a.i);           // a is NaN
+        isnan |= isnan_f(b.i) << 1;      // b is NaN
         if (isnan && propagateNAN) {
-            // propagate NAN according to the 2019 revision of the IEEE-754 standard
+            // propagate NaN according to the 2019 revision of the IEEE-754 standard
             if (isnan == 1) result.i = a.i;
             else if (isnan == 2) result.i = b.i;
             else result.i = (a.i << 1) > (b.i << 1) ? a.i : b.i; // return the biggest payload
@@ -1453,10 +1453,10 @@ static uint64_t f_max(CThread * t) {
         }
         result.d = a.d > b.d ? a.d : b.d;
         // check NANs
-        isnan  = isnan_d(a.q);           // a is nan
-        isnan |= isnan_d(b.q) << 1;      // b is nan
+        isnan  = isnan_d(a.q);           // a is NaN
+        isnan |= isnan_d(b.q) << 1;      // b is NaN
         if (isnan && propagateNAN) {
-            // propagate NAN according to the 2019 revision of the IEEE-754 standard
+            // propagate NaN according to the 2019 revision of the IEEE-754 standard
             if (isnan == 1) result.q = a.q;
             else if (isnan == 2) result.q = b.q;
             else result.q = (a.q << 1) > (b.q << 1) ? a.q : b.q; // return the biggest payload
@@ -1523,12 +1523,12 @@ static uint64_t f_shift_left(CThread * t) {
         if (b.b > 63) result.q = 0;
         break;
     case 5:   // float: mul_pow2
-        if (isnan_f(a.i)) return a.q;  // a is nan
+        if (isnan_f(a.i)) return a.q;      // a is NaN
         exponent = a.i >> 23 & 0xFF;       // get exponent
         if (exponent == 0) return a.i & sign_f; // a is zero or subnormal. return zero
         exponent += b.i;                  // add integer to exponent
         if ((int32_t)exponent >= 0xFF) { // overflow
-            if ((mask.i & (1<<MSK_OVERFLOW)) != 0) {  // make NAN if exception
+            if ((mask.i & (1<<MSK_OVERFLOW)) != 0) {  // make NaN if exception
                 result.q = t->makeNan(nan_overflow_mul, 5);
             }
             else {
@@ -1536,7 +1536,7 @@ static uint64_t f_shift_left(CThread * t) {
             }
         }
         else if ((int32_t)exponent <= 0) { // underflow
-            if ((mask.i & (1<<MSK_UNDERFLOW)) != 0) {  // make NAN if exception
+            if ((mask.i & (1<<MSK_UNDERFLOW)) != 0) {  // make NaN if exception
                 result.q = t->makeNan(nan_underflow, 5);
             }
             else {
@@ -1548,12 +1548,12 @@ static uint64_t f_shift_left(CThread * t) {
         }
         break;
     case 6:   // double: mul_pow2
-        if (isnan_d(a.q)) return a.q;  // a is nan
+        if (isnan_d(a.q)) return a.q;     // a is NaN
         exponent = a.q >> 52 & 0x7FF;
         if (exponent == 0) return a.q & sign_d; // a is zero or subnormal. return zero
         exponent += b.q;                  // add integer to exponent
         if ((int64_t)exponent >= 0x7FF) { // overflow
-            if ((mask.i & (1<<MSK_OVERFLOW)) != 0) {  // make NAN if exception
+            if ((mask.i & (1<<MSK_OVERFLOW)) != 0) {  // make NaN if exception
                 result.q = t->makeNan(nan_overflow_mul, 6);
             }
             else {
@@ -1561,7 +1561,7 @@ static uint64_t f_shift_left(CThread * t) {
             }
         }
         else if ((int64_t)exponent <= 0) { // underflow
-            if ((mask.i & (1<<MSK_UNDERFLOW)) != 0) {  // make NAN if exception
+            if ((mask.i & (1<<MSK_UNDERFLOW)) != 0) {  // make NaN if exception
                 result.q = t->makeNan(nan_underflow, 6);
             }
             else {
@@ -2077,15 +2077,15 @@ uint64_t f_mul_add_h(CThread * t) {
     uint16_t result = double2half(resultd);
     uint32_t nans = 0;  bool parmInf = false;
 
-    if (isnan_or_inf_h(result)) {                          // check for overflow and nan
+    if (isnan_or_inf_h(result)) {                          // check for overflow and NaN
         for (int i = 0; i < 3; i++) {                      // loop through input operands
             uint32_t tmp = t->parm[i].s & 0x7FFF;          // ignore sign bit
-            if (tmp > nans) nans = tmp;                    // get the biggest if there are multiple NANs
+            if (tmp > nans) nans = tmp;                    // get the biggest if there are multiple NaNs
             if (tmp == inf_h) parmInf = true;              // OR of all INFs
         }
-        if (nans > inf_h) return nans;                     // there is at least one NAN. return the biggest (sign bit is lost)
+        if (nans > inf_h) return nans;                     // there is at least one NaN. return the biggest (sign bit is lost)
         else if (isnan_h(result)) {
-            // result is NAN, but no input is NAN. This can be 0*INF or INF-INF
+            // result is NaN, but no input is NaN. This can be 0*INF or INF-INF
             if ((a.s << 1 == 0 || b.s << 1 == 0) && parmInf) result = (uint16_t)t->makeNan(nan_invalid_0mulinf, 1);
             else result = (uint16_t)t->makeNan(nan_invalid_inf_sub_inf, 1);
         }
@@ -2124,7 +2124,7 @@ uint64_t f_mul_add(CThread * t) {
     uint32_t mask = t->parm[3].i;
     SNum result;
     uint32_t roundingMode = (mask >> MSKI_ROUNDING) & 7;
-    bool detectExceptions = (mask & (0xF << MSKI_EXCEPTIONS)) != 0;  // make NAN if exceptions
+    bool detectExceptions = (mask & (0xF << MSKI_EXCEPTIONS)) != 0;  // make NaN if exceptions
 
     bool unsignedOverflow = false;
     bool signedOverflow = false;
@@ -2185,17 +2185,17 @@ uint64_t f_mul_add(CThread * t) {
 #else
         // rounding modes not supported
 #endif
-        if (isnan_or_inf_f(result.i)) {                    // check for overflow and nan
-            uint32_t nans = 0;                             // biggest NAN
+        if (isnan_or_inf_f(result.i)) {                    // check for overflow and NaN
+            uint32_t nans = 0;                             // biggest NaN
             uint32_t infs = 0;                             // count INF inputs
             for (int i = 0; i < 3; i++) {                  // loop through input operands
                 uint32_t tmp = t->parm[i].i & nsign_f;     // ignore sign bit
                 if (tmp == inf_f) infs++;                  // is INF
-                else if (tmp > nans) nans = tmp;           // get the biggest if there are multiple NANs
+                else if (tmp > nans) nans = tmp;           // get the biggest if there are multiple NaNs
             }
-            if (nans) result.i = nans;                     // there is at least one NAN. return the biggest (sign bit is lost)
+            if (nans) result.i = nans;                     // there is at least one NaN. return the biggest (sign bit is lost)
             else if (isnan_f(result.i)) {
-                // result is NAN, but no input is NAN. This can be 0*INF or INF-INF
+                // result is NaN, but no input is NaN. This can be 0*INF or INF-INF
                 if ((a.i << 1 == 0 || b.i << 1 == 0) && infs) result.q = t->makeNan(nan_invalid_0mulinf, operandType);
                 else result.q = t->makeNan(nan_invalid_inf_sub_inf, operandType);
             }
@@ -2227,17 +2227,17 @@ uint64_t f_mul_add(CThread * t) {
 #else
         // rounding modes not supported
 #endif
-        if (isnan_or_inf_d(result.q)) {                    // check for overflow and nan
-            uint64_t nans = 0;                             // biggest NAN
+        if (isnan_or_inf_d(result.q)) {                    // check for overflow and NaN
+            uint64_t nans = 0;                             // biggest NaN
             uint32_t infs = 0;                             // count INF inputs
             for (int i = 0; i < 3; i++) {                  // loop through input operands
                 uint64_t tmp = t->parm[i].q & nsign_d;     // ignore sign bit
                 if (tmp == inf_d) infs++;                  // is INF
-                else if (tmp > nans) nans = tmp;           // get the biggest if there are multiple NANs
+                else if (tmp > nans) nans = tmp;           // get the biggest if there are multiple NaNs
             }
-            if (nans) result.q = nans;                     // there is at least one NAN. return the biggest (sign bit is lost)
+            if (nans) result.q = nans;                     // there is at least one NaN. return the biggest (sign bit is lost)
             else if (isnan_d(result.q)) {
-                // result is NAN, but no input is NAN. This can be 0*INF or INF-INF
+                // result is NaN, but no input is NaN. This can be 0*INF or INF-INF
                 if ((a.q << 1 == 0 || b.q << 1 == 0) && infs) result.q = t->makeNan(nan_invalid_0mulinf, operandType);
                 else result.q = t->makeNan(nan_invalid_inf_sub_inf, operandType);
             }
@@ -2265,11 +2265,11 @@ static uint64_t f_add_add(CThread * t) {
     // copy parameters so that we change sign and reorder them without changing original constant
     for (i = 0; i < 3; i++) parm[i] = t->parm[i];
     if ((t->fInstr->imm2 & 4) && t->operandType < 5) {
-        parm[2] = t->parm[4];                                    // avoid immediate operand shifted by imm3
+        parm[2] = t->parm[4];                                        // avoid immediate operand shifted by imm3
     }
     uint32_t mask = t->parm[3].i;
     uint32_t roundingMode = (mask >> MSKI_ROUNDING) & 7;
-    bool detectExceptions = (mask & (0xF << MSKI_EXCEPTIONS)) != 0;  // make NAN if exceptions
+    bool detectExceptions = (mask & (0xF << MSKI_EXCEPTIONS)) != 0;  // make NaN if exceptions
     uint8_t operandType = t->operandType;
     SNum sumS, sumU;                             // signed and unsigned sums
     SNum nanS;                                   // combined nan's
@@ -2353,11 +2353,11 @@ static uint64_t f_add_add(CThread * t) {
             }
             // find NANs and infs
             temp1 = parm[i].i & nsign_f;                   // ignore sign bit
-            if (temp1 > nanS.i) nanS.i = temp1;            // find the biggest NAN
-            //if (temp1 == inf_f) parmInf = true;            // OR of all INFs
+            if (temp1 > nanS.i) nanS.i = temp1;            // find the biggest NaN
+            //if (temp1 == inf_f) parmInf = true;          // OR of all INFs
             options >>= 1;                                 // next option bit
         }
-        if (nanS.i > inf_f) return nanS.i;                 // result is NAN
+        if (nanS.i > inf_f) return nanS.i;                 // result is NaN
         // get the smallest operand last to minimize loss of precision if the two biggest operands have opposite signs
         temp1 = parm[j].i;
         parm[j].i = parm[2].i;
@@ -2370,7 +2370,7 @@ static uint64_t f_add_add(CThread * t) {
         sumU.f = (parm[0].f + parm[1].f) + parm[2].f;
 
         if (isnan_f(sumU.i)) {
-            // the result is NAN but neither input is NAN. This must be INF-INF
+            // the result is NaN but neither input is NaN. This must be INF-INF
             sumU.q = t->makeNan(nan_invalid_inf_sub_inf, operandType);
         }
         if (detectExceptions) {
@@ -2390,13 +2390,13 @@ static uint64_t f_add_add(CThread * t) {
             if ((parm[i].q << 1) < sumS.q) {
                 sumS.q = (parm[i].q << 1);  j = i;
             }
-            // find NANs and infs
+            // find NaN and INFs
             temp2 = parm[i].q & nsign_d;                   // ignore sign bit
-            if (temp2 > nanS.q) nanS.q = temp2;            // find the biggest NAN
-            //if (temp2 == inf_d) parmInf = true;            // OR of all INFs
+            if (temp2 > nanS.q) nanS.q = temp2;            // find the biggest NaN
+            //if (temp2 == inf_d) parmInf = true;          // OR of all INFs
             options >>= 1;                                 // next option bit
         }
-        if (nanS.q > inf_d) return nanS.q;                 // result is NAN
+        if (nanS.q > inf_d) return nanS.q;                 // result is NaN
 
         // get the smallest operand last to minimize loss of precision if 
         // the two biggest operands have opposite signs
@@ -2410,7 +2410,7 @@ static uint64_t f_add_add(CThread * t) {
         sumU.d = (parm[0].d + parm[1].d) + parm[2].d;
 
         if (isnan_d(sumU.q)) {
-            // the result is NAN but neither input is NAN. This must be INF-INF
+            // the result is NaN but neither input is NaN. This must be INF-INF
             sumU.q = t->makeNan(nan_invalid_inf_sub_inf, operandType);
         }
         if (detectExceptions) {
@@ -2447,7 +2447,7 @@ uint64_t f_add_h(CThread * t) {
 
     // check for NaN
     if (isnan_h(result)) {
-        if (isnan_h(a.s) && isnan_h(b.s)) {    // both are NAN
+        if (isnan_h(a.s) && isnan_h(b.s)) {               // both are NaN
             result = (a.s << 1) > (b.s << 1) ? a.s : b.s; // return the biggest payload
         }
         else if (isnan_h(a.s)) result = a.s;
@@ -2463,7 +2463,7 @@ uint64_t f_add_h(CThread * t) {
     }
     else if ((mask & (1<<MSK_UNDERFLOW)) && is_zero_or_subnormal_h(result) && resultf != 0.0f) {
         // underflow
-        result = (uint16_t)t->makeNan(nan_underflow, 1) | (result & 0x8000); // signed NAN
+        result = (uint16_t)t->makeNan(nan_underflow, 1) | (result & 0x8000); // signed NaN
     }
     //else if ((mask & (1<<MSK_INEXACT)) && (half2float(result) != resultf || (getExceptionFlags() & 0x20)) != 0) {
     else if ((mask & (1<<MSK_INEXACT)) && half2float(result) != resultf) {
@@ -2492,7 +2492,7 @@ uint64_t f_sub_h(CThread * t) {
 
     // check for NaN
     if (isnan_h(result)) {
-        if (isnan_h(a.s) && isnan_h(b.s)) {    // both are NAN
+        if (isnan_h(a.s) && isnan_h(b.s)) {               // both are NaN
             result = (a.s << 1) > (b.s << 1) ? a.s : b.s; // return the biggest payload
         }
         else if (isnan_h(a.s)) result = a.s;
@@ -2508,7 +2508,7 @@ uint64_t f_sub_h(CThread * t) {
     }
     else if ((mask & (1<<MSK_UNDERFLOW)) && is_zero_or_subnormal_h(result) && resultf != 0.0f) {
         // underflow
-        result = (uint16_t)t->makeNan(nan_underflow, 1) | (result & 0x8000); // signed NAN
+        result = (uint16_t)t->makeNan(nan_underflow, 1) | (result & 0x8000); // signed NaN
     }
     //else if ((mask & (1<<MSK_INEXACT)) && (half2float(result) != resultf || (getExceptionFlags() & 0x20)) != 0) {
     else if ((mask & (1<<MSK_INEXACT)) && half2float(result) != resultf) {
@@ -2536,7 +2536,7 @@ uint64_t f_mul_h(CThread * t) {
 
     // check for NaN
     if (isnan_h(result)) {
-        if (isnan_h(a.s) && isnan_h(b.s)) {    // both are NAN
+        if (isnan_h(a.s) && isnan_h(b.s)) {               // both are NaN
             result = (a.s << 1) > (b.s << 1) ? a.s : b.s; // return the biggest payload
         }
         else if (isnan_h(a.s)) result = a.s;
@@ -2552,7 +2552,7 @@ uint64_t f_mul_h(CThread * t) {
     }
     else if ((mask & (1<<MSK_UNDERFLOW)) && is_zero_or_subnormal_h(result) && resultf != 0.0f) {
         // underflow
-        result = (uint16_t)t->makeNan(nan_underflow, 1) | (result & 0x8000); // signed NAN
+        result = (uint16_t)t->makeNan(nan_underflow, 1) | (result & 0x8000); // signed NaN
     }
     else if ((mask & (1<<MSK_INEXACT)) && (half2float(result) != resultf || (getExceptionFlags() & 0x20)) != 0) {
         // inexact

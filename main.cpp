@@ -1,7 +1,7 @@
 /****************************  main.cpp   *******************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2024-07-29
+* Last modified: 2024-08-12
 * Version:       1.13
 * Project:       Binary tools for ForwardCom instruction set
 * Description:   This includes assembler, disassembler, linker, library
@@ -183,7 +183,7 @@ void CConverter::emulate() {
 
 // Convert half precision floating point number to single precision
 // Optional support for subnormals
-// NAN payload is right-justified for ForwardCom
+// NaN payload is left-justified for ForwardCom
 float half2float(uint32_t half, bool supportSubnormal) {
     union {
         uint32_t hhh;
@@ -206,9 +206,9 @@ float half2float(uint32_t half, bool supportSubnormal) {
             u.hhh = 0;                           // make zero
         }
     }
-    if ((half & 0x7C00) == 0x7C00) {             // infinity or nan
+    if ((half & 0x7C00) == 0x7C00) {             // infinity or NaN
         u.expo = 0xFF;
-        if (half & 0x3FF) {  // nan
+        if (half & 0x3FF) {                      // NaN
             u.mant = (half & 0x3FF) << 13;       // left-justify NaN payload
         }
     }
@@ -219,7 +219,7 @@ float half2float(uint32_t half, bool supportSubnormal) {
 // Convert floating point number to half precision.
 // Round to nearest or even. 
 // Optional support for subnormals
-// NAN payload is right-justified
+// NaN payload is left-justified
 uint16_t float2half(float x, bool supportSubnormal) {
     union {                                      // single precision float
         float f;
@@ -391,8 +391,8 @@ const char * timestring(uint32_t t) {
 const char * exceptionCodeName(uint32_t code) {
     // get the name of an exception code from a NaN payload
     switch (code) {
-    case nan_data_error:
-        return "data unavailable";
+    case nan_data_unavailable:
+        return "data not available";
     case nan_div0: 
         return "division by zero";
     case nan_overflow_div:

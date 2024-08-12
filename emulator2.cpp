@@ -58,7 +58,7 @@ static uint64_t compare_jump_generic(CThread * t) {
     else {
         // vector registers
         if (t->operandType != 5 && t->operandType != 6) {
-            t->interrupt(INT_WRONG_PARAMETERS);                // unsupported operand type
+            t->interrupt(INT_WRONG_PARAMETERS);            // unsupported operand type
             return 0;
         }
         if ((t->op & 0xFE) == 24) {
@@ -81,7 +81,7 @@ static uint64_t compare_jump_generic(CThread * t) {
                 sign = a.q >> 63 != 0;                     // sign bit
             }
             if (exp1) {
-                if (b.b & 1)    branch |= !mant0;          // NAN
+                if (b.b & 1)    branch |= !mant0;          // NaN
                 if (b.b & 0x40) branch |= mant0 && sign;   // -INF
                 if (b.b & 0x80) branch |= mant0 && !sign;  // +INF
             }
@@ -103,7 +103,7 @@ static uint64_t compare_jump_generic(CThread * t) {
                 // float
                 unordered = isnan_f(a.i) || isnan_f(b.i);  // check if unordered
                 if (unordered) {
-                    // a or b is NAN. 
+                    // a or b is NaN. 
                     if (opj == 23) branch = 0;             // compare/jump_ordered
                     else {
                         // Don't check the condition. Branch only if unordered version of instruction.
@@ -139,7 +139,7 @@ static uint64_t compare_jump_generic(CThread * t) {
                 // double
                 unordered = isnan_d(a.q) || isnan_d(b.q);  // check if unordered
                 if (unordered) {
-                    // a or b is NAN. 
+                    // a or b is NaN. 
                     if (opj == 23) branch = 0;             // compare/jump_ordered
                     else {
                         // Don't check the condition. Branch only if unordered version of instruction.

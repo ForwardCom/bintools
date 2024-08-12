@@ -260,7 +260,7 @@ static uint64_t compress(CThread * t) {
                 overflowS = isinf_h(val2) && !isinf_f(val.i);// detect overflow
                 overflowF2 |= overflowS;
                 if (overflowS) {                               // check for overflow
-                    if (exceptionControl & 1) {                // overflow exception -> NAN
+                    if (exceptionControl & 1) {                // overflow exception -> NaN
                         val2 = (uint16_t)t->makeNan(nan_overflow_conv, 1);  // overflow
                     }
                 }
@@ -279,7 +279,7 @@ static uint64_t compress(CThread * t) {
         for (pos = 0; pos < newLength; pos += 4) {
             SNum val1, val2;
             val1.q = *(uint64_t*)(source + 2 * pos);       // value to convert
-            // check NAN and INF
+            // check NaN and INF
             if (isnan_or_inf_d(val1.q)) {
                 val2.f = float(val1.d);                    // convert to single precision, no rounding
             }
@@ -320,7 +320,7 @@ static uint64_t compress(CThread * t) {
                 overflowS = isinf_f(val2.i) && !isinf_d(val1.q); // detect overflow
                 overflowF2 |= overflowS;
                 if (overflowS) {                               // check for overflow
-                    if (exceptionControl & 1) {                // overflow exception -> NAN
+                    if (exceptionControl & 1) {                // overflow exception -> NaN
                         val2.q = t->makeNan(nan_overflow_conv, 5);  // overflow
                     }
                 }
@@ -766,7 +766,7 @@ static uint64_t int2float (CThread * t) {
     SNum a = t->parm[1];
     SNum IM1 = t->parm[4];
     bool isSigned = (IM1.b & 1) == 0;  // signed integer
-    bool inexactX = (IM1.b & 4) != 0;  // make NAN exception if inexact
+    bool inexactX = (IM1.b & 4) != 0;  // make NaN exception if inexact
 
     SNum result;
     uint32_t dataSize = dataSizeTable[t->operandType];
@@ -1150,7 +1150,7 @@ static uint64_t bool2bits(CThread * t) {
 
 static uint64_t fp_category (CThread * t) {
     // Check if floating point numbers belong to the categories indicated by constant
-    //  0 ± NAN, 1 ± Zero, 2 −Subnormal, 3 +Subnormal, 4 −Normal, 5 +Normal, 6 −Infinite, 7 +Infinite
+    //  0 ± NaN, 1 ± Zero, 2 −Subnormal, 3 +Subnormal, 4 −Normal, 5 +Normal, 6 −Infinite, 7 +Infinite
     SNum a = t->parm[1];                         // x
     SNum b = t->parm[4];                         // option
     uint32_t exponent; 
@@ -1213,7 +1213,7 @@ static uint64_t fp_category (CThread * t) {
 static uint64_t fp_category_reduce(CThread * t) {
     // fp_category_reduce: The output is a scalar where bit 0 is true if at least
     // one element belongs to any floating point category specified by the immediate operand:
-    // bit 0: NAN, bit 1: zero, bit 2: -subnormal, bit 3: +subnormal,
+    // bit 0: NaN, bit 1: zero, bit 2: -subnormal, bit 3: +subnormal,
     // bit 4: -normal, bit 5: +normal, bit 6: -INF, bit 7: +INF
     uint8_t  rd = t->operands[0];                          // destination vector
     uint8_t  rt = t->operands[4];                          // RT = source vector

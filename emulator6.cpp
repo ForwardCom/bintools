@@ -18,7 +18,7 @@
 SIntTxt interruptNames[] = {
     // Error interrupts
     {INT_UNKNOWN_INST,       "Unknown instruction"},
-    {INT_WRONG_PARAMETERS,       "Illegal instruction code"},
+    {INT_WRONG_PARAMETERS,   "Illegal instruction code"},
     {INT_ACCESS_READ,        "Memory read access violation"},
     {INT_ACCESS_WRITE,       "Memory write access violation"},
     {INT_ACCESS_EXE,         "Memory execute access violation"},
@@ -33,7 +33,7 @@ SIntTxt interruptNames[] = {
     {INT_OVERFL_FLOAT,       "Floating point overflow"},
     {INT_FLOAT_INVALID,      "Floating point invalid operation"},
     {INT_FLOAT_UNDERFL,      "Floating point underflow"},
-    {INT_FLOAT_NAN_LOSS,     "Floating point NAN in compare or conversion to integer"},
+    {INT_FLOAT_NAN_LOSS,     "Floating point NaN in compare or conversion to integer"},
     {0xFFFF,                 "Filler interrupt"},
 };
 

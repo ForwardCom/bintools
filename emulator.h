@@ -125,7 +125,7 @@ public:
     int fprintfEmulated(FILE * stream, const char * format, uint64_t * argumentList); // emulate fprintf with ForwardCom argument list
     // check if system function has access to a particular address
     void systemCall(uint32_t mod, uint32_t funcid, uint8_t rd, uint8_t rs); // entry for system calls
-    uint64_t makeNan(uint32_t code, uint32_t operandType);// make a NAN with exception code and address in payload
+    uint64_t makeNan(uint32_t code, uint32_t operandType);// make a NaN with exception code and address in payload
     CDynamicArray<uint64_t> callStack;           // stack of return addresses
     uint32_t callDept;                           // maximum number of entries observed in callStack
     uint64_t entry_point;                        // program entry point
@@ -248,7 +248,7 @@ int64_t  mul64_128s(uint64_t * low, int64_t a, int64_t b);
 uint64_t mul64_128u(uint64_t * low, uint64_t a, uint64_t b);
 uint32_t roundToHalfPrecision(float fresult, CThread * t);
 
-// constants and functions for detecting NAN and infinity
+// constants and functions for detecting NaN and infinity
 const uint16_t inf_h   = 0x7C00;                 // float16 infinity
 const uint16_t inf2h   = inf_h*2;                // for detecting infinity when sign bit has been shifted out
 const uint32_t inf_f   = 0x7F800000;             // float infinity
@@ -262,7 +262,7 @@ const uint64_t nan_d   = 0x7FF8000000000000;     // double nan
 const uint64_t nsign_d = 0x7FFFFFFFFFFFFFFF;     // double not sign bit
 const uint64_t sign_d  = 0x8000000000000000;     // double sign bit
 
-// functions applied to the bit representations of floating point numbers to detect NAN and infinity:
+// functions applied to the bit representations of floating point numbers to detect NaN and infinity:
 static inline bool isnan_h(uint16_t x) {return uint16_t(x << 1) > inf2h;}
 static inline bool isnan_f(uint32_t x) {return (x << 1) > inf2f;}
 static inline bool isnan_d(uint64_t x) {return (x << 1) > inf2d;}
