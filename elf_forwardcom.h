@@ -1,9 +1,9 @@
 /****************************    elf_forwardcom.h    **************************
 * Author:              Agner Fog
 * Date created:        2016-06-25
-* Last modified:       2024-08-12
-* ForwardCom version:  1.13
-* Program version:     1.13
+* Last modified:       2025-01-21
+* ForwardCom version:  1.14
+* Program version:     1.14
 * Project:             ForwardCom binary tools
 * Description:         Definition of ELF file format. See below
 *
@@ -13,7 +13,7 @@
 * To do: define formats for debug information
 * To do: define access rights for executable file or device driver
 *
-* Copyright 2016-2024 GNU General Public License v. 3
+* Copyright 2016-2025 GNU General Public License v. 3
 * http://www.gnu.org/licenses/gpl.html
 *******************************************************************************
 
@@ -650,7 +650,8 @@ struct ElfFwcStacksize {
 // NaN payloads are used for indicating that floating point exceptions or other
 // errors have occurred.
 // These values are left-justified in the NaN payload after the 'quiet' bit.
-const uint32_t nan_data_unavailable  = 0b111111111;  // data not available
+const uint32_t nan_data_uninitialized= 0b111111111;  // data not initialized
+const uint32_t nan_data_unavailable  = 0b111111110;  // data not available
 const uint32_t nan_div0              = 0b111110111;  // division by 0 (mask bit 2)
 const uint32_t nan_overflow_div      = 0b111101111;  // division overflow (mask bit 3)
 const uint32_t nan_overflow_mul      = 0b111101110;  // multiplication overflow (mask bit 3)

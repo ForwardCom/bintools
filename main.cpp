@@ -1,8 +1,8 @@
 /****************************  main.cpp   *******************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2024-08-12
-* Version:       1.13
+* Last modified: 2025-01-21
+* Version:       1.14
 * Project:       Binary tools for ForwardCom instruction set
 * Description:   This includes assembler, disassembler, linker, library
 *                manager, and emulator in one program
@@ -12,7 +12,7 @@
 *
 * For detailed instructions, see forwardcom.pdf
 *
-* (c) Copyright 2017-2024 GNU General Public License version 3
+* (c) Copyright 2017-2025 GNU General Public License version 3
 * https://www.gnu.org/licenses
 *****************************************************************************/
 
@@ -391,6 +391,8 @@ const char * timestring(uint32_t t) {
 const char * exceptionCodeName(uint32_t code) {
     // get the name of an exception code from a NaN payload
     switch (code) {
+    case nan_data_uninitialized:
+        return "data not initialized";
     case nan_data_unavailable:
         return "data not available";
     case nan_div0: 

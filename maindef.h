@@ -1,13 +1,13 @@
 /****************************  maindef.h   **********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2024-07-29
-* Version:       1.13
+* Last modified: 2025-01-21
+* Version:       1.14
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        maindef.h
 * Original location: https://github.com/forwardcom/binutils
 * License: GPL-3.0. https://www.gnu.org/licenses/#GPL
-* Copyright 2016-2024 by Agner Fog
+* Copyright 2016-2025 by Agner Fog
 *
 * Description:
 * Header file for type definitions and other main definitions.
@@ -16,7 +16,7 @@
 
 // Program version
 #define FORWARDCOM_VERSION         1
-#define FORWARDCOM_SUBVERSION      13
+#define FORWARDCOM_SUBVERSION      14
 
 
 // Get high part of a 64-bit integer

@@ -875,7 +875,7 @@ const char * CCommandLineInterpreter::getFilename(uint32_t n) {
 void CCommandLineInterpreter::help() {
     // Print help message
     printf("\nBinary tools version %i.%02i for ForwardCom instruction set.", FORWARDCOM_VERSION, FORWARDCOM_SUBVERSION);
-    printf("\nCopyright (c) 2024 by Agner Fog. Gnu General Public License.");
+    printf("\nCopyright (c) 2025 by Agner Fog. Gnu General Public License.");
     printf("\n\nUsage: forw command [options] inputfile [outputfile] [options]");
     printf("\n\nCommand:");
     printf("\n-ass       Assemble\n");

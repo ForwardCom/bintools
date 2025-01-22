@@ -1,13 +1,13 @@
 /****************************  emulator1.cpp  ********************************
 * Author:        Agner Fog
 * date created:  2018-02-18
-* Last modified: 2024-08-10
-* Version:       1.13
+* Last modified: 2025-01-21
+* Version:       1.14
 * Project:       Binary tools for ForwardCom instruction set
 * Description:
 * Basic functionality of the emulator
 *
-* Copyright 2018-2024 GNU General Public License http://www.gnu.org/licenses
+* Copyright 2018-2025 GNU General Public License http://www.gnu.org/licenses
 *****************************************************************************/
 
 #include "stdafx.h"
@@ -1334,22 +1334,25 @@ void CThread::listResult(uint64_t result) {
     listOut.newLine();
 }
 
-// make a NaN with exception code and address in payload
+// make a quiet NaN with exception code and address in payload
 uint64_t CThread::makeNan(uint32_t code, uint32_t operandTyp) {
     uint64_t retval = 0;
-    uint8_t instrLength = lengthList[pInstr->a.il];  // instruction length
-    uint64_t iaddress = ((ip - ip0) >> 2) - instrLength;     // instruction address
-    uint32_t exception_code = code & 0x3FF;          // exception code
+    uint8_t  instrLength = lengthList[pInstr->a.il];       // instruction length
+    uint64_t iaddress = ((ip - ip0) >> 2) - instrLength;   // instruction address
+    uint32_t exception_code = code & 0x1FF;                // exception code
 
     switch (operandTyp) {
     case 1:  // half precision
         retval = 0x7E00 | exception_code;
         break;
     case 5:  // single precision
-        retval = 0x7FC00000 | exception_code << 13;
+        retval = 0x7FC00000 | exception_code << 13 | (iaddress & 0x1FFF);
         break;
     case 6:  // double precision
-        retval = 0x7FF8000000000000 | uint64_t(exception_code) << 42 | iaddress & 0xFFFFFFFF;
+        retval = 0x7FF8000000000000              // exponent and quiet bit
+            | uint64_t(exception_code) << 42     // error code
+            | (iaddress & 0x1FFF) << 29          // address low
+            | (iaddress >> 13 & 0x7FFFF);        // address high
         break;
     }
     return retval;

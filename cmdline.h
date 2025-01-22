@@ -1,14 +1,14 @@
 /****************************  cmdline.h   ***********************************
 * Author:        Agner Fog
 * Date created:  2017-04-17
-* Last modified: 2022-11-27
-* Version:       1.13
+* Last modified: 2025-01-21
+* Version:       1.14
 * Project:       Binary tools for ForwardCom instruction set
 * Module:        cmdline.h
 * Description:
 * Header file for command line interpreter cmdline.cpp
 *
-* Copyright 2006-2024 GNU General Public License www.gnu.org/licenses
+* Copyright 2006-2025 GNU General Public License www.gnu.org/licenses
 *****************************************************************************/
 #pragma once
 
